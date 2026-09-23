@@ -188,7 +188,7 @@ const ai = new NullProtocol({
 await ai.telemetry?.destroy();
 ```
 
-The library does not start or require the telemetry server. See the separate `nullprotocol-api` repository to run one.
+The library does not start or require the telemetry server. Hosted telemetry requires a Space ingest key; public account provisioning is not available yet.
 
 ## Named agents and HTTP service
 
