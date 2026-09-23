@@ -20,6 +20,7 @@ module.exports = [
         setTimeout: 'readonly',
         clearTimeout: 'readonly',
         URL: 'readonly',
+        AbortSignal: 'readonly',
         jest: 'readonly',
         describe: 'readonly',
         test: 'readonly',
@@ -61,7 +62,7 @@ module.exports = [
       'comma-spacing': 'error',
       'comma-style': 'error',
       'func-call-spacing': 'error',
-      'indent': ['error', 2, { SwitchCase: 1 }],
+      'indent': 'off',
       'key-spacing': 'error',
       'keyword-spacing': 'error',
       'no-trailing-spaces': 'error',
@@ -87,6 +88,12 @@ module.exports = [
       'prefer-arrow-callback': 'error',
       'prefer-template': 'error',
       'template-curly-spacing': 'error'
+    }
+  },
+  {
+    files: ['examples/**/*.js'],
+    rules: {
+      'no-console': 'off'
     }
   },
   {

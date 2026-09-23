@@ -4,7 +4,9 @@
 
 class CircuitBreakerError extends Error {
   constructor(failures, totalSkipped) {
-    super(`Circuit breaker open: ${failures} consecutive failures, ${totalSkipped} requests skipped`);
+    super(
+      `Circuit breaker open: ${failures} consecutive failures, ${totalSkipped} requests skipped`
+    );
     this.name = 'CircuitBreakerError';
     this.failures = failures;
     this.totalSkipped = totalSkipped;
@@ -132,16 +134,26 @@ class Resilience {
     if (!ms || ms <= 0) return fn();
 
     return new Promise((resolve, reject) => {
+      const controller = new AbortController();
       const timer = setTimeout(() => {
         const err = new Error(`AI request timed out after ${ms}ms`);
         err.code = 'ETIMEDOUT';
+        controller.abort(err);
         reject(err);
       }, ms);
 
-      fn().then(
-        result => { clearTimeout(timer); resolve(result); },
-        error => { clearTimeout(timer); reject(error); }
-      );
+      Promise.resolve()
+        .then(() => fn(controller.signal))
+        .then(
+          result => {
+            clearTimeout(timer);
+            resolve(result);
+          },
+          error => {
+            clearTimeout(timer);
+            reject(error);
+          }
+        );
     });
   }
 
@@ -155,7 +167,8 @@ class Resilience {
 
     // Network errors
     const code = error.code;
-    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN'].includes(code)) return true;
+    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN'].includes(code))
+      return true;
 
     // Anthropic overloaded
     if (error.message?.includes('overloaded')) return true;

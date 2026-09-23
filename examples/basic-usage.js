@@ -75,14 +75,15 @@ async function main() {
   // Example 5: Complete workflow
   console.log('\n=== WORKFLOW Example ===');
   const pipeline = ai.pipeline(
-    async (input) => ai.extract(input, {
-      product: 'string',
-      price: 'number',
-      value_proposition: 'string'
-    }),
-    async (result) => ai.validate('Is this a good investment?', result.data),
-    async (result) => ai.summarize(result),
-    async (result) => ai.decide(result, ['invest', 'pass', 'investigate_further'])
+    async input =>
+      ai.extract(input, {
+        product: 'string',
+        price: 'number',
+        value_proposition: 'string'
+      }),
+    async result => ai.validate('Is this a good investment?', result.data),
+    async result => ai.summarize(result),
+    async result => ai.decide(result, ['invest', 'pass', 'investigate_further'])
   );
 
   const workflowResult = await pipeline(newsArticle);

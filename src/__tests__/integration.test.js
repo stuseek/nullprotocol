@@ -27,8 +27,12 @@ const hasOpenAI = !!process.env.OPENAI_API_KEY;
 const AIToolkit = require('../index');
 const { CircuitBreakerError } = require('../resilience');
 
-beforeAll(() => { jest.spyOn(console, 'warn').mockImplementation(() => {}); });
-afterAll(() => { jest.restoreAllMocks(); });
+beforeAll(() => {
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
+});
+afterAll(() => {
+  jest.restoreAllMocks();
+});
 
 const HAIKU = 'claude-haiku-4-5-20251001';
 
@@ -182,7 +186,9 @@ describeAnthropic('Anthropic Integration', () => {
     aiH.clearHistory();
     expect(aiH.getHistory().length).toBe(0);
 
-    const result = await aiH.chat('What was the password I just told you? Reply with just the password or "unknown".');
+    const result = await aiH.chat(
+      'What was the password I just told you? Reply with just the password or "unknown".'
+    );
     expect(result.success).toBe(true);
     // Should NOT know the password after clear
     expect(result.message.toLowerCase()).not.toContain('zebra123');
@@ -232,23 +238,25 @@ describeAnthropic('Anthropic Integration', () => {
   // ── Tool use ──
 
   test('chat: tool use calls onToolCall and uses result', async () => {
-    const tools = [{
-      name: 'calculate',
-      description: 'Perform a math calculation',
-      parameters: {
-        type: 'object',
-        properties: {
-          expression: { type: 'string', description: 'Math expression like "2+2"' }
-        },
-        required: ['expression']
+    const tools = [
+      {
+        name: 'calculate',
+        description: 'Perform a math calculation',
+        parameters: {
+          type: 'object',
+          properties: {
+            expression: { type: 'string', description: 'Math expression like "2+2"' }
+          },
+          required: ['expression']
+        }
       }
-    }];
+    ];
 
     const onToolCall = jest.fn(async (name, params) => {
       if (name === 'calculate') {
         try {
           const expr = params.expression.replace(/[^0-9+\-*/().]/g, '');
-          const result = Function('"use strict"; return (' + expr + ')')();
+          const result = Function(`"use strict"; return (${expr})`)();
           return { result };
         } catch {
           return { error: 'invalid expression' };
@@ -256,10 +264,10 @@ describeAnthropic('Anthropic Integration', () => {
       }
     });
 
-    const result = await ai.chat(
-      'What is 147 * 23? Use the calculate tool.',
-      { tools, onToolCall }
-    );
+    const result = await ai.chat('What is 147 * 23? Use the calculate tool.', {
+      tools,
+      onToolCall
+    });
 
     expect(result.success).toBe(true);
     expect(onToolCall).toHaveBeenCalled();
@@ -293,15 +301,19 @@ describeAnthropic('Anthropic Integration', () => {
     ];
 
     const onToolCall = jest.fn(async (name, params) => {
-      if (name === 'get_temperature') return { celsius: 28 };
-      if (name === 'get_humidity') return { percent: 65 };
+      if (name === 'get_temperature') {
+        return { celsius: 28 };
+      }
+      if (name === 'get_humidity') {
+        return { percent: 65 };
+      }
       return { error: 'unknown' };
     });
 
-    const result = await ai.chat(
-      'What is the temperature and humidity in Tokyo? Use both tools.',
-      { tools, onToolCall }
-    );
+    const result = await ai.chat('What is the temperature and humidity in Tokyo? Use both tools.', {
+      tools,
+      onToolCall
+    });
 
     expect(result.success).toBe(true);
     expect(onToolCall).toHaveBeenCalled();
@@ -310,20 +322,19 @@ describeAnthropic('Anthropic Integration', () => {
   }, 30000);
 
   test('chat: tool error is handled gracefully', async () => {
-    const tools = [{
-      name: 'broken_tool',
-      description: 'A tool that always fails',
-      parameters: { type: 'object', properties: {} }
-    }];
+    const tools = [
+      {
+        name: 'broken_tool',
+        description: 'A tool that always fails',
+        parameters: { type: 'object', properties: {} }
+      }
+    ];
 
     const onToolCall = jest.fn(async () => {
       throw new Error('Tool is broken');
     });
 
-    const result = await ai.chat(
-      'Use the broken_tool.',
-      { tools, onToolCall }
-    );
+    const result = await ai.chat('Use the broken_tool.', { tools, onToolCall });
 
     expect(result.success).toBe(true);
     // The error should have been caught and returned to the model
@@ -397,17 +408,16 @@ describeAnthropic('Anthropic Integration', () => {
 
   test('extract then validate chain', async () => {
     // Step 1: extract
-    const extracted = await ai.extract(
-      'Order #1234: 3 widgets at $5.99 each, total $17.97',
-      { orderId: 'string', quantity: 'number', unitPrice: 'number', total: 'number' }
-    );
+    const extracted = await ai.extract('Order #1234: 3 widgets at $5.99 each, total $17.97', {
+      orderId: 'string',
+      quantity: 'number',
+      unitPrice: 'number',
+      total: 'number'
+    });
     expect(extracted.success).toBe(true);
 
     // Step 2: validate the extraction
-    const validated = await ai.validate(
-      'Total should equal quantity * unitPrice',
-      extracted.data
-    );
+    const validated = await ai.validate('Total should equal quantity * unitPrice', extracted.data);
     expect(validated.success).toBe(true);
     expect(typeof validated.score).toBe('number');
   }, 30000);
@@ -439,31 +449,39 @@ describeOpenAI('OpenAI Integration (if quota available)', () => {
   }, 20000);
 
   test('chat: basic response', async () => {
-    if (!openaiWorks) return;
+    if (!openaiWorks) {
+      return;
+    }
     const result = await ai.chat('What is 5 + 3? Just the number.');
     expect(result.success).toBe(true);
     expect(result.message).toMatch(/8/);
   }, 15000);
 
   test('extract: structured data', async () => {
-    if (!openaiWorks) return;
+    if (!openaiWorks) {
+      return;
+    }
     const result = await ai.extract('Alice, 28, engineer', { name: 'string', age: 'number' });
     expect(result.success).toBe(true);
     expect(result.data.name).toMatch(/alice/i);
   }, 15000);
 
   test('chat: streaming', async () => {
-    if (!openaiWorks) return;
+    if (!openaiWorks) {
+      return;
+    }
     const gen = await ai.chat('Say hello.', { stream: true });
     const chunks = [];
-    for await (const c of gen) chunks.push(c);
+    for await (const c of gen) {
+      chunks.push(c);
+    }
     expect(chunks.join('').toLowerCase()).toContain('hello');
   }, 15000);
 });
 
 // ─── Cross-Engine ───────────────────────────────────────────────
 
-const describeCross = (hasOpenAI && hasAnthropic) ? describe : describe.skip;
+const describeCross = hasOpenAI && hasAnthropic ? describe : describe.skip;
 
 describeCross('Cross-Engine', () => {
   test('switch engines per-call', async () => {
@@ -494,24 +512,32 @@ describeServer('Server Integration (real API)', () => {
   function req(method, urlPath, body = null, headers = {}) {
     return new Promise((resolve, reject) => {
       const opts = {
-        hostname: '127.0.0.1', port, path: urlPath, method,
+        hostname: '127.0.0.1',
+        port,
+        path: urlPath,
+        method,
         headers: { 'Content-Type': 'application/json', ...headers }
       };
-      const r = http.request(opts, (res) => {
+      const r = http.request(opts, res => {
         let data = '';
-        res.on('data', c => data += c);
+        res.on('data', c => (data += c));
         res.on('end', () => {
-          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-          catch { resolve({ status: res.statusCode, body: data }); }
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode, body: data });
+          }
         });
       });
       r.on('error', reject);
-      if (body) r.write(JSON.stringify(body));
+      if (body) {
+        r.write(JSON.stringify(body));
+      }
       r.end();
     });
   }
 
-  beforeAll((done) => {
+  beforeAll(done => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     const { serve } = require('../server');
     server = serve({
@@ -526,7 +552,9 @@ describeServer('Server Integration (real API)', () => {
     });
   });
 
-  afterAll((done) => { server.close(done); });
+  afterAll(done => {
+    server.close(done);
+  });
 
   test('POST /chat returns real AI response', async () => {
     const res = await req('POST', '/chat', { prompt: 'Say "server works". Just those words.' });
@@ -567,7 +595,8 @@ describeServer('Server Integration (real API)', () => {
 
   test('POST /summarize returns summary', async () => {
     const res = await req('POST', '/summarize', {
-      content: 'The quick brown fox jumps over the lazy dog. This is a classic pangram used in typography.'
+      content:
+        'The quick brown fox jumps over the lazy dog. This is a classic pangram used in typography.'
     });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);

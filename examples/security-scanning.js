@@ -17,7 +17,7 @@ async function securityScan(targetUrl) {
   const httpResponse = {
     status: 200,
     headers: {
-      'server': 'Apache/2.4.41',
+      server: 'Apache/2.4.41',
       'x-powered-by': 'PHP/7.2.24',
       'content-type': 'text/html'
     },
@@ -34,7 +34,7 @@ async function securityScan(targetUrl) {
   };
 
   console.log('🔍 Scanning:', targetUrl);
-  console.log('=' .repeat(50));
+  console.log('='.repeat(50));
 
   // Step 1: EXTRACT security indicators
   console.log('\n📊 EXTRACT - Identifying Security Indicators...');
@@ -86,8 +86,10 @@ async function securityScan(targetUrl) {
   );
 
   console.log('Risk Score:', riskAssessment.score);
-  console.log('Severity:', riskAssessment.score > 0.7 ? 'CRITICAL' :
-    riskAssessment.score > 0.4 ? 'HIGH' : 'MEDIUM');
+  console.log(
+    'Severity:',
+    riskAssessment.score > 0.7 ? 'CRITICAL' : riskAssessment.score > 0.4 ? 'HIGH' : 'MEDIUM'
+  );
   console.log('Strengths:', riskAssessment.strengths);
   console.log('Weaknesses:', riskAssessment.weaknesses);
 
@@ -134,14 +136,14 @@ async function securityScan(targetUrl) {
   console.log('Alternative Actions:', response.alternatives);
 
   // Final Report
-  console.log(`\n${'=' .repeat(50)}`);
+  console.log(`\n${'='.repeat(50)}`);
   console.log('🎯 SCAN COMPLETE');
-  console.log('=' .repeat(50));
+  console.log('='.repeat(50));
 
   return {
     target: targetUrl,
-    riskLevel: riskAssessment.score > 0.7 ? 'CRITICAL' :
-      riskAssessment.score > 0.4 ? 'HIGH' : 'MEDIUM',
+    riskLevel:
+      riskAssessment.score > 0.7 ? 'CRITICAL' : riskAssessment.score > 0.4 ? 'HIGH' : 'MEDIUM',
     vulnerabilities: indicators.data.vulnerabilities?.length || 0,
     recommendation: response.action,
     confidence: response.confidence
@@ -173,7 +175,7 @@ async function scanMultipleTargets() {
 
   // Summary
   console.log('\n📊 CAMPAIGN SUMMARY');
-  console.log('=' .repeat(50));
+  console.log('='.repeat(50));
   results.forEach(r => {
     console.log(`${r.target}:`);
     console.log(`  Risk Level: ${r.riskLevel}`);

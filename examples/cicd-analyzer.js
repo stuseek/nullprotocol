@@ -309,16 +309,27 @@ ${readiness.reasoning}
 **${action.action.replace(/_/g, ' ').toUpperCase()}**
 ${action.reasoning}
 
-${pipelineData.failed_tests?.length > 0 ? `
+${
+  pipelineData.failed_tests?.length > 0
+    ? `
 ### ❌ Failed Tests
-${pipelineData.failed_tests.slice(0, 5).map(t => `- ${t}`).join('\n')}
-` : ''}
+${pipelineData.failed_tests
+  .slice(0, 5)
+  .map(t => `- ${t}`)
+  .join('\n')}
+`
+    : ''
+}
 
-${pipelineData.security_scan_results?.critical > 0 ? `
+${
+  pipelineData.security_scan_results?.critical > 0
+    ? `
 ### 🔒 Security Issues
 - Critical: ${pipelineData.security_scan_results.critical}
 - High: ${pipelineData.security_scan_results.high}
-` : ''}
+`
+    : ''
+}
 `;
 }
 
@@ -480,7 +491,9 @@ async function runExamples() {
       console.log(`Branch: ${result.pipeline.branch}`);
       console.log(`Status: ${result.pipeline.status}`);
       console.log(`Deployment Ready: ${result.readiness.ready ? '✅ YES' : '❌ NO'}`);
-      console.log(`\nRecommendation: ${result.recommendation.action.replace(/_/g, ' ').toUpperCase()}`);
+      console.log(
+        `\nRecommendation: ${result.recommendation.action.replace(/_/g, ' ').toUpperCase()}`
+      );
 
       if (result.notifications.length > 0) {
         console.log('\n📢 Notifications:');
@@ -491,7 +504,6 @@ async function runExamples() {
 
       console.log('\n💬 PR Comment Preview:');
       console.log(result.pr_comment);
-
     } catch (error) {
       console.error('Error analyzing pipeline:', error.message);
     }

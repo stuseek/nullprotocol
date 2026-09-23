@@ -1,77 +1,31 @@
 # Changelog
 
-## [1.0.11] - 2026-01-07
+## 1.2.0 — 2026-09-23
 
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-## [1.0.10] - 2026-01-07
-
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-## [1.0.9] - 2026-01-07
-
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-## [1.0.8] - 2026-01-07
-
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-## [1.0.7] - 2026-01-07
-
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-## [1.0.6] - 2026-01-07
-
-### Changed
-- version bump
-- update README.md
-- remove extra website
-- package bump
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.0.0] - 2024-01-01
+First release under the `nullprotocol` package name. `AIToolkit` remains an export alias for migration.
 
 ### Added
-- Initial release with 4 fundamental AI primitives
-- Extract: Transform unstructured data into structured formats
-- Validate: Assess data against criteria and rules
-- Summarize: Synthesize key insights from complex information
-- Decide: Make intelligent choices based on context
-- Support for OpenAI and Anthropic engines
-- Industry presets (security, devops, financial, medical, legal, marketing, engineering, support)
-- Method chaining and pipeline creation
-- Stateful AI instances with base prompts
-- Configuration via files, environment variables, and runtime options
-- TypeScript definitions
-- Comprehensive examples for real-world use cases
-- Telemetry support for usage analytics (optional)
-- Action executor for connecting AI decisions to code
 
-### Security
-- No API keys are logged or exposed
-- Secure configuration management
-- Optional telemetry with privacy controls
+- OpenAI-compatible base URL for local and lower-cost model providers.
+- Local JSON Schema validation for extracted data.
+- Context character budget with a sliding window over old chat turns.
+- Optional telemetry of request timing and provider token usage.
+- `NullProtocol` public export and new README with local, game, and HTTP examples.
+
+### Fixed
+
+- Retry each model request without repeating tool side effects.
+- Abort in-flight model requests on timeout.
+- Require explicit caller confirmation before protected actions run.
+- Reject decisions outside the offered action list and malformed model results.
+- Isolate HTTP request state, require server authentication, bind locally by default, and limit body size.
+- Remove nonfunctional cloud mode and unused provider implementations.
+- Restore clean-install CI with a committed lockfile and package coverage checks.
+
+### Migration
+
+Install `nullprotocol` and update package imports. The old `@stuseek/ai-toolkit` package is not changed by this release. `AI_TOOLKIT_*` environment variables remain accepted for migration; new configurations can use `NULLPROTOCOL_*`.
+
+## 1.0.11 — 2026-01-07
+
+Last published release under `@stuseek/ai-toolkit`.

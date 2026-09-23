@@ -3,6 +3,14 @@
  * Registers and executes actions based on AI decisions
  */
 
+class ConfirmationRequiredError extends Error {
+  constructor(action) {
+    super(`Action "${action}" requires explicit confirmation`);
+    this.name = 'ConfirmationRequiredError';
+    this.action = action;
+  }
+}
+
 class ActionExecutor {
   constructor() {
     this.registry = new Map();
@@ -54,7 +62,7 @@ class ActionExecutor {
   /**
    * Execute an action
    */
-  async execute(decision) {
+  async execute(decision, options = {}) {
     if (!decision || !decision.action) {
       throw new Error('Invalid decision: missing action');
     }
@@ -66,14 +74,18 @@ class ActionExecutor {
     }
 
     // Validate parameters
-    if (!action.validate(decision.parameters || {})) {
+    if (!(await action.validate(decision.parameters || {}))) {
       throw new Error(`Invalid parameters for action: ${decision.action}`);
     }
 
-    // Confirmation check
+    // Confirmation must come from the caller, never from the model's decision.
     if (action.requiresConfirmation) {
-      console.warn(`Action "${decision.action}" requires confirmation`);
-      // In production, implement proper confirmation flow
+      if (
+        typeof options.confirm !== 'function' ||
+        !(await options.confirm(decision.action, decision.parameters || {}))
+      ) {
+        throw new ConfirmationRequiredError(decision.action);
+      }
     }
 
     try {
@@ -85,7 +97,6 @@ class ActionExecutor {
         action: decision.action,
         result
       };
-
     } catch (error) {
       return {
         success: false,
@@ -138,4 +149,4 @@ class ActionExecutor {
   }
 }
 
-module.exports = { ActionExecutor };
+module.exports = { ActionExecutor, ConfirmationRequiredError };

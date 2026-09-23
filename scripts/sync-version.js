@@ -19,8 +19,8 @@ readme = readme.replace(
 
 // Update version in npm install examples if present
 readme = readme.replace(
-  /@stuseek\/ai-toolkit@[0-9.]+/g,
-  `@stuseek/ai-toolkit@${version}`
+  /nullprotocol@[0-9.]+/g,
+  `nullprotocol@${version}`
 );
 
 fs.writeFileSync(readmePath, readme);

@@ -131,11 +131,7 @@ async function reviewCode(codeChange) {
   console.log(`Reasoning: ${verdict.reasoning}`);
 
   // Generate detailed feedback
-  const feedback = generateCodeReviewFeedback(
-    analysis.data,
-    qualityCheck,
-    verdict
-  );
+  const feedback = generateCodeReviewFeedback(analysis.data, qualityCheck, verdict);
 
   return {
     analysis: analysis.data,
@@ -158,9 +154,12 @@ function generateCodeReviewFeedback(analysis, quality, verdict) {
   // Header based on verdict
   const headers = {
     approve: '✅ **Code Review: APPROVED**\n\nGreat work! This code is ready to merge.',
-    approve_with_suggestions: '✅ **Code Review: APPROVED with suggestions**\n\nThe code is good to merge, but consider these improvements:',
-    request_changes: '🔄 **Code Review: CHANGES REQUESTED**\n\nPlease address the following issues:',
-    needs_tests: '🧪 **Code Review: TESTS REQUIRED**\n\nThe code looks good but needs test coverage:',
+    approve_with_suggestions:
+      '✅ **Code Review: APPROVED with suggestions**\n\nThe code is good to merge, but consider these improvements:',
+    request_changes:
+      '🔄 **Code Review: CHANGES REQUESTED**\n\nPlease address the following issues:',
+    needs_tests:
+      '🧪 **Code Review: TESTS REQUIRED**\n\nThe code looks good but needs test coverage:',
     security_review: '🔒 **Code Review: SECURITY REVIEW NEEDED**\n\nSecurity concerns identified:'
   };
 
@@ -217,13 +216,12 @@ function generateReviewChecklist(analysis, quality) {
       ? '❌ Security issues found'
       : '✅ No obvious security issues',
     performance: '✅ No obvious performance issues',
-    tests: analysis.test_coverage?.includes('included')
-      ? '✅ Tests included'
-      : '❌ Tests missing',
+    tests: analysis.test_coverage?.includes('included') ? '✅ Tests included' : '❌ Tests missing',
     documentation: '⚠️ Check if docs need update',
-    dependencies: analysis.dependencies_added?.length > 0
-      ? '⚠️ New dependencies added'
-      : '✅ No new dependencies'
+    dependencies:
+      analysis.dependencies_added?.length > 0
+        ? '⚠️ New dependencies added'
+        : '✅ No new dependencies'
   };
 }
 
@@ -362,7 +360,6 @@ async function runExamples() {
       Object.entries(review.checklist).forEach(([_item, status]) => {
         console.log(`  ${status}`);
       });
-
     } catch (error) {
       console.error('Error reviewing code:', error.message);
     }

@@ -1,372 +1,215 @@
-# @stuseek/ai-toolkit
+![NullProtocol](assets/nullprotocol.svg)
 
-AI primitives for Node.js. Extract, validate, summarize, decide, chat — with retry, circuit breakers, tool use, streaming, and conversation history built in. Works with OpenAI and Anthropic.
+# NullProtocol
 
-[![NPM Version](https://img.shields.io/npm/v/@stuseek/ai-toolkit.svg)](https://www.npmjs.com/package/@stuseek/ai-toolkit)
-[![License](https://img.shields.io/npm/l/@stuseek/ai-toolkit.svg)](https://github.com/stuseek/ai-toolkit/blob/main/LICENSE)
+Build on inexpensive or local language models without trusting every byte they return. NullProtocol adds structured output checks, bounded tool calls, retries, timeouts, and a small HTTP adapter to OpenAI and Anthropic SDKs.
+
+[![npm](https://img.shields.io/npm/v/nullprotocol?label=npm)](https://www.npmjs.com/package/nullprotocol) [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
+
+The library is MIT licensed. It runs without a NullProtocol account or telemetry. A hosted telemetry product is planned; there is no hosted dashboard to sign up for yet.
 
 ## Install
 
-```bash
-npm install @stuseek/ai-toolkit
+```sh
+npm install nullprotocol openai
 ```
 
-## Quick start
+Node.js 18 or newer is required. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
 
-```javascript
-const { AIToolkit } = require('@stuseek/ai-toolkit');
+## Start with a small or local model
 
-const ai = new AIToolkit({
-  engines: { anthropic: process.env.ANTHROPIC_API_KEY },
-  defaultEngine: 'anthropic'
+Point the OpenAI client at any compatible endpoint. The example URL and model name below are placeholders for your own server.
+
+```js
+const { NullProtocol } = require('nullprotocol');
+
+const ai = new NullProtocol({
+  engines: { openai: process.env.MODEL_API_KEY || 'local' },
+  openaiBaseURL: process.env.MODEL_BASE_URL || 'http://127.0.0.1:1234/v1',
+  models: { openai: process.env.MODEL_NAME || 'your-model' },
+  retry: { maxRetries: 2 },
+  timeout: 20_000
 });
 
-// Extract structured data from text
-const { data } = await ai.extract('Order #123 from John, wants a refund', {
-  orderId: 'string',
-  name: 'string',
-  intent: 'string'
+const result = await ai.extract('Order 42: two blue mugs', {
+  orderId: 'number',
+  quantity: 'number',
+  item: 'string'
 });
 
-// Validate against criteria
-const { score, reasoning } = await ai.validate(
-  'Is this high priority?', data
-);
-
-// Summarize anything
-const { summary } = await ai.summarize({ data, score, reasoning });
-
-// Pick an action
-const { action } = await ai.decide(summary, ['escalate', 'respond', 'archive']);
-
-// Free-form chat
-const { message } = await ai.chat('Explain this vulnerability to a junior dev');
-```
-
-## What's in 1.1.0
-
-### Retry + circuit breaker + timeout
-
-Every AI call goes through the resilience layer. Retries on 429/503/529 and network errors with exponential backoff. Circuit breaker trips after N consecutive failures and auto-resets.
-
-```javascript
-const ai = new AIToolkit({
-  engines: { anthropic: process.env.ANTHROPIC_API_KEY },
-  retry: { maxRetries: 3 },
-  timeout: 15000,
-  circuitBreaker: { threshold: 5, resetAfterMs: 60000 }
-});
-
-// Check circuit breaker state
-ai.resilience.isTripped();
-ai.resilience.getStats();
-ai.resilience.reset();
-```
-
-Catch circuit breaker errors explicitly:
-
-```javascript
-const { CircuitBreakerError } = require('@stuseek/ai-toolkit');
-
-try {
-  await ai.chat('hello');
-} catch (err) {
-  if (err instanceof CircuitBreakerError) {
-    console.log('AI is down, using fallback');
-  }
+if (!result.success) {
+  // Ask again, route to a stronger model, or send for review.
+  console.error(result.error);
+} else {
+  console.log(result.data);
 }
 ```
 
-### Tool use / function calling
+`extract` checks the response with a local JSON Schema validator. The shorthand above requires every field and checks its type. You can pass a full JSON Schema object when you need optional fields or stricter rules. Validation catches malformed output; it cannot prove that the extracted facts are true.
 
-Works with both OpenAI and Anthropic. The library handles format conversion and the multi-turn tool loop (up to 10 rounds).
+## What it does
 
-```javascript
-const result = await ai.chat('What is the weather in Tokyo?', {
+| Operation | Result | Local check |
+| --- | --- | --- |
+| `extract(data, schema)` | Structured data | JSON Schema validation |
+| `validate(criteria, subject)` | Score and reasoning | Score range and response shape |
+| `summarize(content)` | Summary and key points | Response shape and length |
+| `decide(context, actions)` | Selected action | Membership in the allowed list |
+| `chat(prompt)` | Text or tool calls | Nonempty response, tool allowlist |
+
+Every operation returns `{ success, ... }`. Model and validation failures appear as `{ success: false, error }`. Handle those results before acting on them.
+
+### Model choice
+
+```js
+const ai = new NullProtocol({
+  engines: { openai: process.env.OPENAI_API_KEY },
+  models: {
+    openai: 'your-default-model',
+    cheap: 'your-small-model',
+    fallback: 'your-stronger-model'
+  }
+});
+
+const first = await ai.extract(text, schema, { model: 'cheap' });
+const result = first.success ? first : await ai.extract(text, schema, { model: 'fallback' });
+```
+
+Aliases select a model; NullProtocol does not automatically choose the cheapest model or fall back after a bad answer. That policy stays in your application.
+
+### Tool calls
+
+```js
+const response = await ai.chat('Look up order 42', {
   tools: [{
-    name: 'get_weather',
-    description: 'Get current weather',
+    name: 'get_order',
+    description: 'Read an order by ID',
     parameters: {
       type: 'object',
-      properties: { location: { type: 'string' } },
-      required: ['location']
+      properties: { id: { type: 'number' } },
+      required: ['id']
     }
   }],
   onToolCall: async (name, params) => {
-    if (name === 'get_weather') return { temp: 22, conditions: 'sunny' };
+    if (name === 'get_order') return orderStore.get(params.id);
+    throw new Error('Unknown tool');
+  }
+});
+```
+
+Only offered tool names reach `onToolCall`. The model can request at most ten rounds. Retries apply to each model request, so a transient error after a tool call does not rerun the tool callback. Your callback should still validate parameters and permissions before side effects.
+
+For registered actions, use `requiresConfirmation` and supply a confirmation callback from your application:
+
+```js
+ai.registerAction('send_email', sendEmail, { requiresConfirmation: true });
+await ai.execute(decision, {
+  confirm: async (action, parameters) => askUserToApprove(action, parameters)
+});
+```
+
+Without an approving callback, execution throws `ConfirmationRequiredError` and the handler is not called.
+
+### Example: a game NPC
+
+Keep an instance for each active conversation. Pass game state as context, and expose only the actions that NPC may use.
+
+```js
+const npc = new NullProtocol({
+  engines: { openai: 'local' },
+  openaiBaseURL: 'http://127.0.0.1:1234/v1',
+  models: { openai: 'your-model' },
+  basePrompt: 'You are Mira, a merchant in a fantasy game.',
+  trackHistory: true
+});
+
+npc.addContext('shop', { potions: 3, price: 5 });
+const reply = await npc.chat('Do you have a potion?', {
+  tools: [{ name: 'check_stock', description: 'Read the current shop stock' }],
+  onToolCall: async name => {
+    if (name === 'check_stock') return game.shop.stock();
+    throw new Error('Unknown tool');
   }
 });
 
-console.log(result.message);    // "It's 22 degrees and sunny in Tokyo"
-console.log(result.toolCalls);  // [{ name: 'get_weather', parameters: { location: 'Tokyo' }, result: { temp: 22, ... } }]
+if (reply.success) showDialogue(reply.message);
 ```
 
-### Conversation history
+The game owns inventory, permissions, and save data. NullProtocol helps the model talk to that code and checks the results it can check.
 
-Track multi-turn conversations. History is auto-injected into API calls.
+### Conversation and streaming
 
-```javascript
-const ai = new AIToolkit({
-  engines: { anthropic: process.env.ANTHROPIC_API_KEY },
+```js
+const ai = new NullProtocol({
+  engines: { openai: process.env.OPENAI_API_KEY },
+  trackHistory: true
+});
+
+await ai.chat('My name is Sam.');
+const reply = await ai.chat('What is my name?');
+
+const stream = await ai.chat('Explain this code', { stream: true });
+for await (const chunk of stream) process.stdout.write(chunk);
+```
+
+History is opt in and applies to `chat` only. For separate users or conversations, create separate instances. Streaming returns an async generator; `{ stream: true, collect: true }` returns a normal result.
+
+### Bound the context
+
+Set `maxContextLength` in characters when using a model with a small context window. NullProtocol keeps the system text and current input, then applies a sliding window to older chat turns. You can change the budget while the agent runs.
+
+```js
+const ai = new NullProtocol({
+  engines: { openai: 'local' },
+  openaiBaseURL: 'http://127.0.0.1:1234/v1',
+  models: { openai: 'your-model' },
   trackHistory: true,
-  maxHistoryTokens: 50000
+  maxContextLength: 12_000
 });
 
-await ai.chat('My name is Alice');
-await ai.chat('What is my name?');  // AI remembers: "Alice"
-
-// Manual control
-ai.addMessage('user', 'some context');
-ai.getHistory();   // [{ role, content }, ...]
-ai.clearHistory();
-
-// Per-call override
-await ai.chat('one-off question', { trackHistory: false });
+ai.setMaxContextLength(8_000);
 ```
 
-Only `chat()` auto-tracks. The other primitives (extract, validate, summarize, decide) are one-shot by design.
+If the system text, current input, or tool definitions alone exceed the budget, the request fails. The count is an approximation based on characters, not the provider's tokenizer. `maxHistoryTokens` remains a separate rough cap for stored chat history. Automatic model based compaction is not part of this release.
 
-### Model routing with aliases
+## Optional telemetry
 
-Define named aliases and use them across operations.
+Telemetry is off by default. With `telemetry: true`, an HTTPS endpoint, and a key, the client sends operation metadata and model token usage when the provider returns it. It excludes prompts, responses, tool parameters, and credentials from event bodies. The key goes in the authorization header. The client buffers up to 1,000 events and uses a short network timeout.
 
-```javascript
-const ai = new AIToolkit({
-  engines: { anthropic: process.env.ANTHROPIC_API_KEY },
-  models: {
-    anthropic: 'claude-sonnet-4-5-20250929',     // default for anthropic
-    fast: 'claude-haiku-4-5-20251001',            // alias
-    powerful: 'claude-opus-4-20250514'            // alias
-  }
+```js
+const ai = new NullProtocol({
+  engines: { openai: process.env.OPENAI_API_KEY },
+  telemetry: true,
+  telemetryEndpoint: process.env.TELEMETRY_ENDPOINT,
+  telemetryKey: process.env.TELEMETRY_KEY
 });
 
-await ai.decide(ctx, actions, { model: 'fast' });      // uses haiku
-await ai.chat('complex question', { model: 'powerful' }); // uses opus
-await ai.extract(data, schema);                          // uses default sonnet
+// Flush queued events before shutdown if your process needs guaranteed delivery.
+await ai.telemetry?.destroy();
 ```
 
-### Streaming
+No telemetry endpoint is bundled with the library. The planned paid service is separate from the free runtime.
 
-```javascript
-// Async generator — process chunks as they arrive
-const stream = await ai.chat('Write a haiku', { stream: true });
-for await (const chunk of stream) {
-  process.stdout.write(chunk);
-}
+## HTTP adapter
 
-// Or collect everything into a normal result
-const result = await ai.chat('Write a haiku', { stream: true, collect: true });
-console.log(result.message);
-```
+The server binds to `127.0.0.1` by default, requires a Bearer token, limits request bodies to 1 MiB, and keeps request state separate.
 
-## API reference
+```js
+const { serve } = require('nullprotocol');
 
-### Primitives
-
-All primitives return `{ success, ..., error? }`. They never throw — errors come back in the result.
-
-| Method | Purpose | Returns |
-|--------|---------|---------|
-| `extract(data, schema, opts?)` | Structure unstructured data | `{ success, data, confidence }` |
-| `validate(criteria, subject, ref?, opts?)` | Score against criteria | `{ success, score, reasoning, confidence, recommendation }` |
-| `summarize(content, opts?)` | Distill key points | `{ success, summary, keyPoints, confidence }` |
-| `decide(context, actions, opts?)` | Pick best action | `{ success, action, reasoning, confidence, parameters }` |
-| `chat(prompt, opts?)` | Free-form conversation | `{ success, message, confidence, toolCalls? }` |
-
-### Per-call options
-
-Every primitive accepts these in the options object:
-
-```javascript
-{
-  engine: 'anthropic',        // override default engine
-  model: 'fast',              // model name or alias
-  temperature: 0.5,           // 0-1
-  maxTokens: 2000,            // max response tokens
-  additionalContext: '...'    // extra context for this call only
-}
-```
-
-### Constructor options
-
-```javascript
-new AIToolkit({
-  // Required: at least one engine
-  engines: {
-    openai: process.env.OPENAI_API_KEY,
-    anthropic: process.env.ANTHROPIC_API_KEY
-  },
-  defaultEngine: 'anthropic',
-
-  // Model config
-  models: {
-    openai: 'gpt-4o',
-    anthropic: 'claude-sonnet-4-5-20250929',
-    fast: 'claude-haiku-4-5-20251001',
-    powerful: 'claude-opus-4-20250514'
-  },
-
-  // Resilience
-  retry: { maxRetries: 2 },
-  timeout: 30000,
-  circuitBreaker: { threshold: 5, resetAfterMs: 60000 },
-
-  // Conversation
-  trackHistory: false,
-  maxHistoryTokens: 50000,
-
-  // Behavior
-  temperature: 0.3,
-  maxTokens: 1000,
-  basePrompt: 'You are a security analyst',
-  preset: 'security',           // or devops, engineering, etc.
-  validateOutputs: false,
-
-  // Executor
-  withExecutor: false
-})
-```
-
-### Stateless usage
-
-For simple scripts where you don't need an instance:
-
-```javascript
-const { extract, validate, summarize, decide, chat, configure } = require('@stuseek/ai-toolkit');
-
-configure({ engines: { openai: process.env.OPENAI_API_KEY } });
-
-const result = await extract('some text', { field: 'string' });
-```
-
-### Presets
-
-```javascript
-const { createAI } = require('@stuseek/ai-toolkit');
-
-const ai = createAI.security();     // low temp, validate outputs
-const ai = createAI.engineering();   // balanced
-const ai = createAI.marketing();     // higher temp, creative
-// Also: devops, support, financial, medical, legal
-```
-
-### Chaining
-
-Operations store their last result. Subsequent calls can omit the input to use it:
-
-```javascript
-await ai.extract(email, schema);
-await ai.validate('Is this urgent?');  // uses extract result
-await ai.summarize();                   // uses validate result
-await ai.decide(null, actions);         // uses summary result
-```
-
-### Action executor
-
-Wire AI decisions to actual code:
-
-```javascript
-const ai = new AIToolkit({ engines: { ... }, withExecutor: true });
-
-ai.registerAction('send_email', async (params) => {
-  return await emailService.send(params);
+serve({
+  apiKey: process.env.NULLPROTOCOL_API_KEY,
+  engines: { openai: process.env.OPENAI_API_KEY },
+  port: 3000
 });
-
-const decision = await ai.decide(context, ['send_email', 'create_ticket']);
-const result = await ai.execute(decision);
 ```
 
-## HTTP server / microservice mode
+Routes: `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat`, and `GET /health`. Add `cors` only when browser access is needed. Set `host: '0.0.0.0'` explicitly to expose the server outside localhost.
 
-Same interface, over HTTP. Zero extra dependencies.
+## Moving from `@stuseek/ai-toolkit`
 
-### From code
-
-```javascript
-const { serve } = require('@stuseek/ai-toolkit');
-
-const server = serve({
-  engines: { anthropic: process.env.ANTHROPIC_API_KEY },
-  defaultEngine: 'anthropic',
-  port: 3000,
-  apiKey: 'my-secret'  // optional Bearer token auth
-});
-
-// The server also exposes the AIToolkit instance directly
-server.ai.chat('hello');  // still works as a library
-```
-
-### From CLI
-
-```bash
-# Set your keys
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Start the server
-npx @stuseek/ai-toolkit-serve --port 3000
-
-# Or with auth
-AI_TOOLKIT_API_KEY=secret npx @stuseek/ai-toolkit-serve
-```
-
-### Endpoints
-
-```bash
-# Extract
-curl -X POST http://localhost:3000/extract \
-  -H 'Content-Type: application/json' \
-  -d '{"data": "John is 30", "schema": {"name": "string", "age": "number"}}'
-
-# Chat
-curl -X POST http://localhost:3000/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt": "Explain SQL injection"}'
-
-# Health check (includes circuit breaker status)
-curl http://localhost:3000/health
-```
-
-All endpoints accept the same options as the library methods. POST body fields map directly to method arguments — `data` and `schema` for extract, `prompt` for chat, etc.
-
-If `AI_TOOLKIT_API_KEY` is set, pass `Authorization: Bearer <key>` header.
-
-## Environment variables
-
-```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-AI_DEFAULT_ENGINE=anthropic
-AI_MODEL_OPENAI=gpt-4o
-AI_MODEL_ANTHROPIC=claude-sonnet-4-5-20250929
-
-# Server mode
-AI_TOOLKIT_PORT=3000
-AI_TOOLKIT_HOST=0.0.0.0
-AI_TOOLKIT_API_KEY=my-secret     # require Bearer auth
-AI_TOOLKIT_CORS=*                # CORS origin
-```
-
-## TypeScript
-
-Full type definitions included. Key types:
-
-```typescript
-import {
-  AIToolkit,
-  ExtractResult, ValidateResult, SummarizeResult,
-  DecideResult, ChatResult,
-  ToolDefinition, ToolCallResult,
-  Resilience, CircuitBreakerError,
-  ChatOptions, AIToolkitOptions,
-  serve, ServeOptions, AIServer
-} from '@stuseek/ai-toolkit';
-```
-
-## Requirements
-
-- Node.js >= 18
-- At least one of: `openai` (^4.0.0), `@anthropic-ai/sdk` (>=0.9.0)
+Install `nullprotocol`, change the package import, and use `NullProtocol` in new code. `AIToolkit` remains an export alias. Existing deployments pinned to `@stuseek/ai-toolkit` keep using that package until migrated. The old token only cloud mode never had a working backend and now reports a clear configuration error.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

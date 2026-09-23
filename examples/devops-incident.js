@@ -14,8 +14,9 @@ const ai = new AIToolkit({
 });
 
 // Register DevOps actions
-ai.registerAction('restart_service',
-  async (params) => {
+ai.registerAction(
+  'restart_service',
+  async params => {
     console.log(`🔄 Restarting service: ${params.service}`);
     // In production: kubectl rollout restart deployment/${params.service}
     return {
@@ -30,8 +31,9 @@ ai.registerAction('restart_service',
   }
 );
 
-ai.registerAction('scale_horizontally',
-  async (params) => {
+ai.registerAction(
+  'scale_horizontally',
+  async params => {
     console.log(`📈 Scaling ${params.service} to ${params.replicas} replicas`);
     // In production: kubectl scale deployment/${params.service} --replicas=${params.replicas}
     return {
@@ -46,8 +48,9 @@ ai.registerAction('scale_horizontally',
   }
 );
 
-ai.registerAction('rollback_deployment',
-  async (params) => {
+ai.registerAction(
+  'rollback_deployment',
+  async params => {
     console.log(`⏪ Rolling back ${params.service} to previous version`);
     // In production: kubectl rollout undo deployment/${params.service}
     return {
@@ -61,9 +64,12 @@ ai.registerAction('rollback_deployment',
   }
 );
 
-ai.registerAction('increase_resources',
-  async (params) => {
-    console.log(`💪 Increasing resources for ${params.service}: CPU ${params.cpu}, Memory ${params.memory}`);
+ai.registerAction(
+  'increase_resources',
+  async params => {
+    console.log(
+      `💪 Increasing resources for ${params.service}: CPU ${params.cpu}, Memory ${params.memory}`
+    );
     // In production: kubectl set resources deployment/${params.service} --limits=cpu=${params.cpu},memory=${params.memory}
     return {
       status: 'resources_updated',
@@ -78,8 +84,9 @@ ai.registerAction('increase_resources',
   }
 );
 
-ai.registerAction('enable_circuit_breaker',
-  async (params) => {
+ai.registerAction(
+  'enable_circuit_breaker',
+  async params => {
     console.log(`🔌 Enabling circuit breaker for ${params.service}`);
     // In production: Update Istio/service mesh configuration
     return {
@@ -93,8 +100,9 @@ ai.registerAction('enable_circuit_breaker',
   }
 );
 
-ai.registerAction('drain_traffic',
-  async (params) => {
+ai.registerAction(
+  'drain_traffic',
+  async params => {
     console.log(`🚦 Draining traffic from ${params.node || params.service}`);
     // In production: kubectl drain node/${params.node} or update load balancer
     return {
@@ -108,8 +116,9 @@ ai.registerAction('drain_traffic',
   }
 );
 
-ai.registerAction('page_oncall',
-  async (params) => {
+ai.registerAction(
+  'page_oncall',
+  async params => {
     console.log(`📟 Paging on-call engineer: ${params.severity} severity`);
     console.log(`Message: ${params.message}`);
     // In production: PagerDuty/Opsgenie API call
@@ -125,8 +134,9 @@ ai.registerAction('page_oncall',
   }
 );
 
-ai.registerAction('create_incident',
-  async (params) => {
+ai.registerAction(
+  'create_incident',
+  async params => {
     console.log(`🚨 Creating incident: ${params.title}`);
     // In production: Create Jira/ServiceNow ticket
     return {
@@ -548,7 +558,6 @@ async function runExamples() {
 
       console.log('📊 Monitoring Checklist:');
       console.log('Immediate:', result.monitoring.immediate.slice(0, 3).join(', '));
-
     } catch (error) {
       console.error('Error handling incident:', error.message);
     }

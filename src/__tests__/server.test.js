@@ -4,24 +4,38 @@ const http = require('http');
 
 function request(port, method, path, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer secret-token-123',
+      ...headers
+    };
+    if (requestHeaders.Authorization === null) {
+      delete requestHeaders.Authorization;
+    }
     const opts = {
       hostname: '127.0.0.1',
       port,
       path,
       method,
-      headers: { 'Content-Type': 'application/json', ...headers }
+      headers: requestHeaders
     };
-    const req = http.request(opts, (res) => {
+    const req = http.request(opts, res => {
       let data = '';
-      res.on('data', c => data += c);
+      res.on('data', c => (data += c));
       res.on('end', () => {
         let json;
-        try { json = JSON.parse(data); } catch { json = data; }
+        try {
+          json = JSON.parse(data);
+        } catch {
+          json = data;
+        }
         resolve({ status: res.statusCode, headers: res.headers, body: json });
       });
     });
     req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
+    if (body) {
+      req.write(JSON.stringify(body));
+    }
     req.end();
   });
 }
@@ -35,14 +49,15 @@ afterAll(() => {
   jest.restoreAllMocks();
 });
 
-describe('Server — no auth', () => {
+describe('Server — authenticated requests', () => {
   let server;
   let port;
 
-  beforeAll((done) => {
+  beforeAll(done => {
     const { serve } = require('../server');
     server = serve({
       port: 0, // random available port
+      apiKey: 'secret-token-123',
       engines: { openai: 'test-key' }
     });
     server.on('listening', () => {
@@ -51,7 +66,7 @@ describe('Server — no auth', () => {
     });
   });
 
-  afterAll((done) => {
+  afterAll(done => {
     server.close(done);
   });
 
@@ -81,13 +96,13 @@ describe('Server — no auth', () => {
   test('OPTIONS returns 204 (CORS preflight)', async () => {
     const res = await request(port, 'OPTIONS', '/chat');
     expect(res.status).toBe(204);
-    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
     expect(res.headers['access-control-allow-methods']).toContain('POST');
   });
 
   test('CORS headers on regular response', async () => {
     const res = await request(port, 'GET', '/health');
-    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   test('POST /chat calls ai.chat', async () => {
@@ -155,6 +170,20 @@ describe('Server — no auth', () => {
     expect(callArgs[1].stream).toBeUndefined();
   });
 
+  test('HTTP conversations do not share history across requests', async () => {
+    server.ai.chat = jest.fn(async function (prompt) {
+      const historyBefore = this.getHistory();
+      this.addMessage('user', prompt);
+      return { success: true, message: String(historyBefore.length) };
+    });
+
+    const first = await request(port, 'POST', '/chat', { prompt: 'private one' });
+    const second = await request(port, 'POST', '/chat', { prompt: 'private two' });
+    expect(first.body.message).toBe('0');
+    expect(second.body.message).toBe('0');
+    expect(server.ai.getHistory()).toEqual([]);
+  });
+
   test('server error returns 500', async () => {
     server.ai.chat = jest.fn().mockRejectedValue(new Error('kaboom'));
 
@@ -163,7 +192,7 @@ describe('Server — no auth', () => {
     expect(res.body.error).toBe('kaboom');
   });
 
-  test('invalid JSON body returns 500', async () => {
+  test('invalid JSON body returns 400', async () => {
     // Send raw invalid JSON
     const res = await new Promise((resolve, reject) => {
       const opts = {
@@ -171,18 +200,18 @@ describe('Server — no auth', () => {
         port,
         path: '/chat',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token-123' }
       };
-      const req = http.request(opts, (res) => {
+      const req = http.request(opts, res => {
         let data = '';
-        res.on('data', c => data += c);
+        res.on('data', c => (data += c));
         res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(data) }));
       });
       req.on('error', reject);
       req.write('not json{{{');
       req.end();
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid JSON');
   });
 
@@ -201,11 +230,30 @@ describe('Server — no auth', () => {
   });
 });
 
+test('server rejects oversized request bodies', async () => {
+  const { serve } = require('../server');
+  const server = serve({
+    port: 0,
+    apiKey: 'secret-token-123',
+    maxBodyBytes: 32,
+    engines: { openai: 'test-key' }
+  });
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const response = await request(server.address().port, 'POST', '/chat', {
+      prompt: 'x'.repeat(128)
+    });
+    expect(response.status).toBe(413);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 describe('Server — with auth', () => {
   let server;
   let port;
 
-  beforeAll((done) => {
+  beforeAll(done => {
     const { serve } = require('../server');
     server = serve({
       port: 0,
@@ -218,12 +266,12 @@ describe('Server — with auth', () => {
     });
   });
 
-  afterAll((done) => {
+  afterAll(done => {
     server.close(done);
   });
 
   test('rejects request without auth', async () => {
-    const res = await request(port, 'GET', '/health');
+    const res = await request(port, 'GET', '/health', null, { Authorization: null });
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('Unauthorized');
   });
@@ -254,11 +302,12 @@ describe('Server — custom CORS', () => {
   let server;
   let port;
 
-  beforeAll((done) => {
+  beforeAll(done => {
     const { serve } = require('../server');
     server = serve({
       port: 0,
       engines: { openai: 'test-key' },
+      apiKey: 'secret-token-123',
       cors: 'https://myapp.com'
     });
     server.on('listening', () => {
@@ -267,7 +316,7 @@ describe('Server — custom CORS', () => {
     });
   });
 
-  afterAll((done) => {
+  afterAll(done => {
     server.close(done);
   });
 

@@ -146,10 +146,7 @@ async function handleSupportEmail(emailContent) {
       confidence: routingDecision.confidence,
       reasoning: routingDecision.reasoning
     },
-    suggestedResponse: generateSuggestedResponse(
-      extracted.data,
-      routingDecision.action
-    )
+    suggestedResponse: generateSuggestedResponse(extracted.data, routingDecision.action)
   };
 }
 
@@ -257,7 +254,6 @@ async function runExamples() {
       console.log('Route to:', result.routing.action.replace(/_/g, ' ').toUpperCase());
       console.log('\nSuggested Response Template:');
       console.log(result.suggestedResponse);
-
     } catch (error) {
       console.error('Error processing email:', error.message);
     }
