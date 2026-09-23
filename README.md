@@ -1,4 +1,4 @@
-![NullProtocol](assets/nullprotocol.svg)
+<img src="assets/nullprotocol.png" alt="NullProtocol" width="88" height="88" />
 
 # NullProtocol
 

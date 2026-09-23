@@ -86,7 +86,7 @@
     "src/server.js",
     "src/index.d.ts",
     "bin/serve.js",
-    "assets/nullprotocol.svg",
+    "assets/nullprotocol.png",
     "README.md",
     "LICENSE"
   ],
