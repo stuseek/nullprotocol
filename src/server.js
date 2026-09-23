@@ -15,6 +15,7 @@
 const http = require('http');
 
 function serve(options = {}) {
+  if (options.agents) return require('./agent-server').serveAgents(options);
   // Lazy-require to avoid circular — server.js only loaded when serve() called
   const AIToolkit = require('./index');
 

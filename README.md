@@ -6,7 +6,7 @@ Build on inexpensive or local language models without trusting every byte they r
 
 [![npm](https://img.shields.io/npm/v/nullprotocol?label=npm)](https://www.npmjs.com/package/nullprotocol) [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
-The library is MIT licensed. It runs without a NullProtocol account or telemetry. A hosted telemetry product is planned; there is no hosted dashboard to sign up for yet.
+The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service; the dashboard is still in development.
 
 ## Install
 
@@ -184,13 +184,49 @@ const ai = new NullProtocol({
   telemetryKey: process.env.TELEMETRY_KEY
 });
 
-// Flush queued events before shutdown if your process needs guaranteed delivery.
+// Flush the in-memory queue before shutdown; delivery remains best effort.
 await ai.telemetry?.destroy();
 ```
 
-No telemetry endpoint is bundled with the library. The planned paid service is separate from the free runtime.
+The library does not start or require the telemetry server. See the separate `nullprotocol-api` repository to run one.
 
-## HTTP adapter
+## Named agents and HTTP service
+
+A named agent is a configuration you define in code. Requests do not create agents. One process can serve several definitions; `only: ['support']` or `NP_AGENTS=support` lets the same code serve one agent per deployment.
+
+```js
+const { serveAgents, MemorySessionStore } = require('nullprotocol');
+
+serveAgents({
+  host: '127.0.0.1',
+  port: 3000,
+  apiKey: process.env.NULLPROTOCOL_API_KEY,
+  store: new MemorySessionStore(),
+  agents: [
+    {
+      id: 'support',
+      mode: 'stateless',
+      engines: { openai: process.env.OPENAI_API_KEY },
+      models: { openai: 'your-model' }
+    },
+    {
+      id: 'game-character',
+      mode: 'stateful',
+      engines: { openai: process.env.OPENAI_API_KEY },
+      models: { openai: 'your-model' },
+      basePrompt: 'You are the merchant in the game.'
+    }
+  ]
+});
+```
+
+Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. All non-health routes require a bearer key. A custom `authenticate(req)` hook may return `{ principal, agents, canManage }` to isolate callers and authorize control routes. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
+
+`MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service reads `PORT` and binds to `0.0.0.0` on managed hosts; `nullprotocol-serve --config ./agents.js` loads its configuration from a local module.
+
+Set `telemetry: true`, `telemetryEndpoint`, and `telemetryKey` on each definition to report its `id` to a Space. The telemetry server does not run agents or receive conversation history. Each HTTP response returns a `runId` shared with its telemetry events. Keep the ingest key on the server, away from browsers.
+
+## Legacy single-agent HTTP adapter
 
 The server binds to `127.0.0.1` by default, requires a Bearer token, limits request bodies to 1 MiB, and keeps request state separate.
 

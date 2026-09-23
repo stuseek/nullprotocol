@@ -47,6 +47,10 @@ export interface AIToolkitOptions {
   telemetryKey?: string;
   telemetryEndpoint?: string;
   telemetry?: boolean;
+  /** Stable identity in telemetry. Calls and sessions do not create new agents. */
+  agentId?: string;
+  /** Optional label checked against the Space ingest key. */
+  environment?: string;
   debug?: boolean;
   /** Model aliases and per-engine defaults */
   models?: ModelAliases;
@@ -95,7 +99,7 @@ export interface ChatOptions extends BaseOptions {
   /** Tools available for the AI to call */
   tools?: ToolDefinition[];
   /** Callback invoked when the AI makes a tool call */
-  onToolCall?: (name: string, parameters: Record<string, any>) => any | Promise<any>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
   /** Enable streaming mode — returns async generator */
   stream?: boolean;
   /** When streaming, collect all chunks and return a ChatResult instead of a generator */
@@ -380,5 +384,77 @@ export interface AIServer extends Server {
  * GET  /health
  */
 export function serve(options?: ServeOptions): AIServer;
+
+export interface AgentDefinition extends AIToolkitOptions {
+  id: string;
+  mode: 'stateless' | 'stateful';
+  description?: string;
+  tools?: ToolDefinition[];
+  schemas?: Record<string, Record<string, any>>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
+  callOptions?: BaseOptions;
+  maxHistoryMessages?: number;
+}
+
+export interface SessionState {
+  messages: Array<{ role: string; content: string }>;
+  context: Record<string, unknown>;
+}
+
+export interface SessionRef {
+  id: string;
+  agent: string;
+  principal: string;
+}
+
+export interface SessionStore {
+  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
+  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
+  release(ref: SessionRef, lease: string): Promise<void>;
+  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
+  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
+  delete(ref: SessionRef): Promise<string>;
+}
+
+export declare class MemorySessionStore implements SessionStore {
+  constructor(options?: { maxSessions?: number });
+  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
+  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
+  release(ref: SessionRef, lease: string): Promise<void>;
+  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
+  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
+  delete(ref: SessionRef): Promise<string>;
+}
+
+export declare class PostgresSessionStore implements SessionStore {
+  constructor(pool: { query(sql: string, values?: unknown[]): Promise<any> });
+  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
+  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
+  release(ref: SessionRef, lease: string): Promise<void>;
+  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
+  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
+  delete(ref: SessionRef): Promise<string>;
+  purgeExpired(): Promise<number>;
+}
+
+export interface AgentServerOptions {
+  agents: AgentDefinition[] | Record<string, Omit<AgentDefinition, 'id'>>;
+  apiKey?: string;
+  authenticate?: (request: import('http').IncomingMessage) => Promise<{ principal: string; agents?: string[]; canManage?: boolean } | null>;
+  store?: SessionStore;
+  only?: string[];
+  port?: number;
+  host?: string;
+  maxConcurrentTurns?: number;
+  maxBodyBytes?: number;
+  handleSignals?: boolean;
+}
+
+export function defineAgent(options: AgentDefinition): AgentDefinition;
+export function serveAgents(options: AgentServerOptions): Server;
+export function serve(options: AgentServerOptions): Server;
 
 export default AIToolkit;

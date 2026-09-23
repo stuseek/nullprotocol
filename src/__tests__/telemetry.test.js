@@ -112,6 +112,38 @@ describe('TelemetryClient', () => {
   });
 
   describe('flush', () => {
+    test('splits a backlog into ingest-sized batches', async () => {
+      client = new TelemetryClient(activeOptions);
+      const flush = client.flush;
+      client.flush = jest.fn();
+      for (let i = 0; i < 130; i++) {
+        client.track('chat', { success: true });
+      }
+      client.flush = flush;
+      client.send = jest.fn().mockResolvedValue({ body: '{"rejected":[]}' });
+      await client.flush();
+      expect(client.send.mock.calls.map(call => call[0].length)).toEqual([50, 50, 30]);
+      expect(client.queue).toHaveLength(0);
+    });
+
+    test('drops permanent failures and backs off on rate limits', async () => {
+      client = new TelemetryClient(activeOptions);
+      client.track('chat', {});
+      client.send = jest
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('bad'), { status: 400 }));
+      await client.flush();
+      expect(client.queue).toHaveLength(0);
+      expect(client.droppedEvents).toBe(1);
+      client.track('chat', {});
+      client.send.mockRejectedValueOnce(
+        Object.assign(new Error('limited'), { status: 429, retryAfter: 30 })
+      );
+      await client.flush();
+      expect(client.queue).toHaveLength(1);
+      expect(client.retryAt).toBeGreaterThan(Date.now());
+    });
+
     test('should clear queue after flush', async () => {
       client = new TelemetryClient(activeOptions);
       client.send = jest.fn().mockResolvedValue('success');

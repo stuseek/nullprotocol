@@ -21,6 +21,7 @@
  */
 
 const { serve } = require('../src/server');
+const { resolve } = require('path');
 
 // Parse simple CLI args
 const args = process.argv.slice(2);
@@ -29,6 +30,7 @@ const opts = {};
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--port' && args[i + 1]) opts.port = parseInt(args[++i], 10);
+  else if (arg === '--config' && args[i + 1]) opts.config = args[++i];
   else if (arg === '--host' && args[i + 1]) opts.host = args[++i];
   else if (arg === '--engine' && args[i + 1]) opts.defaultEngine = args[++i];
   else if (arg === '--help' || arg === '-h') {
@@ -41,6 +43,7 @@ Options:
   --port <n>       Port to listen on (default: 3000)
   --host <addr>    Bind address (default: 127.0.0.1)
   --engine <name>  Default AI engine: openai or anthropic
+  --config <file>  JavaScript module exporting server options, including agents
 
 Environment variables:
   OPENAI_API_KEY, ANTHROPIC_API_KEY, NULLPROTOCOL_PORT,
@@ -58,4 +61,5 @@ Endpoints:
   }
 }
 
-serve(opts);
+const { config, ...overrides } = opts;
+serve(config ? { ...require(resolve(config)), ...overrides } : overrides);

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 — pending npm publication
+
+### Added
+
+- Stable agent IDs and run IDs in opt-in telemetry.
+- Named multi-agent HTTP service with stateless calls, persistent sessions, context and history clearing, and per-agent disable controls.
+- Memory and PostgreSQL session stores with renewable leases.
+
+### Fixed
+
+- Bound telemetry batches to the ingest contract and retry temporary failures with backoff.
+- Flush service telemetry during graceful shutdown and redact provider errors from HTTP responses.
+- Require server-defined extraction schemas and pass caller identity to tool callbacks.
+
 ## 1.2.0 — 2026-09-23
 
 First release under the `nullprotocol` package name. `AIToolkit` remains an export alias for migration.
