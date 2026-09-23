@@ -70,17 +70,19 @@ async function toolUseDemo() {
   console.log('\n=== Tool Use ===\n');
 
   const result = await ai.chat('Look up the CVE for log4shell and tell me the CVSS score', {
-    tools: [{
-      name: 'lookup_cve',
-      description: 'Look up a CVE by ID or keyword',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'CVE ID or search term' }
-        },
-        required: ['query']
+    tools: [
+      {
+        name: 'lookup_cve',
+        description: 'Look up a CVE by ID or keyword',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'CVE ID or search term' }
+          },
+          required: ['query']
+        }
       }
-    }],
+    ],
     onToolCall: async (name, params) => {
       console.log(`  [tool called: ${name}(${JSON.stringify(params)})]`);
       // Simulated response
@@ -92,7 +94,7 @@ async function toolUseDemo() {
         description: 'Remote code execution in Apache Log4j2'
       };
     },
-    trackHistory: false  // one-off, don't track
+    trackHistory: false // one-off, don't track
   });
 
   console.log('Response:', result.message);

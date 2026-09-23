@@ -15,8 +15,9 @@ const ai = new AIToolkit({
 });
 
 // Register moderation actions
-ai.registerAction('approve_content',
-  async (params) => {
+ai.registerAction(
+  'approve_content',
+  async params => {
     console.log(`✅ Content approved: ${params.contentId}`);
     // In production: Update database, publish content
     return { status: 'published', contentId: params.contentId };
@@ -27,8 +28,9 @@ ai.registerAction('approve_content',
   }
 );
 
-ai.registerAction('flag_for_review',
-  async (params) => {
+ai.registerAction(
+  'flag_for_review',
+  async params => {
     console.log(`🚩 Flagged for human review: ${params.contentId}`);
     console.log(`Reason: ${params.reason}`);
     // In production: Add to review queue, notify moderators
@@ -40,8 +42,9 @@ ai.registerAction('flag_for_review',
   }
 );
 
-ai.registerAction('auto_reject',
-  async (params) => {
+ai.registerAction(
+  'auto_reject',
+  async params => {
     console.log(`❌ Content rejected: ${params.contentId}`);
     console.log(`Violations: ${params.violations.join(', ')}`);
     // In production: Delete/hide content, notify user
@@ -53,8 +56,9 @@ ai.registerAction('auto_reject',
   }
 );
 
-ai.registerAction('shadow_ban',
-  async (params) => {
+ai.registerAction(
+  'shadow_ban',
+  async params => {
     console.log(`👻 Shadow banned: ${params.contentId}`);
     // In production: Hide from others but visible to author
     return { status: 'shadow_banned', contentId: params.contentId };
@@ -344,7 +348,6 @@ async function runExamples() {
           console.log(`  • ${rec}`);
         });
       }
-
     } catch (error) {
       console.error('Error moderating content:', error.message);
     }

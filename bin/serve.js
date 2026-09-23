@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 
 /**
- * CLI: ai-toolkit-serve
+ * CLI: nullprotocol-serve
  *
- * Start the ai-toolkit HTTP microservice.
+ * Start the NullProtocol HTTP server.
  *
  * Usage:
- *   npx @stuseek/ai-toolkit-serve
- *   npx @stuseek/ai-toolkit-serve --port 8080
- *   AI_TOOLKIT_PORT=8080 AI_TOOLKIT_API_KEY=secret npx @stuseek/ai-toolkit-serve
+ *   npx --package nullprotocol nullprotocol-serve
+ *   npx --package nullprotocol nullprotocol-serve --port 8080
+ *   NULLPROTOCOL_PORT=8080 NULLPROTOCOL_API_KEY=secret npx --package nullprotocol nullprotocol-serve
  *
  * Environment:
  *   OPENAI_API_KEY       - OpenAI API key
  *   ANTHROPIC_API_KEY    - Anthropic API key
- *   AI_TOOLKIT_PORT      - Server port (default: 3000)
- *   AI_TOOLKIT_HOST      - Bind address (default: 0.0.0.0)
- *   AI_TOOLKIT_API_KEY   - Require Bearer token auth
- *   AI_TOOLKIT_CORS      - CORS origin (default: *)
+ *   NULLPROTOCOL_PORT      - Server port (default: 3000)
+ *   NULLPROTOCOL_HOST      - Bind address (default: 127.0.0.1)
+ *   NULLPROTOCOL_API_KEY   - Required Bearer token auth
+ *   NULLPROTOCOL_CORS      - Optional CORS origin
  *   AI_DEFAULT_ENGINE    - Default engine (openai or anthropic)
  */
 
@@ -32,19 +32,19 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--host' && args[i + 1]) opts.host = args[++i];
   else if (arg === '--engine' && args[i + 1]) opts.defaultEngine = args[++i];
   else if (arg === '--help' || arg === '-h') {
-    console.log(`ai-toolkit serve — run AI primitives as HTTP endpoints
+    console.log(`nullprotocol serve — run model operations as HTTP endpoints
 
 Usage:
-  npx @stuseek/ai-toolkit-serve [options]
+  npx --package nullprotocol nullprotocol-serve [options]
 
 Options:
   --port <n>       Port to listen on (default: 3000)
-  --host <addr>    Bind address (default: 0.0.0.0)
+  --host <addr>    Bind address (default: 127.0.0.1)
   --engine <name>  Default AI engine: openai or anthropic
 
 Environment variables:
-  OPENAI_API_KEY, ANTHROPIC_API_KEY, AI_TOOLKIT_PORT,
-  AI_TOOLKIT_HOST, AI_TOOLKIT_API_KEY, AI_TOOLKIT_CORS
+  OPENAI_API_KEY, ANTHROPIC_API_KEY, NULLPROTOCOL_PORT,
+  NULLPROTOCOL_HOST, NULLPROTOCOL_API_KEY, NULLPROTOCOL_CORS
 
 Endpoints:
   POST /extract    { data, schema, ...opts }

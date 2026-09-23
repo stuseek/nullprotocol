@@ -20,7 +20,7 @@ describe('ConfigLoader', () => {
       expect(defaults.defaultEngine).toBe('openai');
       expect(defaults.temperature).toBe(0.3);
       expect(defaults.maxTokens).toBe(1000);
-      expect(defaults.telemetry).toBe(true);
+      expect(defaults.telemetry).toBe(false);
       expect(defaults.validateOutputs).toBe(false);
     });
   });
@@ -81,15 +81,13 @@ describe('ConfigLoader', () => {
       expect(config.engines.openai).toBe('runtime-key');
     });
 
-    test('should set cloudMode when token present without API keys', () => {
-      const config = loader.load({
-        token: 'aitk_test_token'
-      });
-
-      expect(config.cloudMode).toBe(true);
+    test('rejects unsupported token-only mode', () => {
+      expect(() => loader.load({ token: 'aitk_test_token' })).toThrow(
+        'AI_TOOLKIT_TOKEN cloud mode is unavailable'
+      );
     });
 
-    test('should not set cloudMode when API keys present', () => {
+    test('accepts a legacy token alongside an API key without enabling cloud mode', () => {
       const config = loader.load({
         token: 'aitk_test_token',
         engines: { openai: 'test-key' }
@@ -109,10 +107,12 @@ describe('ConfigLoader', () => {
       consoleSpy.mockRestore();
     });
 
-    test('should not warn when token is present', () => {
+    test('rejects a token without an engine', () => {
       const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
 
-      loader.processConfig({ token: 'test-token', engines: {} });
+      expect(() => loader.processConfig({ token: 'test-token', engines: {} })).toThrow(
+        'AI_TOOLKIT_TOKEN cloud mode is unavailable'
+      );
 
       expect(consoleSpy).not.toHaveBeenCalled();
       consoleSpy.mockRestore();

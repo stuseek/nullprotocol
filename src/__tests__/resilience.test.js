@@ -146,7 +146,9 @@ describe('Resilience', () => {
       let calls = 0;
       const fn = () => {
         calls++;
-        if (calls === 1) return Promise.reject(new Error('API is overloaded'));
+        if (calls === 1) {
+          return Promise.reject(new Error('API is overloaded'));
+        }
         return Promise.resolve('ok');
       };
 
@@ -232,7 +234,12 @@ describe('Resilience', () => {
     });
 
     test('throws CircuitBreakerError when tripped', async () => {
-      const r = new Resilience({ circuitBreakerThreshold: 1, circuitBreakerResetMs: 60000, timeout: 0, maxRetries: 0 });
+      const r = new Resilience({
+        circuitBreakerThreshold: 1,
+        circuitBreakerResetMs: 60000,
+        timeout: 0,
+        maxRetries: 0
+      });
 
       // Trip it
       const fail = () => {
@@ -248,21 +255,35 @@ describe('Resilience', () => {
     });
 
     test('increments totalSkipped when tripped', async () => {
-      const r = new Resilience({ circuitBreakerThreshold: 1, circuitBreakerResetMs: 60000, timeout: 0, maxRetries: 0 });
+      const r = new Resilience({
+        circuitBreakerThreshold: 1,
+        circuitBreakerResetMs: 60000,
+        timeout: 0,
+        maxRetries: 0
+      });
 
       // Trip it
       r.circuitBreaker.tripped = true;
       r.circuitBreaker.tripTime = Date.now();
       r.circuitBreaker.failures = 1;
 
-      try { await r.execute(() => Promise.resolve()); } catch {}
-      try { await r.execute(() => Promise.resolve()); } catch {}
+      try {
+        await r.execute(() => Promise.resolve());
+      } catch {}
+      try {
+        await r.execute(() => Promise.resolve());
+      } catch {}
 
       expect(r.circuitBreaker.totalSkipped).toBe(2);
     });
 
     test('half-open: allows one attempt after resetAfterMs', async () => {
-      const r = new Resilience({ circuitBreakerThreshold: 1, circuitBreakerResetMs: 100, timeout: 0, maxRetries: 0 });
+      const r = new Resilience({
+        circuitBreakerThreshold: 1,
+        circuitBreakerResetMs: 100,
+        timeout: 0,
+        maxRetries: 0
+      });
 
       // Trip it
       r.circuitBreaker.tripped = true;
@@ -277,7 +298,12 @@ describe('Resilience', () => {
     });
 
     test('half-open: re-trips on failure', async () => {
-      const r = new Resilience({ circuitBreakerThreshold: 1, circuitBreakerResetMs: 100, timeout: 0, maxRetries: 0 });
+      const r = new Resilience({
+        circuitBreakerThreshold: 1,
+        circuitBreakerResetMs: 100,
+        timeout: 0,
+        maxRetries: 0
+      });
 
       r.circuitBreaker.tripped = true;
       r.circuitBreaker.tripTime = Date.now() - 200;

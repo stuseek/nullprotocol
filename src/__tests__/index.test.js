@@ -75,28 +75,39 @@ describe('Constructor', () => {
 describe('Extract', () => {
   test('extracts structured data', async () => {
     const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      name: 'John', age: 30, email: 'john@test.com'
-    }));
-
-    const result = await ai.extract(
-      'John is 30, email john@test.com',
-      { name: 'string', age: 'number', email: 'string' }
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        name: 'John',
+        age: 30,
+        email: 'john@test.com'
+      })
     );
+
+    const result = await ai.extract('John is 30, email john@test.com', {
+      name: 'string',
+      age: 'number',
+      email: 'string'
+    });
 
     expect(result.success).toBe(true);
     expect(result.data).toEqual({ name: 'John', age: 30, email: 'john@test.com' });
     expect(result.confidence).toBe(1); // 3/3 fields filled
   });
 
-  test('calculates partial confidence', async () => {
+  test('rejects missing or mistyped extraction fields', async () => {
     const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      name: 'John', age: null, email: ''
-    }));
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        name: 'John',
+        age: null,
+        email: ''
+      })
+    );
 
     const result = await ai.extract('John', { name: 'string', age: 'number', email: 'string' });
-    expect(result.confidence).toBeCloseTo(1/3); // 1 of 3 filled
+    expect(result.success).toBe(false);
+    expect(result.data).toBeNull();
+    expect(result.confidence).toBe(0);
   });
 
   test('handles API error gracefully', async () => {
@@ -126,17 +137,16 @@ describe('Extract', () => {
 describe('Validate', () => {
   test('validates successfully', async () => {
     const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      score: 0.9,
-      reasoning: 'Valid email format',
-      confidence: 0.95,
-      recommendation: 'pass'
-    }));
-
-    const result = await ai.validate(
-      'Must be valid email',
-      { email: 'test@example.com' }
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        score: 0.9,
+        reasoning: 'Valid email format',
+        confidence: 0.95,
+        recommendation: 'pass'
+      })
     );
+
+    const result = await ai.validate('Must be valid email', { email: 'test@example.com' });
 
     expect(result.success).toBe(true);
     expect(result.score).toBe(0.9);
@@ -157,9 +167,14 @@ describe('Validate', () => {
   test('uses lastResult when subject missing', async () => {
     const ai = createAI();
     ai.lastResult = { data: { email: 'test@test.com' } };
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      score: 0.8, reasoning: 'ok', confidence: 0.9, recommendation: 'pass'
-    }));
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        score: 0.8,
+        reasoning: 'ok',
+        confidence: 0.9,
+        recommendation: 'pass'
+      })
+    );
 
     const result = await ai.validate('Must be valid email');
     expect(result.success).toBe(true);
@@ -171,11 +186,13 @@ describe('Validate', () => {
 describe('Summarize', () => {
   test('summarizes successfully', async () => {
     const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      summary: 'Key points here',
-      keyPoints: ['point1', 'point2'],
-      confidence: 0.9
-    }));
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        summary: 'Key points here',
+        keyPoints: ['point1', 'point2'],
+        confidence: 0.9
+      })
+    );
 
     const result = await ai.summarize('Long text...');
     expect(result.success).toBe(true);
@@ -200,17 +217,16 @@ describe('Summarize', () => {
 describe('Decide', () => {
   test('makes decision successfully', async () => {
     const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue(JSON.stringify({
-      action: 'approve',
-      reasoning: 'All checks passed',
-      confidence: 0.85,
-      parameters: {}
-    }));
-
-    const result = await ai.decide(
-      { score: 85 },
-      ['approve', 'reject', 'review']
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        action: 'approve',
+        reasoning: 'All checks passed',
+        confidence: 0.85,
+        parameters: {}
+      })
     );
+
+    const result = await ai.decide({ score: 85 }, ['approve', 'reject', 'review']);
 
     expect(result.success).toBe(true);
     expect(result.action).toBe('approve');
@@ -239,7 +255,7 @@ describe('Chat', () => {
     const result = await ai.chat('Hi there');
     expect(result.success).toBe(true);
     expect(result.message).toBe('Hello! How can I help?');
-    expect(result.confidence).toBe(1.0);
+    expect(result.confidence).toBeNull();
   });
 
   test('chat with custom system prompt', async () => {
@@ -268,11 +284,13 @@ describe('Chat', () => {
       toolCalls: [{ name: 'get_weather', parameters: { city: 'NYC' }, result: 'sunny' }]
     });
 
-    const tools = [{
-      name: 'get_weather',
-      description: 'Get weather',
-      parameters: { type: 'object', properties: { city: { type: 'string' } } }
-    }];
+    const tools = [
+      {
+        name: 'get_weather',
+        description: 'Get weather',
+        parameters: { type: 'object', properties: { city: { type: 'string' } } }
+      }
+    ];
     const onToolCall = jest.fn();
 
     const result = await ai.chat('weather?', { tools, onToolCall });
@@ -345,9 +363,9 @@ describe('Conversation History', () => {
     const ai = createAI({ maxHistoryTokens: 10 }); // 10 tokens = 40 chars max
     // Each message: 20 chars => 5 tokens. Budget: 10 tokens = 40 chars.
     // With 3 messages of 20 chars each = 60 chars, trim should remove oldest
-    ai.addMessage('user', '12345678901234567890');      // 20 chars
-    ai.addMessage('assistant', '12345678901234567890');  // 20 chars — total 40, within budget
-    ai.addMessage('user', '12345678901234567890');       // total 60, over budget
+    ai.addMessage('user', '12345678901234567890'); // 20 chars
+    ai.addMessage('assistant', '12345678901234567890'); // 20 chars — total 40, within budget
+    ai.addMessage('user', '12345678901234567890'); // total 60, over budget
 
     // Should have trimmed the oldest message(s) to fit
     const history = ai.getHistory();
@@ -423,11 +441,13 @@ describe('Model Routing', () => {
 // ─── Tool Formatting ────────────────────────────────────────────
 
 describe('Tool Formatting', () => {
-  const tools = [{
-    name: 'get_weather',
-    description: 'Get weather for city',
-    parameters: { type: 'object', properties: { city: { type: 'string' } } }
-  }];
+  const tools = [
+    {
+      name: 'get_weather',
+      description: 'Get weather for city',
+      parameters: { type: 'object', properties: { city: { type: 'string' } } }
+    }
+  ];
 
   test('formats for OpenAI', () => {
     const ai = createAI();
@@ -602,8 +622,8 @@ describe('Chain', () => {
     const ai = createAI();
     const result = await ai.chain(
       () => 1,
-      (prev) => prev + 1,
-      (prev) => prev * 3
+      prev => prev + 1,
+      prev => prev * 3
     );
     expect(result).toBe(6);
   });
@@ -613,8 +633,8 @@ describe('Pipeline', () => {
   test('creates reusable pipeline', async () => {
     const ai = createAI();
     const pipe = ai.pipeline(
-      (input) => input * 2,
-      (input) => input + 10
+      input => input * 2,
+      input => input + 10
     );
     expect(await pipe(5)).toBe(20); // (5*2) + 10
   });
@@ -743,15 +763,6 @@ describe('makeAIRequest integration', () => {
       ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'fakeengine' })
     ).rejects.toThrow('Unknown engine');
   });
-
-  test('throws in cloud mode', async () => {
-    const ai = createAI();
-    delete ai.makeAIRequest;
-    ai.clients.openai = { cloudMode: true };
-    await expect(
-      ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'openai' })
-    ).rejects.toThrow('Cloud mode');
-  });
 });
 
 // ─── _handleToolCalls (OpenAI format) ───────────────────────────
@@ -771,16 +782,20 @@ describe('_handleToolCalls OpenAI', () => {
     const ai = createAI();
 
     const toolResponse = {
-      choices: [{
-        finish_reason: 'tool_calls',
-        message: {
-          role: 'assistant',
-          tool_calls: [{
-            id: 'call_1',
-            function: { name: 'get_weather', arguments: '{"city":"NYC"}' }
-          }]
+      choices: [
+        {
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_1',
+                function: { name: 'get_weather', arguments: '{"city":"NYC"}' }
+              }
+            ]
+          }
         }
-      }]
+      ]
     };
 
     const finalResponse = {
@@ -794,9 +809,11 @@ describe('_handleToolCalls OpenAI', () => {
     const onToolCall = jest.fn().mockResolvedValue('sunny, 72F');
 
     const result = await ai._handleToolCalls(
-      toolResponse, 'openai', mockClient,
+      toolResponse,
+      'openai',
+      mockClient,
       { messages: [{ role: 'user', content: 'weather?' }] },
-      { onToolCall }
+      { onToolCall, tools: [{ name: 'get_weather' }] }
     );
 
     expect(onToolCall).toHaveBeenCalledWith('get_weather', { city: 'NYC' });
@@ -841,9 +858,11 @@ describe('_handleToolCalls Anthropic', () => {
     const onToolCall = jest.fn().mockResolvedValue({ data: 'result' });
 
     const result = await ai._handleToolCalls(
-      toolResponse, 'anthropic', mockClient,
+      toolResponse,
+      'anthropic',
+      mockClient,
       { messages: [] },
-      { onToolCall }
+      { onToolCall, tools: [{ name: 'lookup' }] }
     );
 
     expect(onToolCall).toHaveBeenCalledWith('lookup', { q: 'test' });
@@ -869,9 +888,11 @@ describe('_handleToolCalls Anthropic', () => {
     const onToolCall = jest.fn().mockRejectedValue(new Error('tool broke'));
 
     const result = await ai._handleToolCalls(
-      toolResponse, 'anthropic', mockClient,
+      toolResponse,
+      'anthropic',
+      mockClient,
       { messages: [] },
-      { onToolCall }
+      { onToolCall, tools: [{ name: 'fail_fn' }] }
     );
 
     expect(result.toolCalls[0].result).toEqual({ error: 'tool broke' });

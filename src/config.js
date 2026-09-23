@@ -40,7 +40,7 @@ class ConfigLoader {
       },
       temperature: 0.3,
       maxTokens: 1000,
-      telemetry: true,
+      telemetry: false,
       validateOutputs: false,
       withExecutor: false,
       logging: false,
@@ -50,13 +50,18 @@ class ConfigLoader {
   }
 
   loadFromFile(configFile) {
-    const searchPaths = configFile ? [configFile] : [
-      './ai-toolkit.config.js',
-      './ai-toolkit.config.json',
-      './.ai-toolkit.rc',
-      path.join(process.cwd(), 'ai-toolkit.config.js'),
-      path.join(os.homedir(), '.ai-toolkit', 'config.json')
-    ];
+    const searchPaths = configFile
+      ? [configFile]
+      : [
+          './nullprotocol.config.js',
+          './nullprotocol.config.json',
+          './.nullprotocolrc',
+          './ai-toolkit.config.js',
+          './ai-toolkit.config.json',
+          './.ai-toolkit.rc',
+          path.join(process.cwd(), 'ai-toolkit.config.js'),
+          path.join(os.homedir(), '.ai-toolkit', 'config.json')
+        ];
 
     for (const configPath of searchPaths) {
       try {
@@ -92,18 +97,27 @@ class ConfigLoader {
       config.engines.anthropic = process.env.ANTHROPIC_API_KEY;
     }
 
-    // AI Toolkit Token (for telemetry/premium)
+    // Legacy cloud token is recognized only to report a clear error.
     if (process.env.AI_TOOLKIT_TOKEN) {
       config.token = process.env.AI_TOOLKIT_TOKEN;
     }
 
-    if (process.env.AI_TOOLKIT_KEY) {
-      config.telemetryKey = process.env.AI_TOOLKIT_KEY;
+    if (process.env.NULLPROTOCOL_TELEMETRY_KEY || process.env.AI_TOOLKIT_KEY) {
+      config.telemetryKey = process.env.NULLPROTOCOL_TELEMETRY_KEY || process.env.AI_TOOLKIT_KEY;
+    }
+
+    if (process.env.NULLPROTOCOL_TELEMETRY_ENDPOINT) {
+      config.telemetryEndpoint = process.env.NULLPROTOCOL_TELEMETRY_ENDPOINT;
     }
 
     // Settings
     if (process.env.AI_DEFAULT_ENGINE) {
       config.defaultEngine = process.env.AI_DEFAULT_ENGINE;
+    }
+
+    if (process.env.NULLPROTOCOL_OPENAI_BASE_URL || process.env.AI_TOOLKIT_OPENAI_BASE_URL) {
+      config.openaiBaseURL =
+        process.env.NULLPROTOCOL_OPENAI_BASE_URL || process.env.AI_TOOLKIT_OPENAI_BASE_URL;
     }
 
     if (process.env.AI_MODEL_OPENAI) {
@@ -116,7 +130,12 @@ class ConfigLoader {
       config.models.anthropic = process.env.AI_MODEL_ANTHROPIC;
     }
 
-    if (process.env.AI_TELEMETRY === 'false') {
+    if (process.env.NULLPROTOCOL_TELEMETRY === 'true') {
+      config.telemetry = true;
+    } else if (
+      process.env.NULLPROTOCOL_TELEMETRY === 'false' ||
+      process.env.AI_TELEMETRY === 'false'
+    ) {
       config.telemetry = false;
     }
 
@@ -132,33 +151,17 @@ class ConfigLoader {
   }
 
   processConfig(config) {
-    // If token is present, it can be used instead of individual API keys
     if (config.token && !config.engines.openai && !config.engines.anthropic) {
-      // Using AI Toolkit token for API access
-      // Token will be used for cloud mode
-      config.cloudMode = true;
+      throw new Error(
+        'AI_TOOLKIT_TOKEN cloud mode is unavailable. Configure an OpenAI or Anthropic API key.'
+      );
     }
 
     // Check if at least one engine is configured
-    if (!config.token && !config.engines.openai && !config.engines.anthropic) {
-      console.warn(`
-⚠️  No AI engines configured!
-
-To get started, you need either:
-
-1. API Keys (for local mode):
-   export OPENAI_API_KEY=sk-...
-   export ANTHROPIC_API_KEY=sk-ant-...
-
-2. AI Toolkit Token (for cloud mode - no API keys needed):
-   export AI_TOOLKIT_TOKEN=aitk_...
-
-   Get your free token at: https://aitoolkit.test
-
-Or pass them directly:
-   new AIToolkit({ engines: { openai: 'sk-...' } })
-   new AIToolkit({ token: 'aitk_...' })
-      `);
+    if (!config.engines.openai && !config.engines.anthropic) {
+      console.warn(
+        'No AI engine configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or pass engines to AIToolkit.'
+      );
     }
 
     return config;

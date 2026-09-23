@@ -1,6 +1,6 @@
 /**
  * Telemetry Client for AI Toolkit
- * Sends anonymous usage data for analytics (when token is present)
+ * Sends opt-in usage metadata without prompt or response content.
  */
 
 const https = require('https');
@@ -9,20 +9,19 @@ const crypto = require('crypto');
 class TelemetryClient {
   constructor(options = {}) {
     this.token = options.token;
-    this.endpoint = options.endpoint || 'https://telemetry.aitoolkit.test';
-    this.enabled = options.enabled !== false && !!this.token;
+    this.endpoint = options.endpoint || null;
+    this.enabled = options.enabled !== false && !!this.token && !!this.endpoint;
+    if (this.enabled && new URL(this.endpoint).protocol !== 'https:') {
+      throw new Error('Telemetry endpoint must use HTTPS');
+    }
     this.sessionId = this.generateSessionId();
     this.queue = [];
     this.flushInterval = null;
 
-    this.premium = false;
-
     if (this.enabled) {
       // Flush every 10 seconds
       this.flushInterval = setInterval(() => this.flush(), 10000);
-
-      // Flush on exit
-      process.on('beforeExit', () => this.flush());
+      this.flushInterval.unref();
     }
   }
 
@@ -30,22 +29,20 @@ class TelemetryClient {
     return crypto.randomBytes(16).toString('hex');
   }
 
-  isPremium() {
-    return this.premium;
-  }
-
   track(event, data = {}) {
-    if (!this.enabled) {return;}
+    if (!this.enabled) {
+      return;
+    }
 
     const safeData = {
       event,
       timestamp: Date.now(),
       sessionId: this.sessionId,
-      token: this.token,
       data: this.sanitizeData(data)
     };
 
     this.queue.push(safeData);
+    if (this.queue.length > 1000) this.queue.shift();
 
     // Flush if queue is large
     if (this.queue.length >= 50) {
@@ -66,14 +63,15 @@ class TelemetryClient {
     const allowed = [
       'duration',
       'success',
-      'error',
       'confidence',
       'score',
       'operation',
       'engine',
+      'model',
+      'inputTokens',
+      'outputTokens',
       'schemaSize',
       'actionCount',
-      'chosenAction',
       'inputLength',
       'outputLength'
     ];
@@ -89,7 +87,9 @@ class TelemetryClient {
   }
 
   async flush() {
-    if (!this.enabled || this.queue.length === 0) {return;}
+    if (!this.enabled || this.queue.length === 0) {
+      return;
+    }
 
     const events = [...this.queue];
     this.queue = [];
@@ -101,6 +101,7 @@ class TelemetryClient {
         console.error('Telemetry error:', error.message);
       }
       this.queue.unshift(...events);
+      if (this.queue.length > 1000) this.queue.length = 1000;
     }
   }
 
@@ -108,33 +109,28 @@ class TelemetryClient {
     return new Promise((resolve, reject) => {
       const data = JSON.stringify({ events });
 
-      const url = new URL(this.endpoint);
+      const url = new URL('/api/telemetry', this.endpoint);
+      if (url.protocol !== 'https:') {
+        reject(new Error('Telemetry endpoint must use HTTPS'));
+        return;
+      }
       const options = {
         hostname: url.hostname,
         port: url.port || 443,
-        path: '/api/telemetry',
+        path: url.pathname,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Content-Length': data.length,
-          'Authorization': `Bearer ${this.token}`
+          'Content-Length': Buffer.byteLength(data),
+          Authorization: `Bearer ${this.token}`
         }
       };
 
-      const req = https.request(options, (res) => {
+      const req = https.request(options, res => {
         let body = '';
-        res.on('data', chunk => body += chunk);
+        res.on('data', chunk => (body += chunk));
         res.on('end', () => {
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            try {
-              const response = JSON.parse(body);
-              if (response.tier) {
-                this.premium = response.tier !== 'free';
-              }
-              if (response.rateLimit) {
-                this.rateLimit = response.rateLimit;
-              }
-            } catch {}
             resolve(body);
           } else if (res.statusCode === 429) {
             reject(new Error('Rate limit exceeded'));
@@ -145,16 +141,17 @@ class TelemetryClient {
       });
 
       req.on('error', reject);
+      req.setTimeout(5000, () => req.destroy(new Error('Telemetry request timed out')));
       req.write(data);
       req.end();
     });
   }
 
-  destroy() {
+  async destroy() {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
     }
-    this.flush();
+    await this.flush();
   }
 }
 

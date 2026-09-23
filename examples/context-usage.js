@@ -6,7 +6,6 @@ const AIToolkit = require('../src/index');
 const { extract, validate, summarize: _summarize, decide: _decide } = require('../src/index');
 
 async function demonstrateContextUsage() {
-
   // ============================================
   // STATEFUL MODE - Using class instance
   // ============================================
@@ -34,10 +33,7 @@ async function demonstrateContextUsage() {
   // Add more context for specific analysis
   ai.addContext('customerTier', 'premium');
 
-  const validated1 = await ai.validate(
-    'Is this a high-priority issue?',
-    extracted1.data
-  );
+  const validated1 = await ai.validate('Is this a high-priority issue?', extracted1.data);
   console.log('Stateful Validate:', validated1);
 
   // Remove context when done
@@ -49,16 +45,20 @@ async function demonstrateContextUsage() {
   console.log('\n=== STATELESS MODE ===\n');
 
   // Pass context per operation
-  const extracted2 = await extract(customerData, {
-    issue: 'string',
-    sentiment: 'string',
-    request: 'string'
-  }, {
-    additionalContext: {
-      company: { name: 'TechCorp', industry: 'Software' },
-      user: { role: 'analyst', department: 'Customer Success' }
+  const extracted2 = await extract(
+    customerData,
+    {
+      issue: 'string',
+      sentiment: 'string',
+      request: 'string'
+    },
+    {
+      additionalContext: {
+        company: { name: 'TechCorp', industry: 'Software' },
+        user: { role: 'analyst', department: 'Customer Success' }
+      }
     }
-  });
+  );
   console.log('Stateless Extract:', extracted2);
 
   const validated2 = await validate(

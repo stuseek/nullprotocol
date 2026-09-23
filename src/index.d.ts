@@ -41,12 +41,12 @@ export interface AIToolkitOptions {
   maxTokens?: number;
   validateOutputs?: boolean;
   withExecutor?: boolean;
+  /** Base URL for an OpenAI compatible API, including a local server. */
+  openaiBaseURL?: string;
   token?: string;
   telemetryKey?: string;
   telemetryEndpoint?: string;
   telemetry?: boolean;
-  logging?: boolean;
-  audit?: boolean;
   debug?: boolean;
   /** Model aliases and per-engine defaults */
   models?: ModelAliases;
@@ -60,6 +60,8 @@ export interface AIToolkitOptions {
   trackHistory?: boolean;
   /** Max tokens to keep in conversation history (default 50000) */
   maxHistoryTokens?: number;
+  /** Character budget for system text, current input, tool definitions, and included history. */
+  maxContextLength?: number;
 }
 
 export interface ToolDefinition {
@@ -93,7 +95,7 @@ export interface ChatOptions extends BaseOptions {
   /** Tools available for the AI to call */
   tools?: ToolDefinition[];
   /** Callback invoked when the AI makes a tool call */
-  onToolCall?: (name: string, parameters: Record<string, any>) => Promise<any>;
+  onToolCall?: (name: string, parameters: Record<string, any>) => any | Promise<any>;
   /** Enable streaming mode — returns async generator */
   stream?: boolean;
   /** When streaming, collect all chunks and return a ChatResult instead of a generator */
@@ -139,7 +141,7 @@ export interface DecideResult {
 export interface ChatResult {
   success: boolean;
   message: string | null;
-  confidence: number;
+  confidence: number | null;
   toolCalls?: ToolCallResult[];
   error?: string;
 }
@@ -157,6 +159,11 @@ export declare class CircuitBreakerError extends Error {
   totalSkipped: number;
 }
 
+export declare class ConfirmationRequiredError extends Error {
+  name: 'ConfirmationRequiredError';
+  action: string;
+}
+
 export declare class Resilience {
   constructor(options?: {
     maxRetries?: number;
@@ -164,7 +171,7 @@ export declare class Resilience {
     circuitBreakerThreshold?: number;
     circuitBreakerResetMs?: number;
   });
-  execute<T>(fn: () => Promise<T>): Promise<T>;
+  execute<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T>;
   isTripped(): boolean;
   reset(): void;
   recordSuccess(): void;
@@ -210,6 +217,9 @@ export declare class AIToolkit {
    * Clear conversation history
    */
   clearHistory(): this;
+
+  /** Set the character budget for future model requests. */
+  setMaxContextLength(maxChars: number): this;
 
   /**
    * Extract structured information from unstructured data
@@ -266,7 +276,7 @@ export declare class AIToolkit {
   /**
    * Execute registered action
    */
-  execute(decision: DecideResult): Promise<any>;
+  execute(decision: DecideResult, options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }): Promise<any>;
 
   /**
    * Register action for execution
@@ -288,6 +298,9 @@ export declare class AIToolkit {
    */
   forDomain(domain: string): AIToolkit;
 }
+
+/** Preferred public name; AIToolkit remains as a compatibility alias. */
+export { AIToolkit as NullProtocol };
 
 // Stateless function exports
 export function extract(
@@ -319,6 +332,11 @@ export function chat(
   options?: ChatOptions
 ): Promise<ChatResult>;
 
+export function execute(
+  decision: DecideResult,
+  options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }
+): Promise<any>;
+
 export function configure(options: AIToolkitOptions): AIToolkit;
 
 export const presets: Record<string, any>;
@@ -337,12 +355,14 @@ export const createAI: {
 export interface ServeOptions extends AIToolkitOptions {
   /** Port to listen on (default: 3000) */
   port?: number;
-  /** Bind address (default: 0.0.0.0) */
+  /** Bind address (default: 127.0.0.1) */
   host?: string;
-  /** Require Bearer token auth */
+  /** Required Bearer token auth */
   apiKey?: string;
-  /** CORS origin (default: *) */
+  /** Optional CORS origin */
   cors?: string;
+  /** Maximum JSON request size in bytes (default: 1048576) */
+  maxBodyBytes?: number;
 }
 
 import type { Server } from 'http';

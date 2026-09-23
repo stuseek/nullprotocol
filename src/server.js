@@ -1,15 +1,15 @@
 /**
- * AI Toolkit Microservice Server
+ * NullProtocol HTTP Server
  *
  * Exposes the same primitives (extract, validate, summarize, decide, chat)
  * as HTTP endpoints. Zero external dependencies — uses Node's built-in http.
  *
  * Usage:
- *   const { serve } = require('@stuseek/ai-toolkit');
+ *   const { serve } = require('nullprotocol');
  *   const server = serve({ port: 3000, engines: { anthropic: '...' } });
  *
  * Or CLI:
- *   npx @stuseek/ai-toolkit-serve
+ *   npx --package nullprotocol nullprotocol-serve
  */
 
 const http = require('http');
@@ -18,39 +18,48 @@ function serve(options = {}) {
   // Lazy-require to avoid circular — server.js only loaded when serve() called
   const AIToolkit = require('./index');
 
-  const port = options.port ?? (process.env.AI_TOOLKIT_PORT ? parseInt(process.env.AI_TOOLKIT_PORT, 10) : 3000);
-  const host = options.host ?? process.env.AI_TOOLKIT_HOST ?? '0.0.0.0';
-  const apiKey = options.apiKey || process.env.AI_TOOLKIT_API_KEY || null;
+  const portValue = process.env.NULLPROTOCOL_PORT || process.env.AI_TOOLKIT_PORT;
+  const port = options.port ?? (portValue ? parseInt(portValue, 10) : 3000);
+  const host =
+    options.host ?? process.env.NULLPROTOCOL_HOST ?? process.env.AI_TOOLKIT_HOST ?? '127.0.0.1';
+  const apiKey =
+    options.apiKey || process.env.NULLPROTOCOL_API_KEY || process.env.AI_TOOLKIT_API_KEY || null;
+  if (!apiKey) throw new Error('NULLPROTOCOL_API_KEY is required to start the HTTP server');
+  const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
+  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1) {
+    throw new Error('maxBodyBytes must be a positive integer');
+  }
 
   // Strip server-only options, pass the rest to AIToolkit
-  const { port: _p, host: _h, apiKey: _k, cors, ...toolkitOpts } = options;
+  const { port: _p, host: _h, apiKey: _k, cors, maxBodyBytes: _m, ...toolkitOpts } = options;
   const ai = new AIToolkit(toolkitOpts);
 
-  const corsOrigin = cors || process.env.AI_TOOLKIT_CORS || '*';
+  const corsOrigin = cors || process.env.NULLPROTOCOL_CORS || process.env.AI_TOOLKIT_CORS || null;
 
   // Route table — maps path to method + arg parser
   const routes = {
-    '/extract': async (body) => {
+    '/extract': async (requestAI, body) => {
       const { data, schema, ...opts } = body;
-      return ai.extract(data, schema, opts);
+      return requestAI.extract(data, schema, opts);
     },
-    '/validate': async (body) => {
+    '/validate': async (requestAI, body) => {
       const { criteria, subject, reference, ...opts } = body;
-      return ai.validate(criteria, subject, reference || null, opts);
+      return requestAI.validate(criteria, subject, reference || null, opts);
     },
-    '/summarize': async (body) => {
+    '/summarize': async (requestAI, body) => {
       const { content, ...opts } = body;
-      return ai.summarize(content, opts);
+      return requestAI.summarize(content, opts);
     },
-    '/decide': async (body) => {
+    '/decide': async (requestAI, body) => {
       const { context, actions, ...opts } = body;
-      return ai.decide(context, actions, opts);
+      return requestAI.decide(context, actions, opts);
     },
-    '/chat': async (body) => {
+    '/chat': async (requestAI, body) => {
       const { prompt, ...opts } = body;
-      // Strip stream — HTTP response is always collected
+      // HTTP requests are stateless and always return a collected response.
       delete opts.stream;
-      return ai.chat(prompt, opts);
+      delete opts.trackHistory;
+      return requestAI.chat(prompt, opts);
     },
     '/health': async () => ({
       status: 'ok',
@@ -63,13 +72,29 @@ function serve(options = {}) {
   function readBody(req) {
     return new Promise((resolve, reject) => {
       const chunks = [];
-      req.on('data', c => chunks.push(c));
+      let size = 0;
+      let tooLarge = false;
+      req.on('data', c => {
+        if (tooLarge) return;
+        size += c.length;
+        if (size > maxBodyBytes) {
+          tooLarge = true;
+          const error = new Error('Request body too large');
+          error.status = 413;
+          reject(error);
+          return;
+        }
+        chunks.push(c);
+      });
       req.on('end', () => {
+        if (tooLarge) return;
         try {
           const raw = Buffer.concat(chunks).toString();
           resolve(raw ? JSON.parse(raw) : {});
         } catch (e) {
-          reject(new Error('Invalid JSON body'));
+          const error = new Error('Invalid JSON body');
+          error.status = 400;
+          reject(error);
         }
       });
       req.on('error', reject);
@@ -78,12 +103,13 @@ function serve(options = {}) {
 
   function sendJSON(res, status, data) {
     const body = JSON.stringify(data);
-    res.writeHead(status, {
+    const headers = {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': corsOrigin,
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-    });
+    };
+    if (corsOrigin) headers['Access-Control-Allow-Origin'] = corsOrigin;
+    res.writeHead(status, headers);
     res.end(body);
   }
 
@@ -95,15 +121,13 @@ function serve(options = {}) {
     }
 
     // Auth check
-    if (apiKey) {
-      const auth = req.headers.authorization;
-      if (!auth || auth !== `Bearer ${apiKey}`) {
-        sendJSON(res, 401, { error: 'Unauthorized' });
-        return;
-      }
+    const auth = req.headers.authorization;
+    if (!auth || auth !== `Bearer ${apiKey}`) {
+      sendJSON(res, 401, { error: 'Unauthorized' });
+      return;
     }
 
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
 
     // GET /health
@@ -134,19 +158,23 @@ function serve(options = {}) {
 
     try {
       const body = await readBody(req);
-      const result = await handler(body);
-      sendJSON(res, 200, result);
+      const requestAI = Object.create(ai);
+      requestAI.context = new Map();
+      requestAI.messages = [];
+      requestAI.lastResult = null;
+      const result = await handler(requestAI, body);
+      sendJSON(res, result?.success === false ? 502 : 200, result);
     } catch (err) {
-      const status = err.name === 'CircuitBreakerError' ? 503 : 500;
+      const status = err.status || (err.name === 'CircuitBreakerError' ? 503 : 500);
       sendJSON(res, status, { error: err.message });
     }
   });
 
   server.listen(port, host, () => {
-    console.log(`ai-toolkit server running on http://${host}:${port}`);
+    console.log(`nullprotocol server running on http://${host}:${port}`);
     console.log(`  POST /extract, /validate, /summarize, /decide, /chat`);
     console.log(`  GET  /health`);
-    if (apiKey) console.log('  Auth: Bearer token required');
+    console.log('  Auth: Bearer token required');
   });
 
   // Attach the toolkit instance so callers can use it directly too

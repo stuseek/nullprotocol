@@ -1,4 +1,7 @@
 const { TelemetryClient } = require('../telemetry');
+const https = require('https');
+const { EventEmitter } = require('events');
+const activeOptions = { token: 'test', endpoint: 'https://test.endpoint' };
 
 describe('TelemetryClient', () => {
   let client;
@@ -10,6 +13,7 @@ describe('TelemetryClient', () => {
   afterEach(() => {
     jest.useRealTimers();
     if (client) {
+      client.enabled = false;
       client.destroy();
     }
   });
@@ -33,7 +37,7 @@ describe('TelemetryClient', () => {
     });
 
     test('should generate session ID', () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
 
       expect(client.sessionId).toBeDefined();
       expect(typeof client.sessionId).toBe('string');
@@ -43,7 +47,7 @@ describe('TelemetryClient', () => {
 
   describe('track', () => {
     test('should add events to queue when enabled', () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
 
       client.track('test_event', { data: 'value' });
 
@@ -60,7 +64,7 @@ describe('TelemetryClient', () => {
     });
 
     test('should flush when queue reaches 50 events', () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
       client.flush = jest.fn();
 
       for (let i = 0; i < 50; i++) {
@@ -73,7 +77,7 @@ describe('TelemetryClient', () => {
 
   describe('sanitizeData', () => {
     test('should remove sensitive fields', () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
 
       const sanitized = client.sanitizeData({
         input: 'sensitive',
@@ -91,7 +95,7 @@ describe('TelemetryClient', () => {
     });
 
     test('should only keep allowed fields', () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
 
       const sanitized = client.sanitizeData({
         duration: 100,
@@ -107,18 +111,9 @@ describe('TelemetryClient', () => {
     });
   });
 
-  describe('isPremium', () => {
-    test('should return premium status', () => {
-      client = new TelemetryClient({ token: 'test' });
-      client.premium = true;
-
-      expect(client.isPremium()).toBe(true);
-    });
-  });
-
   describe('flush', () => {
     test('should clear queue after flush', async () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
       client.send = jest.fn().mockResolvedValue('success');
 
       client.track('event1', {});
@@ -131,7 +126,7 @@ describe('TelemetryClient', () => {
     });
 
     test('should restore queue on error', async () => {
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
       client.send = jest.fn().mockRejectedValue(new Error('Network error'));
 
       client.track('event1', {});
@@ -143,11 +138,58 @@ describe('TelemetryClient', () => {
     });
   });
 
+  test('sends only usage metadata and authenticates in the header', async () => {
+    client = new TelemetryClient(activeOptions);
+    let body = '';
+    let requestOptions;
+    const requestSpy = jest.spyOn(https, 'request').mockImplementation((options, onResponse) => {
+      requestOptions = options;
+      const req = new EventEmitter();
+      req.setTimeout = jest.fn();
+      req.write = chunk => {
+        body += chunk;
+      };
+      req.end = () => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        onResponse(res);
+        res.emit('data', '{}');
+        res.emit('end');
+      };
+      return req;
+    });
+
+    try {
+      client.track('model_usage', {
+        engine: 'openai',
+        model: 'small',
+        inputTokens: 12,
+        outputTokens: 3,
+        input: 'private prompt',
+        output: 'private reply'
+      });
+      await client.flush();
+      expect(requestOptions.headers.Authorization).toBe('Bearer test');
+      expect(body).toContain('"inputTokens":12');
+      expect(body).not.toContain('private prompt');
+      expect(body).not.toContain('private reply');
+      expect(body).not.toContain('"token"');
+    } finally {
+      requestSpy.mockRestore();
+    }
+  });
+
+  test('rejects a non-HTTPS endpoint before queueing events', () => {
+    expect(() => new TelemetryClient({ token: 'test', endpoint: 'http://example.test' })).toThrow(
+      'HTTPS'
+    );
+  });
+
   describe('destroy', () => {
     test('should clear interval and flush', () => {
       // Use real timers for this test since we need clearInterval to be real
       jest.useRealTimers();
-      client = new TelemetryClient({ token: 'test' });
+      client = new TelemetryClient(activeOptions);
       client.flush = jest.fn();
       const interval = client.flushInterval;
 

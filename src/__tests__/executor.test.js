@@ -45,9 +45,9 @@ describe('ActionExecutor', () => {
     });
 
     test('should throw for unregistered action', async () => {
-      await expect(
-        executor.execute({ action: 'unknownAction' })
-      ).rejects.toThrow('Unknown action: unknownAction');
+      await expect(executor.execute({ action: 'unknownAction' })).rejects.toThrow(
+        'Unknown action: unknownAction'
+      );
     });
 
     test('should handle action execution errors gracefully', async () => {

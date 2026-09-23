@@ -152,7 +152,9 @@ async function processExpenseReport(expenseData) {
  * Generate expense breakdown by category
  */
 function generateExpenseBreakdown(expenseData) {
-  if (!expenseData.expense_items) {return {};}
+  if (!expenseData.expense_items) {
+    return {};
+  }
 
   const breakdown = {};
   expenseData.expense_items.forEach(item => {
@@ -300,7 +302,6 @@ async function runExamples() {
           console.log(`  → ${notif.to}: ${notif.message}`);
         });
       }
-
     } catch (error) {
       console.error('Error processing expense report:', error.message);
     }
