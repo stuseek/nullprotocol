@@ -13,6 +13,8 @@
 - Bound telemetry batches to the ingest contract and retry temporary failures with backoff.
 - Flush service telemetry during graceful shutdown and redact provider errors from HTTP responses.
 - Require server-defined extraction schemas and pass caller identity to tool callbacks.
+- Include `error` in failed `validate` and `decide` results.
+- Reject implicit chaining after a failed operation instead of sending a failure or stale result to a model.
 
 ## 1.2.0 — 2026-09-23
 

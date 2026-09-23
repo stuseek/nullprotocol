@@ -162,6 +162,7 @@ describe('Validate', () => {
     const result = await ai.validate('rule', { data: 'test' });
     expect(result.success).toBe(false);
     expect(result.score).toBe(0);
+    expect(result.error).toBe('Validation failed');
   });
 
   test('uses lastResult when subject missing', async () => {
@@ -178,6 +179,35 @@ describe('Validate', () => {
 
     const result = await ai.validate('Must be valid email');
     expect(result.success).toBe(true);
+  });
+
+  test('does not chain a failed extraction into another model call', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue('{}');
+    expect((await ai.extract('text', { name: 'string' })).success).toBe(false);
+    ai.makeAIRequest.mockClear();
+
+    const results = await Promise.all([
+      ai.validate('Must have a name'),
+      ai.summarize(),
+      ai.decide(undefined, ['approve'])
+    ]);
+    for (const result of results) {
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Cannot chain from a failed result');
+    }
+    expect(ai.makeAIRequest).not.toHaveBeenCalled();
+  });
+
+  test('a thrown provider error invalidates an earlier successful chain result', async () => {
+    const ai = createAI();
+    ai.lastResult = { success: true, data: { stale: true } };
+    ai.makeAIRequest.mockRejectedValueOnce(new Error('Network error'));
+
+    expect((await ai.extract('text', { name: 'string' })).error).toBe('Network error');
+    ai.makeAIRequest.mockClear();
+    expect((await ai.summarize()).error).toBe('Cannot chain from a failed result');
+    expect(ai.makeAIRequest).not.toHaveBeenCalled();
   });
 });
 
@@ -242,6 +272,7 @@ describe('Decide', () => {
     expect(result.success).toBe(false);
     expect(result.action).toBeNull();
     expect(result.confidence).toBe(0);
+    expect(result.error).toBe('Decision failed');
   });
 });
 
@@ -703,6 +734,7 @@ describe('Module Exports', () => {
 describe('Streaming', () => {
   test('chat with stream returns generator', async () => {
     const ai = createAI();
+    ai.lastResult = { success: true, data: { stale: true } };
     // Replace makeStreamRequest with a mock generator
     ai.makeStreamRequest = async function* () {
       yield 'Hello';
@@ -710,11 +742,14 @@ describe('Streaming', () => {
     };
 
     const gen = await ai.chat('test', { stream: true });
+    expect(ai.lastResult.success).toBe(false);
     const chunks = [];
     for await (const chunk of gen) {
       chunks.push(chunk);
     }
     expect(chunks).toEqual(['Hello', ' World']);
+    expect((await ai.summarize()).error).toBe('Cannot chain from a failed result');
+    expect(ai.makeAIRequest).not.toHaveBeenCalled();
   });
 
   test('chat with stream+collect returns full message', async () => {
@@ -727,6 +762,7 @@ describe('Streaming', () => {
     const result = await ai.chat('test', { stream: true, collect: true });
     expect(result.success).toBe(true);
     expect(result.message).toBe('Hello World');
+    expect(ai.lastResult).toEqual(result);
   });
 
   test('stream+collect tracks history when trackHistory=true', async () => {

@@ -829,12 +829,14 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      return {
+      const result = {
         success: false,
         data: null,
         confidence: 0,
         error: error.message
       };
+      this.lastResult = result;
+      return result;
     }
   }
 
@@ -848,6 +850,7 @@ class AIToolkit {
     try {
       // Support chaining - use last result if subject not provided
       if (typeof criteria === 'string' && !subject && this.lastResult) {
+        if (this.lastResult.success === false) throw new Error('Cannot chain from a failed result');
         subject = this.lastResult.data || this.lastResult;
       }
 
@@ -896,12 +899,15 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      return {
+      const result = {
         success: false,
         score: 0,
         reasoning: error.message,
-        confidence: 0
+        confidence: 0,
+        error: error.message
       };
+      this.lastResult = result;
+      return result;
     }
   }
 
@@ -915,6 +921,7 @@ class AIToolkit {
     try {
       // Support chaining - use last result if content not provided
       if (!content && this.lastResult) {
+        if (this.lastResult.success === false) throw new Error('Cannot chain from a failed result');
         content = this.lastResult.data || this.lastResult;
       }
 
@@ -961,12 +968,14 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      return {
+      const result = {
         success: false,
         summary: '',
         keyPoints: [],
         error: error.message
       };
+      this.lastResult = result;
+      return result;
     }
   }
 
@@ -980,6 +989,7 @@ class AIToolkit {
     try {
       // Support chaining - use last result if context not provided
       if (!context && this.lastResult) {
+        if (this.lastResult.success === false) throw new Error('Cannot chain from a failed result');
         context = this.lastResult.data || this.lastResult;
       }
 
@@ -1036,12 +1046,15 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      return {
+      const result = {
         success: false,
         action: null,
         reasoning: error.message,
-        confidence: 0
+        confidence: 0,
+        error: error.message
       };
+      this.lastResult = result;
+      return result;
     }
   }
 
@@ -1092,6 +1105,10 @@ class AIToolkit {
 
       // Streaming path
       if (stream) {
+        this.lastResult = {
+          success: false,
+          error: 'Streaming result is not available for chaining'
+        };
         const generator = this.makeStreamRequest(messages, {
           ...apiOptions,
           includeHistory: shouldTrack,
@@ -1105,12 +1122,14 @@ class AIToolkit {
           }
 
           if (!full.trim()) {
-            return {
+            const result = {
               success: false,
               message: null,
               confidence: null,
               error: 'Model returned an empty response'
             };
+            this.lastResult = result;
+            return result;
           }
           if (shouldTrack) {
             if (Array.isArray(userPrompt))
@@ -1119,7 +1138,9 @@ class AIToolkit {
             this.addMessage('assistant', full);
           }
 
-          return { success: true, message: full, confidence: null };
+          const result = { success: true, message: full, confidence: null };
+          this.lastResult = result;
+          return result;
         }
 
         return generator;
@@ -1180,12 +1201,14 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      return {
+      const result = {
         success: false,
         message: null,
         confidence: null,
         error: error.message
       };
+      this.lastResult = result;
+      return result;
     }
   }
 

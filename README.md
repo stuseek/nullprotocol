@@ -55,9 +55,9 @@ if (!result.success) {
 | `validate(criteria, subject)` | Score and reasoning | Score range and response shape |
 | `summarize(content)` | Summary and key points | Response shape and length |
 | `decide(context, actions)` | Selected action | Membership in the allowed list |
-| `chat(prompt)` | Text or tool calls | Nonempty response, tool allowlist |
+| `chat(prompt)` | Text or tool calls | Nonstreaming: nonempty response, tool allowlist |
 
-Every operation returns `{ success, ... }`. Model and validation failures appear as `{ success: false, error }`. Handle those results before acting on them.
+Nonstreaming operations return `{ success, ... }`. Model and validation failures appear as `{ success: false, error }`. Handle those results before acting on them. Streaming `chat` returns an async generator unless you set `collect: true`.
 
 ### Model choice
 
@@ -152,11 +152,11 @@ const stream = await ai.chat('Explain this code', { stream: true });
 for await (const chunk of stream) process.stdout.write(chunk);
 ```
 
-History is opt in and applies to `chat` only. For separate users or conversations, create separate instances. Streaming returns an async generator; `{ stream: true, collect: true }` returns a normal result.
+History is opt in and applies to `chat` only. For separate users or conversations, create separate instances. Streaming returns an async generator; errors surface during iteration. It does not save that turn to history or `lastResult`, check for an empty response, or run tools. `{ stream: true, collect: true }` returns a normal result and saves the turn when history is enabled, but still does not run tools.
 
 ### Bound the context
 
-Set `maxContextLength` in characters when using a model with a small context window. NullProtocol keeps the system text and current input, then applies a sliding window to older chat turns. You can change the budget while the agent runs.
+Set `maxContextLength` in characters when using a model with a small context window. NullProtocol keeps the system text and current input, then removes the oldest chat turns from its in-memory history before the model call. You can change the budget while the agent runs.
 
 ```js
 const ai = new NullProtocol({
@@ -174,7 +174,7 @@ If the system text, current input, or tool definitions alone exceed the budget, 
 
 ## Optional telemetry
 
-Telemetry is off by default. With `telemetry: true`, an HTTPS endpoint, and a key, the client sends operation metadata and model token usage when the provider returns it. It excludes prompts, responses, tool parameters, and credentials from event bodies. The key goes in the authorization header. The client buffers up to 1,000 events and uses a short network timeout.
+Telemetry is off by default. With `telemetry: true`, an HTTPS endpoint, and a key, the client sends operation metadata and model token usage when the provider returns it. Streaming `chat`, including `collect: true`, does not currently emit telemetry events. It excludes prompts, responses, tool parameters, and credentials from event bodies. The key goes in the authorization header. The client buffers up to 1,000 events and uses a 15-second socket inactivity timeout per batch.
 
 ```js
 const ai = new NullProtocol({
@@ -220,7 +220,7 @@ serveAgents({
 });
 ```
 
-Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. Non-health routes require an API key or an `authenticate(req)` hook. The hook may return `{ principal, agents, canManage }` to isolate callers and authorize control routes. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
+Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. Non-health routes require an API key or an `authenticate(req)` hook. When a hook is supplied, the API key is ignored. An API key grants access to all agent and management routes; use the hook for caller-specific access. The hook may return `{ principal, agents, canManage }`; `principal` isolates sessions, `agents` limits agent access, and `canManage` permits `enable` and `disable`. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
 
 `MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service reads `PORT` and binds to `0.0.0.0` on managed hosts; `nullprotocol-serve --config ./agents.js` loads its configuration from a local module.
 
