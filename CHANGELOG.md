@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 — pending npm publication
+## 1.3.0 — source release; npm publication pending
 
 ### Added
 
@@ -16,7 +16,7 @@
 
 ## 1.2.0 — 2026-09-23
 
-First release under the `nullprotocol` package name. `AIToolkit` remains an export alias for migration.
+First source release under the `nullprotocol` package name. It has not been published to npm. `AIToolkit` remains an export alias for migration.
 
 ### Added
 

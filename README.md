@@ -4,14 +4,14 @@
 
 Build on inexpensive or local language models without trusting every byte they return. NullProtocol adds structured output checks, bounded tool calls, retries, timeouts, and a small HTTP adapter to OpenAI and Anthropic SDKs.
 
-[![npm](https://img.shields.io/npm/v/nullprotocol?label=npm)](https://www.npmjs.com/package/nullprotocol) [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
+[![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
-The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service; the dashboard is still in development.
+The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service; the dashboard is still in development. The `nullprotocol` package has not been published to npm yet; install this source release from GitHub.
 
 ## Install
 
 ```sh
-npm install nullprotocol openai
+npm install git+https://github.com/stuseek/nullprotocol.git openai
 ```
 
 Node.js 18 or newer is required. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
@@ -244,7 +244,7 @@ Routes: `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat`, and `GET
 
 ## Moving from `@stuseek/ai-toolkit`
 
-Install `nullprotocol`, change the package import, and use `NullProtocol` in new code. `AIToolkit` remains an export alias. Existing deployments pinned to `@stuseek/ai-toolkit` keep using that package until migrated. The old token only cloud mode never had a working backend and now reports a clear configuration error.
+Install this repository as shown above, change the package import, and use `NullProtocol` in new code. `AIToolkit` remains an export alias. Existing deployments pinned to `@stuseek/ai-toolkit` keep using that package until migrated. The old token only cloud mode never had a working backend and now reports a clear configuration error.
 
 ## License
 
