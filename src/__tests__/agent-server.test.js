@@ -153,6 +153,67 @@ test('session store enforces owner and lease', async () => {
   expect(await store.delete(ref)).toBe('deleted');
 });
 
+test('session limits isolate principals and report capacity clearly', async () => {
+  const store = new MemorySessionStore({ maxSessions: 2, maxSessionsPerPrincipal: 1 });
+  await store.create({ agent: 'a', principal: 'alice' });
+  await expect(store.create({ agent: 'b', principal: 'alice' })).rejects.toMatchObject({
+    status: 429,
+    code: 'session_limit_reached'
+  });
+  await store.create({ agent: 'a', principal: 'bob' });
+  await expect(store.create({ agent: 'a', principal: 'carol' })).rejects.toMatchObject({
+    status: 503,
+    code: 'session_store_full'
+  });
+});
+
+test('operations and tool output are controlled by the agent definition', async () => {
+  const restricted = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'reader', mode: 'stateless', engines: { openai: 'test' }, operations: ['chat'] }]
+  });
+  try {
+    await new Promise(resolve => restricted.once('listening', resolve));
+    const url = `http://127.0.0.1:${restricted.address().port}/v1/agents/reader/invoke`;
+    const agent = restricted.agents.get('reader');
+    agent.base.chat = jest.fn(async () => ({
+      success: true,
+      message: 'done',
+      toolCalls: [{ name: 'internal', parameters: { secret: 'x' }, result: { secret: 'y' } }]
+    }));
+    const invoke = body =>
+      global.fetch(url, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+    expect((await invoke({ operation: 'decide', input: { actions: ['a'] } })).status).toBe(403);
+    const response = await (await invoke({ input: { prompt: 'hello' } })).json();
+    expect(response.output.message).toBe('done');
+    expect(JSON.stringify(response)).not.toContain('secret');
+    expect(agent.base.chat).toHaveBeenCalledTimes(1);
+  } finally {
+    await new Promise(resolve => restricted.close(resolve));
+  }
+});
+
+test('invalid agent limits fail at startup', () => {
+  for (const option of [
+    { operations: ['unknown'] },
+    { operations: ['chat', 'chat'] },
+    { maxHistoryMessages: 0 },
+    { maxHistoryMessages: -1 },
+    { exposeToolCalls: 'yes' }
+  ]) {
+    expect(() =>
+      serveAgents({
+        port: 0,
+        handleSignals: false,
+        apiKey: 'test-key',
+        agents: [{ id: 'invalid', mode: 'stateless', engines: { openai: 'test' }, ...option }]
+      })
+    ).toThrow();
+  }
+});
+
 test('custom identity scopes agent listing and management', async () => {
   const managed = serveAgents({
     port: 0,
@@ -160,6 +221,9 @@ test('custom identity scopes agent listing and management', async () => {
     authenticate: async req => {
       if (req.headers.authorization === 'Bearer alice') {
         return { principal: 'alice', agents: ['allowed'], canManage: false };
+      }
+      if (req.headers.authorization === 'Bearer bob') {
+        return { principal: 'bob', agents: null, canManage: 'yes' };
       }
       return null;
     },
@@ -179,6 +243,13 @@ test('custom identity scopes agent listing and management', async () => {
     ).toBe(403);
     expect(
       (await global.fetch(`${url}/v1/agents/allowed/disable`, { method: 'POST', headers })).status
+    ).toBe(403);
+    expect(
+      (
+        await global.fetch(`${url}/v1/agents`, {
+          headers: { Authorization: 'Bearer bob' }
+        })
+      ).status
     ).toBe(403);
   } finally {
     await new Promise(resolve => managed.close(resolve));

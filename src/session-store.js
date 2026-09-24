@@ -5,10 +5,13 @@ function clone(value) {
 }
 
 class MemorySessionStore {
-  constructor({ maxSessions = 10000 } = {}) {
+  constructor({ maxSessions = 10000, maxSessionsPerPrincipal = 1000 } = {}) {
     if (!Number.isInteger(maxSessions) || maxSessions < 1)
       throw new Error('maxSessions must be positive');
+    if (!Number.isInteger(maxSessionsPerPrincipal) || maxSessionsPerPrincipal < 1)
+      throw new Error('maxSessionsPerPrincipal must be positive');
     this.maxSessions = maxSessions;
+    this.maxSessionsPerPrincipal = maxSessionsPerPrincipal;
     this.sessions = new Map();
   }
 
@@ -16,7 +19,19 @@ class MemorySessionStore {
     for (const [key, item] of this.sessions) {
       if (item.expiresAt <= Date.now()) this.sessions.delete(key);
     }
-    if (this.sessions.size >= this.maxSessions) throw new Error('Session store capacity reached');
+    const owned = [...this.sessions.values()].filter(
+      item => item.principal === ref.principal
+    ).length;
+    if (owned >= this.maxSessionsPerPrincipal)
+      throw Object.assign(new Error('Session limit reached'), {
+        status: 429,
+        code: 'session_limit_reached'
+      });
+    if (this.sessions.size >= this.maxSessions)
+      throw Object.assign(new Error('Session store capacity reached'), {
+        status: 503,
+        code: 'session_store_full'
+      });
     const id = randomUUID();
     this.sessions.set(id, {
       ...ref,
@@ -93,19 +108,51 @@ class MemorySessionStore {
 }
 
 class PostgresSessionStore {
-  constructor(pool) {
-    if (!pool?.query) throw new Error('PostgresSessionStore requires a pg-compatible pool');
+  constructor(pool, { maxSessionsPerPrincipal = 1000 } = {}) {
+    if (!pool?.query || !pool?.connect)
+      throw new Error('PostgresSessionStore requires a pg-compatible pool');
+    if (!Number.isInteger(maxSessionsPerPrincipal) || maxSessionsPerPrincipal < 1)
+      throw new Error('maxSessionsPerPrincipal must be positive');
     this.pool = pool;
+    this.maxSessionsPerPrincipal = maxSessionsPerPrincipal;
   }
 
   async create(ref, state = { messages: [], context: {} }, ttlMs = 86400000) {
     const id = randomUUID();
-    await this.pool.query(
-      `INSERT INTO np_sessions(id,agent,principal,state,expires_at)
-       VALUES ($1,$2,$3,$4,now()+($5::bigint * interval '1 millisecond'))`,
-      [id, ref.agent, ref.principal, JSON.stringify(state), ttlMs]
-    );
-    return id;
+    const client = await this.pool.connect();
+    let discard;
+    try {
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('nullprotocol.sessions'),hashtext($1))",
+        [ref.principal]
+      );
+      const count = await client.query(
+        'SELECT count(*)::int AS count FROM np_sessions WHERE principal=$1 AND expires_at>now()',
+        [ref.principal]
+      );
+      if (count.rows[0].count >= this.maxSessionsPerPrincipal)
+        throw Object.assign(new Error('Session limit reached'), {
+          status: 429,
+          code: 'session_limit_reached'
+        });
+      await client.query(
+        `INSERT INTO np_sessions(id,agent,principal,state,expires_at)
+         VALUES ($1,$2,$3,$4,now()+($5::bigint * interval '1 millisecond'))`,
+        [id, ref.agent, ref.principal, JSON.stringify(state), ttlMs]
+      );
+      await client.query('COMMIT');
+      return id;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        discard = rollbackError;
+      }
+      throw error;
+    } finally {
+      client.release(discard);
+    }
   }
 
   async acquire(ref, leaseMs = 30000) {

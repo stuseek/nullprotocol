@@ -63,4 +63,18 @@ suite('PostgreSQL session store', () => {
     expect((await store.acquire({ ...owner, id })).status).toBe('not_found');
     expect(await store.purgeExpired()).toBeGreaterThanOrEqual(1);
   });
+
+  test('concurrent creates cannot exceed the principal quota', async () => {
+    const limited = new PostgresSessionStore(pool, { maxSessionsPerPrincipal: 1 });
+    const principal = `quota-${randomUUID()}`;
+    const results = await Promise.allSettled([
+      limited.create({ agent, principal }),
+      limited.create({ agent, principal })
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')[0].reason).toMatchObject({
+      status: 429,
+      code: 'session_limit_reached'
+    });
+  });
 });

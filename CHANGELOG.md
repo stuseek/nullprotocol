@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0 — source release; npm publication pending
+
+Breaking changes: named HTTP agents omit `toolCalls` from responses unless `exposeToolCalls: true`. The legacy `serve()` adapter ignores caller-supplied model options and hides provider errors. Session stores now cap active sessions per principal at 1,000 by default; `PostgresSessionStore` requires `pg.Pool`.
+
+- Accept current OpenAI and Anthropic SDK peers while keeping an install path for Node 18.
+- Keep version scripts from staging unrelated files or pushing automatically.
+- Count provider and network failures, rather than caller errors, toward the shared circuit breaker.
+- Add per-agent operation limits, hide tool call details from HTTP responses by default, and validate history limits.
+- Limit active sessions per caller in both stores, with atomic PostgreSQL quota checks and explicit 429/503 responses.
+- Keep slow request bodies out of execution slots, reject malformed identity scopes, and tighten the legacy HTTP adapter.
+- Existing PostgreSQL users must reapply `sql/session-store.sql` for the quota index. The default quota applies to the shared service-key principal unless caller identities are provided.
+
 ## 1.5.0 — source release; npm publication pending
 
 - Add an optional application-owned `decide` guard. Only an explicit `true` accepts a structurally valid model choice; rejection clears the executable action.

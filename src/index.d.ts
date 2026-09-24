@@ -410,8 +410,10 @@ export interface AgentDefinition extends AIToolkitOptions {
   tools?: ToolDefinition[];
   schemas?: Record<string, Record<string, any>>;
   onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
-  callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'>;
+  callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
   maxHistoryMessages?: number;
+  operations?: Array<'chat' | 'decide' | 'extract' | 'summarize' | 'validate'>;
+  exposeToolCalls?: boolean;
 }
 
 export interface SessionState {
@@ -433,10 +435,11 @@ export interface SessionStore {
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
   clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
   delete(ref: SessionRef): Promise<string>;
+  purgeExpired?(): Promise<number>;
 }
 
 export declare class MemorySessionStore implements SessionStore {
-  constructor(options?: { maxSessions?: number });
+  constructor(options?: { maxSessions?: number; maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
   acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
@@ -447,7 +450,7 @@ export declare class MemorySessionStore implements SessionStore {
 }
 
 export declare class PostgresSessionStore implements SessionStore {
-  constructor(pool: { query(sql: string, values?: unknown[]): Promise<any> });
+  constructor(pool: { query(sql: string, values?: unknown[]): Promise<any>; connect(): Promise<any> }, options?: { maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
   acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
@@ -468,11 +471,17 @@ export interface AgentServerOptions {
   host?: string;
   maxConcurrentTurns?: number;
   maxBodyBytes?: number;
+  maxConnections?: number;
   handleSignals?: boolean;
 }
 
+export interface AgentServer extends Server {
+  agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; active: number }>;
+  shutdown(): Promise<void>;
+}
+
 export function defineAgent(options: AgentDefinition): AgentDefinition;
-export function serveAgents(options: AgentServerOptions): Server;
-export function serve(options: AgentServerOptions): Server;
+export function serveAgents(options: AgentServerOptions): AgentServer;
+export function serve(options: AgentServerOptions): AgentServer;
 
 export default AIToolkit;

@@ -1,6 +1,6 @@
 {
   "name": "nullprotocol",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "Reliable Node.js AI building blocks for affordable and local models",
   "main": "src/index.js",
   "scripts": {
@@ -16,10 +16,9 @@
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
     "version:major": "npm version major",
-    "version": "npm run changelog && npm run version:sync && git add -A",
+    "version": "npm run changelog && npm run version:sync && git add package.json package-lock.json CHANGELOG.md README.md",
     "version:sync": "node scripts/sync-version.js",
     "changelog": "node scripts/changelog.js",
-    "postversion": "git push && git push --tags",
     "example:basic": "node examples/basic-usage.js",
     "example:quick": "node examples/quick-start.js",
     "example:customer": "node examples/customer-support.js",
@@ -56,8 +55,8 @@
     "prettier": "^3.2.5"
   },
   "peerDependencies": {
-    "@anthropic-ai/sdk": "^0.20.9",
-    "openai": "^4.104.0"
+    "@anthropic-ai/sdk": ">=0.20.9 <1",
+    "openai": "^4.104.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
     "openai": {

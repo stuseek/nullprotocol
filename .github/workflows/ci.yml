@@ -94,3 +94,14 @@ jobs:
       run: |
         echo "Testing examples with mock API..."
         npm run example:basic 2>&1 | grep -q "API" && echo "Example runs" || echo "Example needs API key"
+
+  current-peers:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+    - run: npm ci
+    - run: npm install --no-save openai@latest @anthropic-ai/sdk@latest
+    - run: npm test -- --runInBand

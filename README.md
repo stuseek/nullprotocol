@@ -11,10 +11,10 @@ The library is MIT licensed and runs without an account. Telemetry is optional a
 ## Install
 
 ```sh
-npm install git+https://github.com/stuseek/nullprotocol.git openai
+npm install git+https://github.com/stuseek/nullprotocol.git 'openai@^4.104.0'
 ```
 
-Node.js 18 or newer is required. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
+Node.js 18 or newer is required. The command pins an OpenAI SDK version that works on Node 18; Node 22 users can install the current OpenAI SDK. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
 
 ### Managed model gateway (staging)
 
@@ -248,6 +248,7 @@ serveAgents({
     {
       id: 'support',
       mode: 'stateless',
+      operations: ['chat'],
       engines: { openai: process.env.OPENAI_API_KEY },
       models: { openai: 'your-model' }
     },
@@ -262,9 +263,9 @@ serveAgents({
 });
 ```
 
-Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. Non-health routes require an API key or an `authenticate(req)` hook. When a hook is supplied, the API key is ignored. An API key grants access to all agent and management routes; use the hook for caller-specific access. The hook may return `{ principal, agents, canManage }`; `principal` isolates sessions, `agents` limits agent access, and `canManage` permits `enable` and `disable`. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
+Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. `operations` limits which of `chat`, `decide`, `extract`, `summarize`, and `validate` an agent accepts; the default permits all five. Tool call parameters and results stay off HTTP responses unless the agent sets `exposeToolCalls: true`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. Non-health routes require an API key or an `authenticate(req)` hook. When a hook is supplied, the API key is ignored. An API key grants access to all agent and management routes; use the hook for caller-specific access. The hook may return `{ principal, agents, canManage }`; `principal` isolates sessions, `agents` limits agent access, and `canManage` permits `enable` and `disable`. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
 
-`MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service uses `PORT`, then `NULLPROTOCOL_PORT`, then 3000 for its port. Its host is `NULLPROTOCOL_HOST`, or `0.0.0.0` when `PORT` is set, or `127.0.0.1` otherwise. Explicit `port` and `host` options take precedence. For CLI use, export the options object from `agents.js` instead of calling `serveAgents` in that file; then run `npx nullprotocol-serve --config ./agents.js` from the project where you installed the library.
+`MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)` with a `pg.Pool`. Reapply the SQL file when upgrading to add the principal quota index. Both stores default to 1,000 active sessions per principal; configure `maxSessionsPerPrincipal` in the store constructor. The memory store also defaults to 10,000 sessions total. A principal at its limit gets `429 session_limit_reached`; a full memory store returns `503 session_store_full`. A single shared API key uses one principal, so use `authenticate` to give callers separate quotas. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. It accepts up to 256 open connections by default; set `maxConnections` for another limit. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service uses `PORT`, then `NULLPROTOCOL_PORT`, then 3000 for its port. Its host is `NULLPROTOCOL_HOST`, or `0.0.0.0` when `PORT` is set, or `127.0.0.1` otherwise. Explicit `port` and `host` options take precedence. For CLI use, export the options object from `agents.js` instead of calling `serveAgents` in that file; then run `npx nullprotocol-serve --config ./agents.js` from the project where you installed the library.
 
 Set `telemetry: true`, `telemetryEndpoint`, and `telemetryKey` on each definition to report its `id` to a Space. The telemetry server does not run agents or receive conversation history. Successful invocation responses include a `runId` shared with their telemetry events. Keep the ingest key on the server, away from browsers.
 
@@ -284,7 +285,7 @@ serve({
 
 Routes: `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat`, and `GET /health`. Add `cors` only when browser access is needed. Set `host: '0.0.0.0'` explicitly to expose the server outside localhost.
 
-This adapter accepts an extraction schema in the request body and returns model error text to its authenticated caller. The named-agent service uses schemas defined in code and redacts provider errors. If you enable telemetry in this adapter, flush it with `await server.ai.telemetry?.destroy()` before closing the server.
+This adapter accepts an extraction schema in the request body. Model settings come from server options; request fields such as `model`, `engine`, `systemPrompt`, and `maxTokens` are ignored. Provider errors and tool call details are omitted from HTTP responses. The named-agent service uses schemas defined in code. If you enable telemetry in this adapter, flush it with `await server.ai.telemetry?.destroy()` before closing the server.
 
 ## Moving from `@stuseek/ai-toolkit`
 

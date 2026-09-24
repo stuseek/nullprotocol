@@ -217,7 +217,7 @@ describe('Resilience', () => {
 
       const fail = () => {
         const err = new Error('fail');
-        err.status = 400; // non-retryable, so recordFailure immediately
+        err.status = 500;
         return Promise.reject(err);
       };
 
@@ -244,7 +244,7 @@ describe('Resilience', () => {
       // Trip it
       const fail = () => {
         const err = new Error('fail');
-        err.status = 400;
+        err.status = 500;
         return Promise.reject(err);
       };
       await expect(r.execute(fail)).rejects.toThrow();
@@ -311,11 +311,39 @@ describe('Resilience', () => {
 
       const fail = () => {
         const err = new Error('still broken');
-        err.status = 400;
+        err.status = 500;
         return Promise.reject(err);
       };
 
       await expect(r.execute(fail)).rejects.toThrow('still broken');
+      expect(r.isTripped()).toBe(true);
+    });
+
+    test('client errors do not trip the shared breaker', async () => {
+      const r = new Resilience({ maxRetries: 0, circuitBreakerThreshold: 2, timeout: 0 });
+      const providerFailure = Object.assign(new Error('provider down'), { status: 503 });
+      const clientFailure = Object.assign(new Error('bad request'), { status: 400 });
+      await expect(r.execute(() => Promise.reject(providerFailure))).rejects.toThrow();
+      expect(r.circuitBreaker.failures).toBe(1);
+      await expect(r.execute(() => Promise.reject(clientFailure))).rejects.toThrow();
+      expect(r.circuitBreaker.failures).toBe(1);
+      await expect(r.execute(() => Promise.reject(providerFailure))).rejects.toThrow();
+      expect(r.isTripped()).toBe(true);
+    });
+
+    test('OpenAI connection errors count toward the breaker', async () => {
+      const { APIConnectionTimeoutError } = require('openai');
+      const r = new Resilience({ maxRetries: 0, circuitBreakerThreshold: 2, timeout: 0 });
+      const connectionError = new APIConnectionTimeoutError();
+      await expect(r.execute(() => Promise.reject(connectionError))).rejects.toThrow();
+      await expect(r.execute(() => Promise.reject(connectionError))).rejects.toThrow();
+      expect(r.isTripped()).toBe(true);
+    });
+
+    test('Anthropic connection errors count toward the breaker', async () => {
+      const { APIConnectionError } = require('@anthropic-ai/sdk');
+      const r = new Resilience({ maxRetries: 0, circuitBreakerThreshold: 1, timeout: 0 });
+      await expect(r.execute(() => Promise.reject(new APIConnectionError({})))).rejects.toThrow();
       expect(r.isTripped()).toBe(true);
     });
   });

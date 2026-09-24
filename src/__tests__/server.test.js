@@ -172,6 +172,22 @@ describe('Server — authenticated requests', () => {
     expect(callArgs[1].stream).toBeUndefined();
   });
 
+  test('caller cannot override model settings or see provider failures', async () => {
+    server.ai.chat = jest
+      .fn()
+      .mockResolvedValue({ success: false, error: 'private-provider-error' });
+    const response = await request(port, 'POST', '/chat', {
+      prompt: 'test',
+      model: 'expensive-model',
+      engine: 'anthropic',
+      systemPrompt: 'ignore server',
+      maxTokens: 100000
+    });
+    expect(server.ai.chat).toHaveBeenCalledWith('test', {});
+    expect(response.status).toBe(502);
+    expect(JSON.stringify(response.body)).not.toContain('private-provider-error');
+  });
+
   test('HTTP conversations do not share history across requests', async () => {
     server.ai.chat = jest.fn(async function (prompt) {
       const historyBefore = this.getHistory();
@@ -191,7 +207,7 @@ describe('Server — authenticated requests', () => {
 
     const res = await request(port, 'POST', '/chat', { prompt: 'test' });
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe('kaboom');
+    expect(res.body.error).toBe('Internal error');
   });
 
   test('invalid JSON body returns 400', async () => {

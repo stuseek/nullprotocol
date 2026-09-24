@@ -3,6 +3,9 @@ const crypto = require('crypto');
 const AIToolkit = require('./index');
 
 const AGENT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const UUID_PATH = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const SESSION_PATH = new RegExp(`^sessions/(${UUID_PATH})(?:/(messages|context|history))?$`, 'i');
+const OPERATIONS = ['chat', 'decide', 'extract', 'summarize', 'validate'];
 
 function defineAgent(options) {
   if (!options || !AGENT_ID.test(options.id || ''))
@@ -11,6 +14,25 @@ function defineAgent(options) {
     throw new Error('Agent mode must be stateless or stateful');
   if (options.tools && !Array.isArray(options.tools))
     throw new Error('Agent tools must be an array');
+  if (
+    options.operations !== undefined &&
+    (!Array.isArray(options.operations) ||
+      !options.operations.length ||
+      options.operations.some(operation => !OPERATIONS.includes(operation)) ||
+      new Set(options.operations).size !== options.operations.length)
+  )
+    throw new Error('Agent operations must be a nonempty list of supported operations');
+  if (options.mode === 'stateful' && options.operations && !options.operations.includes('chat'))
+    throw new Error('Stateful agents must allow chat');
+  if (options.exposeToolCalls !== undefined && typeof options.exposeToolCalls !== 'boolean')
+    throw new Error('exposeToolCalls must be a boolean');
+  if (
+    options.maxHistoryMessages !== undefined &&
+    (!Number.isInteger(options.maxHistoryMessages) ||
+      options.maxHistoryMessages < 1 ||
+      options.maxHistoryMessages > 1000)
+  )
+    throw new Error('maxHistoryMessages must be between 1 and 1000');
   if (options.callOptions?.guard !== undefined && typeof options.callOptions.guard !== 'function')
     throw new Error('Agent decision guard must be a function');
   if (
@@ -20,7 +42,11 @@ function defineAgent(options) {
       options.callOptions.guardTimeoutMs > 120000)
   )
     throw new Error('Agent guardTimeoutMs must be between 1 and 120000 milliseconds');
-  return Object.freeze({ ...options, tools: options.tools ? [...options.tools] : [] });
+  return Object.freeze({
+    ...options,
+    tools: options.tools ? [...options.tools] : [],
+    operations: Object.freeze(options.operations ? [...options.operations] : [...OPERATIONS])
+  });
 }
 
 function constantTimeEqual(a, b) {
@@ -42,9 +68,14 @@ function failure(res, status, code) {
   respond(res, status, { error: { code } });
 }
 
-function publicResult(result) {
+function publicResult(result, exposeToolCalls = false) {
   if (result?.errorCode === 'guard_rejected') return { success: false, error: 'decision_rejected' };
-  return result?.success === false ? { success: false, error: 'agent_failed' } : result;
+  if (result?.success === false) return { success: false, error: 'agent_failed' };
+  if (!exposeToolCalls && result?.toolCalls) {
+    const { toolCalls: _toolCalls, ...publicFields } = result;
+    return publicFields;
+  }
+  return result;
 }
 
 async function readBody(req, maxBytes) {
@@ -125,7 +156,7 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
       state: state
         ? {
             messages: ai.messages
-              .slice(-(def.maxHistoryMessages || 50))
+              .slice(-(def.maxHistoryMessages ?? 50))
               .filter((_, i, all) => i || all[0].role !== 'assistant'),
             context: state.context
           }
@@ -151,15 +182,30 @@ function serveAgents(options = {}) {
     if (selected.has(def.id)) throw new Error(`Duplicate agent: ${def.id}`);
     if (def.mode === 'stateful' && !options.store)
       throw new Error(`Stateful agent ${def.id} requires a session store`);
-    const { id, mode, tools, onToolCall, callOptions, maxHistoryMessages, ...modelOptions } = def;
+    const {
+      id,
+      mode,
+      tools,
+      onToolCall,
+      callOptions,
+      maxHistoryMessages,
+      operations,
+      exposeToolCalls,
+      ...modelOptions
+    } = def;
     const base = new AIToolkit({ ...modelOptions, agentId: id, trackHistory: false });
     selected.set(id, { def, base, disabled: false, active: 0 });
   }
   if (!selected.size) throw new Error('No agents selected');
-  const maxConcurrent = options.maxConcurrentTurns || 32;
+  const maxConcurrent = options.maxConcurrentTurns ?? 32;
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1)
     throw new Error('maxConcurrentTurns must be positive');
-  const maxBody = options.maxBodyBytes || 65536;
+  const maxBody = options.maxBodyBytes ?? 65536;
+  if (!Number.isSafeInteger(maxBody) || maxBody < 1)
+    throw new Error('maxBodyBytes must be a positive integer');
+  const maxConnections = options.maxConnections ?? 256;
+  if (!Number.isInteger(maxConnections) || maxConnections < 1)
+    throw new Error('maxConnections must be positive');
   const store = options.store;
   let active = 0;
   const cleanup =
@@ -186,6 +232,8 @@ function serveAgents(options = {}) {
       } else if (token && constantTimeEqual(token, apiKey)) principal = 'service-key';
       if (!principal || typeof principal !== 'string' || principal.length > 128)
         return failure(res, 401, 'unauthorized');
+      if (identity?.agents !== undefined && !Array.isArray(identity.agents))
+        return failure(res, 403, 'forbidden');
       if (req.method === 'GET' && pathname === '/v1/agents') {
         return respond(res, 200, {
           agents: [...selected]
@@ -205,7 +253,11 @@ function serveAgents(options = {}) {
       if (options.authenticate && identity?.agents && !identity.agents.includes(def.id))
         return failure(res, 403, 'forbidden');
       const rest = m[2] || '';
-      if (['disable', 'enable'].includes(rest) && options.authenticate && !identity?.canManage)
+      if (
+        ['disable', 'enable'].includes(rest) &&
+        options.authenticate &&
+        identity?.canManage !== true
+      )
         return failure(res, 403, 'forbidden');
       if (req.method === 'POST' && rest === 'disable') {
         agent.disabled = true;
@@ -217,11 +269,13 @@ function serveAgents(options = {}) {
       }
       if (agent.disabled) return failure(res, 409, 'agent_disabled');
       if (req.method === 'POST' && rest === 'invoke' && def.mode === 'stateless') {
+        const input = await readBody(req, maxBody);
+        const operation = input?.operation || 'chat';
+        if (!def.operations.includes(operation)) return failure(res, 403, 'operation_forbidden');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
         try {
-          const input = await readBody(req, maxBody);
           const runId = crypto.randomUUID();
           const outcome = await runOperation(def, base, input, undefined, runId, principal);
           if (outcome.invalid) return failure(res, 400, 'invalid_input');
@@ -234,7 +288,7 @@ function serveAgents(options = {}) {
                 : 200,
             {
               runId,
-              output: publicResult(outcome.result)
+              output: publicResult(outcome.result, def.exposeToolCalls)
             }
           );
         } finally {
@@ -257,7 +311,7 @@ function serveAgents(options = {}) {
         );
         return respond(res, 201, { sessionId });
       }
-      const s = rest.match(/^sessions\/([0-9a-f-]{36})(?:\/(messages|context|history))?$/);
+      const s = rest.match(SESSION_PATH);
       if (def.mode !== 'stateful' || !s) return failure(res, 404, 'not_found');
       const ref = { id: s[1], agent: def.id, principal };
       if (req.method === 'DELETE' && !s[2]) {
@@ -281,19 +335,15 @@ function serveAgents(options = {}) {
             );
       }
       if (req.method === 'POST' && s[2] === 'messages') {
+        const input = await readBody(req, maxBody);
+        if (typeof input?.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 8000)
+          return failure(res, 400, 'invalid_input');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
         let acquired;
         let heartbeat;
         try {
-          const input = await readBody(req, maxBody);
-          if (
-            typeof input?.prompt !== 'string' ||
-            !input.prompt.trim() ||
-            input.prompt.length > 8000
-          )
-            return failure(res, 400, 'invalid_input');
           const leaseMs = 60000;
           acquired = await store.acquire(ref, leaseMs);
           if (acquired.status !== 'acquired')
@@ -325,7 +375,7 @@ function serveAgents(options = {}) {
           heartbeat = null;
           if (outcome.result?.success === false) {
             await store.release(ref, acquired.lease);
-            return respond(res, 502, { output: publicResult(outcome.result) });
+            return respond(res, 502, { output: publicResult(outcome.result, def.exposeToolCalls) });
           }
           if (leaseLost) {
             await store.release(ref, acquired.lease);
@@ -333,7 +383,10 @@ function serveAgents(options = {}) {
           }
           if (!(await store.commit(ref, acquired.lease, outcome.state)))
             return failure(res, 409, 'lease_lost');
-          return respond(res, 200, { runId, output: publicResult(outcome.result) });
+          return respond(res, 200, {
+            runId,
+            output: publicResult(outcome.result, def.exposeToolCalls)
+          });
         } catch (error) {
           if (acquired?.lease) await store.release(ref, acquired.lease);
           throw error;
@@ -356,6 +409,9 @@ function serveAgents(options = {}) {
       );
     }
   });
+  server.requestTimeout = 15000;
+  server.headersTimeout = 10000;
+  server.maxConnections = maxConnections;
   server.agents = selected;
   server.once('close', () => clearInterval(cleanup));
   server.shutdown = async () => {

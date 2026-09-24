@@ -58,7 +58,7 @@ class Resilience {
 
         // Don't retry non-retryable errors
         if (!this._isRetryable(error)) {
-          this.recordFailure();
+          if (this._countsAsFailure(error)) this.recordFailure();
           throw error;
         }
 
@@ -167,14 +167,36 @@ class Resilience {
     if (status && [429, 503, 529].includes(status)) return true;
 
     // Network errors
-    const code = error.code;
-    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN'].includes(code))
+    const code = error.code || error.cause?.code || error.cause?.cause?.code;
+    if (
+      code &&
+      [
+        'ECONNRESET',
+        'ETIMEDOUT',
+        'ECONNREFUSED',
+        'EPIPE',
+        'EAI_AGAIN',
+        'ENOTFOUND',
+        'UND_ERR_CONNECT_TIMEOUT',
+        'UND_ERR_SOCKET'
+      ].includes(code)
+    )
+      return true;
+    if (['APIConnectionError', 'APIConnectionTimeoutError'].includes(error.constructor?.name))
+      return true;
+    if (['fetch failed', 'Connection error.', 'Request timed out.'].includes(error.message))
       return true;
 
     // Anthropic overloaded
     if (error.message?.includes('overloaded')) return true;
 
     return false;
+  }
+
+  _countsAsFailure(error) {
+    const status = error.status || error.statusCode || error.response?.status;
+    if (status) return status === 429 || status >= 500;
+    return this._isRetryable(error);
   }
 
   /**

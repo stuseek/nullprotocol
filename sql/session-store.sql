@@ -9,3 +9,4 @@ CREATE TABLE IF NOT EXISTS np_sessions (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS np_sessions_expires_idx ON np_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS np_sessions_principal_expires_idx ON np_sessions(principal, expires_at);

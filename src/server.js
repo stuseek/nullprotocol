@@ -13,6 +13,13 @@
  */
 
 const http = require('http');
+const crypto = require('crypto');
+
+function constantTimeEqual(a, b) {
+  const left = crypto.createHash('sha256').update(a).digest();
+  const right = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(left, right);
+}
 
 function serve(options = {}) {
   if (options.agents) return require('./agent-server').serveAgents(options);
@@ -40,28 +47,24 @@ function serve(options = {}) {
   // Route table — maps path to method + arg parser
   const routes = {
     '/extract': async (requestAI, body) => {
-      const { data, schema, ...opts } = body;
-      return requestAI.extract(data, schema, opts);
+      const { data, schema } = body;
+      return requestAI.extract(data, schema, {});
     },
     '/validate': async (requestAI, body) => {
-      const { criteria, subject, reference, ...opts } = body;
-      return requestAI.validate(criteria, subject, reference || null, opts);
+      const { criteria, subject, reference } = body;
+      return requestAI.validate(criteria, subject, reference || null, {});
     },
     '/summarize': async (requestAI, body) => {
-      const { content, ...opts } = body;
-      return requestAI.summarize(content, opts);
+      const { content } = body;
+      return requestAI.summarize(content, {});
     },
     '/decide': async (requestAI, body) => {
-      const { context, actions, ...opts } = body;
-      delete opts.guard;
-      return requestAI.decide(context, actions, opts);
+      const { context, actions } = body;
+      return requestAI.decide(context, actions, {});
     },
     '/chat': async (requestAI, body) => {
-      const { prompt, ...opts } = body;
-      // HTTP requests are stateless and always return a collected response.
-      delete opts.stream;
-      delete opts.trackHistory;
-      return requestAI.chat(prompt, opts);
+      const { prompt } = body;
+      return requestAI.chat(prompt, {});
     },
     '/health': async () => ({
       status: 'ok',
@@ -124,7 +127,7 @@ function serve(options = {}) {
 
     // Auth check
     const auth = req.headers.authorization;
-    if (!auth || auth !== `Bearer ${apiKey}`) {
+    if (!auth?.startsWith('Bearer ') || !constantTimeEqual(auth.slice(7), apiKey)) {
       sendJSON(res, 401, { error: 'Unauthorized' });
       return;
     }
@@ -138,7 +141,7 @@ function serve(options = {}) {
         const result = await routes['/health']();
         sendJSON(res, 200, result);
       } catch (e) {
-        sendJSON(res, 500, { error: e.message });
+        sendJSON(res, 500, { error: 'Internal error' });
       }
       return;
     }
@@ -160,17 +163,40 @@ function serve(options = {}) {
 
     try {
       const body = await readBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        sendJSON(res, 400, { error: 'Invalid request body' });
+        return;
+      }
       const requestAI = Object.create(ai);
       requestAI.context = new Map();
       requestAI.messages = [];
       requestAI.lastResult = null;
       const result = await handler(requestAI, body);
-      sendJSON(res, result?.success === false ? 502 : 200, result);
+      if (result?.success === false) {
+        sendJSON(res, 502, { success: false, error: 'agent_failed' });
+        return;
+      }
+      if (result?.toolCalls) {
+        const { toolCalls: _toolCalls, ...publicResult } = result;
+        sendJSON(res, 200, publicResult);
+        return;
+      }
+      sendJSON(res, 200, result);
     } catch (err) {
       const status = err.status || (err.name === 'CircuitBreakerError' ? 503 : 500);
-      sendJSON(res, status, { error: err.message });
+      sendJSON(res, status, {
+        error:
+          status === 413
+            ? 'Request body too large'
+            : status === 400
+              ? 'Invalid JSON body'
+              : 'Internal error'
+      });
     }
   });
+
+  server.requestTimeout = 15000;
+  server.headersTimeout = 10000;
 
   server.listen(port, host, () => {
     console.log(`nullprotocol server running on http://${host}:${port}`);
