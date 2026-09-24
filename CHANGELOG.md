@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1 — source release; npm publication pending
+
+- Accept a managed inference key with an explicit gateway URL, and reject accidental use of OpenAI's endpoint.
+- Send a request ID and disable automatic retries for managed inference, whose outcome can be ambiguous after a network failure.
+- Reject streaming through the managed gateway until it supports streamed accounting.
+
 ## 1.3.0 — source release; npm publication pending
 
 ### Added

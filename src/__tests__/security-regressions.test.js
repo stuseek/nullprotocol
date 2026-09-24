@@ -57,6 +57,52 @@ describe('safety regressions', () => {
     expect(calls).toBe(3);
   });
 
+  test('managed inference never retries an ambiguous request automatically', async () => {
+    const ai = new AIToolkit({
+      engines: { openai: `np_inf_${'x'.repeat(43)}` },
+      openaiBaseURL: 'http://127.0.0.1:3001/v1',
+      retry: { maxRetries: 1 },
+      timeout: 0
+    });
+    ai.resilience._sleep = async () => {};
+    const options = [];
+    ai.clients.openai = {
+      chat: {
+        completions: {
+          create: jest.fn(async (_, requestOptions) => {
+            options.push(requestOptions);
+            if (options.length === 1) {
+              throw Object.assign(new Error('temporary'), { status: 503 });
+            }
+            return { choices: [{ message: { content: 'done' } }] };
+          })
+        }
+      }
+    };
+
+    expect((await ai.chat('hello')).success).toBe(false);
+    expect(options).toHaveLength(1);
+    expect(options[0].headers['X-NullProtocol-Request-Id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test('managed inference key requires explicit gateway and rejects streaming', async () => {
+    const key = `np_inf_${'x'.repeat(43)}`;
+    expect(() => new AIToolkit({ engines: { openai: key } })).toThrow('openaiBaseURL');
+    expect(
+      () =>
+        new AIToolkit({
+          engines: { openai: key },
+          openaiBaseURL: 'https://api.openai.com/v1'
+        })
+    ).toThrow('non-OpenAI');
+    const ai = new AIToolkit({
+      engines: { openai: key },
+      openaiBaseURL: 'http://127.0.0.1:3001/v1'
+    });
+    const stream = ai.makeStreamRequest({ system: 'hi', user: 'hello' });
+    await expect(stream.next()).rejects.toThrow('does not support streaming');
+  });
+
   test('timeout aborts the in-flight request before retry', async () => {
     const resilience = new Resilience({ timeout: 5, maxRetries: 1 });
     resilience._sleep = async () => {};

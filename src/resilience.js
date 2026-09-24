@@ -30,7 +30,7 @@ class Resilience {
   /**
    * Execute a function with retry, timeout, and circuit breaker protection
    */
-  async execute(fn) {
+  async execute(fn, options = {}) {
     // Check circuit breaker
     if (this.isTripped()) {
       const cb = this.circuitBreaker;
@@ -47,9 +47,10 @@ class Resilience {
 
     let lastError;
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    const maxRetries = options.maxRetries ?? this.maxRetries;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const result = await this._withTimeout(fn, this.timeout);
+        const result = await this._withTimeout(fn, options.timeout ?? this.timeout);
         this.recordSuccess();
         return result;
       } catch (error) {
@@ -62,7 +63,7 @@ class Resilience {
         }
 
         // Don't wait after the last attempt
-        if (attempt < this.maxRetries) {
+        if (attempt < maxRetries) {
           const delay = this._backoffDelay(attempt);
           await this._sleep(delay);
         }

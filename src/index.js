@@ -338,6 +338,14 @@ class AIToolkit {
 
   initializeClients() {
     if (this.engines.openai) {
+      if (
+        typeof this.engines.openai === 'string' &&
+        this.engines.openai.startsWith('np_inf_') &&
+        (!this.config.openaiBaseURL ||
+          new URL(this.config.openaiBaseURL).hostname === 'api.openai.com')
+      ) {
+        throw new Error('Managed inference keys require an explicit non-OpenAI openaiBaseURL.');
+      }
       try {
         const { OpenAI } = require('openai');
         this.clients.openai = new OpenAI({
@@ -373,12 +381,27 @@ class AIToolkit {
   }
 
   async _requestModel(engine, client, params) {
-    const response = await this.resilience.execute(signal => {
-      const requestOptions = { signal, maxRetries: 0 };
-      return engine === 'openai'
-        ? client.chat.completions.create(params, requestOptions)
-        : client.messages.create(params, requestOptions);
-    });
+    const gatewayRequestId =
+      engine === 'openai' &&
+      typeof this.engines.openai === 'string' &&
+      this.engines.openai.startsWith('np_inf_')
+        ? randomUUID()
+        : null;
+    const response = await this.resilience.execute(
+      signal => {
+        const requestOptions = {
+          signal,
+          maxRetries: 0,
+          ...(gatewayRequestId
+            ? { headers: { 'X-NullProtocol-Request-Id': gatewayRequestId } }
+            : {})
+        };
+        return engine === 'openai'
+          ? client.chat.completions.create(params, requestOptions)
+          : client.messages.create(params, requestOptions);
+      },
+      gatewayRequestId ? { maxRetries: 0, timeout: Math.max(this.resilience.timeout, 25000) } : {}
+    );
     const usage = response?.usage;
     if (this.telemetry && usage) {
       this.telemetry.track('model_usage', {
@@ -670,6 +693,13 @@ class AIToolkit {
    */
   async *makeStreamRequest(messages, options = {}) {
     const engine = options.engine || this.defaultEngine;
+    if (
+      engine === 'openai' &&
+      typeof this.engines.openai === 'string' &&
+      this.engines.openai.startsWith('np_inf_')
+    ) {
+      throw new Error('Managed inference does not support streaming yet.');
+    }
     const client = this.clients[engine];
 
     if (!client) {

@@ -16,6 +16,22 @@ npm install git+https://github.com/stuseek/nullprotocol.git openai
 
 Node.js 18 or newer is required. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
 
+### Managed model gateway (staging)
+
+The separate API has a disabled-by-default managed inference route. Once a team is provisioned with model credit and an `np_inf_` key, the SDK can use it through the OpenAI client:
+
+```js
+const ai = new NullProtocol({
+  engines: { openai: process.env.NULLPROTOCOL_INFERENCE_KEY },
+  openaiBaseURL: 'https://api.nullprotocol.ai/v1',
+  models: { openai: 'your-enabled-alias' }
+});
+```
+
+An `np_inf_` key requires an explicit `openaiBaseURL`; the SDK will not send it to OpenAI's default endpoint. Managed inference currently accepts nonstreaming text and function tool calls. It is separate from telemetry and does not enable it automatically. The gateway receives the messages it forwards to the provider, while telemetry stores metadata only. Managed model access is not enabled in production yet. Use your own model key or local endpoint today.
+
+The SDK sends a request ID but does not automatically retry managed inference calls: after a network failure the provider outcome may be unknown. A managed call waits at least 25 seconds before timing out. Check `{ success: false, error }` and decide whether to start a new call; a new call may incur another charge.
+
 ## Start with a small or local model
 
 Point the OpenAI client at any compatible endpoint. The example URL and model name below are placeholders for your own server.
