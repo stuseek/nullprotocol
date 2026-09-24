@@ -90,6 +90,384 @@ test('disable blocks new calls without creating more agents', async () => {
   expect((await call('/v1/agents')).body.agents).toHaveLength(2);
 });
 
+test('stop cancels active stateless runs and blocks new calls', async () => {
+  const agent = server.agents.get('worker');
+  const original = agent.base.chat;
+  let started = 0;
+  let ready;
+  const bothStarted = new Promise(resolve => {
+    ready = resolve;
+  });
+  agent.base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    if (++started === 2) {
+      ready();
+    }
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  });
+  try {
+    const first = call('/v1/agents/worker/invoke', 'POST', { input: { prompt: 'one' } });
+    const second = call('/v1/agents/worker/invoke', 'POST', { input: { prompt: 'two' } });
+    await bothStarted;
+    const stopped = await call('/v1/agents/worker/stop', 'POST');
+    expect(stopped).toMatchObject({
+      status: 202,
+      body: { disabled: true, cancelling: 2, scope: 'process' }
+    });
+    for (const result of await Promise.all([first, second])) {
+      expect(result).toMatchObject({
+        status: 409,
+        body: { error: { code: 'run_cancelled' }, toolCallsStarted: 0 }
+      });
+      expect(result.body.runId).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    expect(agent.active).toBe(0);
+    expect(
+      (await call('/v1/agents/worker/invoke', 'POST', { input: { prompt: 'later' } })).status
+    ).toBe(409);
+  } finally {
+    agent.base.chat = original;
+    await call('/v1/agents/worker/enable', 'POST');
+  }
+});
+
+test('cancelling one stateful turn leaves its history and context unchanged', async () => {
+  const agent = server.agents.get('companion');
+  const original = agent.base.chat;
+  const originalRelease = sessionStore.release;
+  let ready;
+  const started = new Promise(resolve => {
+    ready = resolve;
+  });
+  agent.base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    ready();
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  });
+  const made = await call('/v1/agents/companion/sessions', 'POST', {
+    context: { zone: 'forest' }
+  });
+  const path = `/v1/agents/companion/sessions/${made.body.sessionId}`;
+  try {
+    const turn = call(`${path}/messages`, 'POST', { prompt: 'hello' });
+    await started;
+    sessionStore.release = async function (...args) {
+      await originalRelease.apply(this, args);
+      throw new Error('release response lost');
+    };
+    const cancel = await call(`${path}/cancel`, 'POST');
+    expect(cancel.status).toBe(202);
+    const result = await turn;
+    expect(result).toMatchObject({
+      status: 409,
+      body: { error: { code: 'run_cancelled' }, runId: cancel.body.runId }
+    });
+    sessionStore.release = originalRelease;
+    const ref = { id: made.body.sessionId, agent: 'companion', principal: 'service-key' };
+    const state = await sessionStore.acquire(ref);
+    expect(state.status).toBe('acquired');
+    expect(state.state).toEqual({ messages: [], context: { zone: 'forest' } });
+    await sessionStore.release(ref, state.lease);
+    expect((await call(`${path}/cancel`, 'POST')).body.error.code).toBe('no_active_run');
+  } finally {
+    sessionStore.release = originalRelease;
+    agent.base.chat = original;
+    await call(path, 'DELETE');
+  }
+});
+
+test('lost session lease aborts the active turn before it can commit', async () => {
+  const agent = server.agents.get('companion');
+  const originalChat = agent.base.chat;
+  const originalRenew = sessionStore.renew;
+  const originalInterval = global.setInterval;
+  const made = await call('/v1/agents/companion/sessions', 'POST', {
+    context: { zone: 'forest' }
+  });
+  const path = `/v1/agents/companion/sessions/${made.body.sessionId}`;
+  global.setInterval = (callback, delay, ...args) =>
+    originalInterval(callback, delay === 10000 ? 5 : delay, ...args);
+  sessionStore.renew = async () => false;
+  agent.base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  });
+  try {
+    const result = await call(`${path}/messages`, 'POST', { prompt: 'hello' });
+    expect(result).toMatchObject({ status: 409, body: { error: { code: 'lease_lost' } } });
+    const ref = { id: made.body.sessionId, agent: 'companion', principal: 'service-key' };
+    const state = await sessionStore.acquire(ref);
+    expect(state.state).toEqual({ messages: [], context: { zone: 'forest' } });
+    await sessionStore.release(ref, state.lease);
+    expect(agent.active).toBe(0);
+  } finally {
+    global.setInterval = originalInterval;
+    sessionStore.renew = originalRenew;
+    agent.base.chat = originalChat;
+    await call(path, 'DELETE');
+  }
+});
+
+test('stop reaches the provider request signal without retrying', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'model', mode: 'stateless', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}`;
+  const base = isolated.agents.get('model').base;
+  let started;
+  const requestStarted = new Promise(resolve => {
+    started = resolve;
+  });
+  const create = jest.fn((_, options) => {
+    started(options.signal);
+    return new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), {
+        once: true
+      });
+    });
+  });
+  base.clients.openai = { chat: { completions: { create } } };
+  try {
+    const request = global.fetch(`${url}/v1/agents/model/invoke`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ input: { prompt: 'hello' } })
+    });
+    const providerSignal = await requestStarted;
+    const stopped = await global.fetch(`${url}/v1/agents/model/stop`, {
+      method: 'POST',
+      headers: auth
+    });
+    expect(stopped.status).toBe(202);
+    const response = await request;
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe('run_cancelled');
+    expect(providerSignal.aborted).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(base.resilience.circuitBreaker.failures).toBe(0);
+  } finally {
+    await isolated.shutdown();
+  }
+});
+
+test('stop signals a running tool and reports that the callback started', async () => {
+  let toolStarted;
+  const ready = new Promise(resolve => {
+    toolStarted = resolve;
+  });
+  let toolContext;
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [
+      {
+        id: 'operator',
+        mode: 'stateless',
+        engines: { openai: 'test' },
+        tools: [{ name: 'act', description: 'Run an action' }],
+        onToolCall: async (_, __, context) => {
+          toolContext = context;
+          toolStarted();
+          await new Promise(resolve =>
+            context.signal.addEventListener('abort', resolve, { once: true })
+          );
+          return { done: true };
+        }
+      }
+    ]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}`;
+  const create = jest.fn(async () => ({
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'act', arguments: '{}' } }
+          ]
+        }
+      }
+    ]
+  }));
+  isolated.agents.get('operator').base.clients.openai = { chat: { completions: { create } } };
+  try {
+    const request = global.fetch(`${url}/v1/agents/operator/invoke`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ input: { prompt: 'act' } })
+    });
+    await ready;
+    expect(toolContext).toMatchObject({ agentId: 'operator', principal: 'service-key' });
+    expect(toolContext.signal).toBeDefined();
+    expect(toolContext.callId).toMatch(/^[0-9a-f-]{36}:0:0$/);
+    expect(toolContext.trace).toBeUndefined();
+    await global.fetch(`${url}/v1/agents/operator/stop`, { method: 'POST', headers: auth });
+    const response = await request;
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      toolCallsStarted: 1,
+      toolCallIds: [toolContext.callId]
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  } finally {
+    await isolated.shutdown();
+  }
+});
+
+test('another principal cannot cancel an active session turn', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    authenticate: async req => {
+      const principal = req.headers.authorization === 'Bearer alice' ? 'alice' : 'bob';
+      return { principal, agents: ['companion'] };
+    },
+    store: new MemorySessionStore(),
+    agents: [{ id: 'companion', mode: 'stateful', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/companion/sessions`;
+  const alice = { Authorization: 'Bearer alice', 'Content-Type': 'application/json' };
+  const bob = { Authorization: 'Bearer bob', 'Content-Type': 'application/json' };
+  let ready;
+  const started = new Promise(resolve => {
+    ready = resolve;
+  });
+  isolated.agents.get('companion').base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    ready();
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  });
+  try {
+    const made = await global
+      .fetch(url, {
+        method: 'POST',
+        headers: alice,
+        body: JSON.stringify({ context: {} })
+      })
+      .then(response => response.json());
+    const session = `${url}/${made.sessionId}`;
+    const turn = global.fetch(`${session}/messages`, {
+      method: 'POST',
+      headers: alice,
+      body: JSON.stringify({ prompt: 'hello' })
+    });
+    await started;
+    const denied = await global.fetch(`${session}/cancel`, { method: 'POST', headers: bob });
+    expect(denied.status).toBe(409);
+    const cancelled = await global.fetch(`${session}/cancel`, {
+      method: 'POST',
+      headers: alice
+    });
+    expect(cancelled.status).toBe(202);
+    expect((await turn).status).toBe(409);
+  } finally {
+    await isolated.shutdown();
+  }
+});
+
+test('shutdown has a deadline and aborts an unfinished run', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'model', mode: 'stateless', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/model/invoke`;
+  let started;
+  const ready = new Promise(resolve => {
+    started = resolve;
+  });
+  let observedAbort;
+  const aborted = new Promise(resolve => {
+    observedAbort = resolve;
+  });
+  isolated.agents.get('model').base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    started();
+    return new Promise((_, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          observedAbort(signal.reason);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
+    });
+  });
+  const request = global
+    .fetch(url, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ input: { prompt: 'hello' } })
+    })
+    .catch(() => null);
+  await ready;
+  await isolated.shutdown({ drainTimeoutMs: 5 });
+  expect(await aborted).toMatchObject({ name: 'AbortError', code: 'shutdown' });
+  await request;
+  expect(isolated.agents.get('model').active).toBe(0);
+});
+
+test('shutdown stays bounded when a callback ignores cancellation', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'model', mode: 'stateless', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  let started;
+  const ready = new Promise(resolve => {
+    started = resolve;
+  });
+  let finish;
+  const callback = new Promise(resolve => {
+    finish = resolve;
+  });
+  isolated.agents.get('model').base.chat = jest.fn(async () => {
+    started();
+    await callback;
+    return { success: true, message: 'late' };
+  });
+  const request = global
+    .fetch(`http://127.0.0.1:${isolated.address().port}/v1/agents/model/invoke`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ input: { prompt: 'hello' } })
+    })
+    .catch(() => null);
+  try {
+    await ready;
+    const began = Date.now();
+    await isolated.shutdown({ drainTimeoutMs: 5, cancelTimeoutMs: 5 });
+    expect(Date.now() - began).toBeLessThan(1500);
+    expect(isolated.agents.get('model').active).toBe(1);
+  } finally {
+    finish();
+    await request;
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(isolated.agents.get('model').active).toBe(0);
+});
+
 test('all disabled agents can be enabled through a ready service', async () => {
   try {
     expect((await call('/v1/agents/worker/disable', 'POST')).status).toBe(200);
@@ -414,6 +792,9 @@ test('custom identity scopes agent listing and management', async () => {
     ).toBe(403);
     expect(
       (await global.fetch(`${url}/v1/agents/allowed/disable`, { method: 'POST', headers })).status
+    ).toBe(403);
+    expect(
+      (await global.fetch(`${url}/v1/agents/allowed/stop`, { method: 'POST', headers })).status
     ).toBe(403);
     expect(
       (

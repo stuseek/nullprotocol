@@ -42,6 +42,57 @@ describe('Resilience', () => {
   });
 
   describe('execute — retry logic', () => {
+    test('cancellation before the provider microtask skips the request', async () => {
+      const r = new Resilience();
+      const controller = new global.AbortController();
+      const provider = jest.fn(async () => 'late');
+      const call = r.execute(provider, { signal: controller.signal });
+      controller.abort(Object.assign(new Error('stopped'), { name: 'AbortError' }));
+      await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+      expect(provider).not.toHaveBeenCalled();
+      expect(r.circuitBreaker.failures).toBe(0);
+    });
+
+    test('external cancellation aborts the provider and does not trip the circuit breaker', async () => {
+      const r = new Resilience({ maxRetries: 2, timeout: 30000 });
+      const controller = new global.AbortController();
+      let started;
+      const ready = new Promise(resolve => {
+        started = resolve;
+      });
+      const call = r.execute(
+        signal => {
+          started(signal);
+          return new Promise(() => {});
+        },
+        { signal: controller.signal }
+      );
+      const providerSignal = await ready;
+      controller.abort(Object.assign(new Error('stopped'), { name: 'AbortError' }));
+      await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+      expect(providerSignal.aborted).toBe(true);
+      expect(r.circuitBreaker.failures).toBe(0);
+    });
+
+    test('external cancellation stops retry backoff', async () => {
+      const r = new Resilience({ maxRetries: 2, timeout: 0 });
+      r._backoffDelay = () => 10000;
+      const controller = new global.AbortController();
+      let calls = 0;
+      const call = r.execute(
+        () => {
+          calls++;
+          throw Object.assign(new Error('rate limited'), { status: 429 });
+        },
+        { signal: controller.signal }
+      );
+      await new Promise(resolve => global.setImmediate(resolve));
+      controller.abort(Object.assign(new Error('stopped'), { name: 'AbortError' }));
+      await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+      expect(calls).toBe(1);
+      expect(r.circuitBreaker.failures).toBe(0);
+    });
+
     test('retries on 429 status', async () => {
       const r = new Resilience({ maxRetries: 2, timeout: 0 });
       // Stub _sleep to avoid actual delays

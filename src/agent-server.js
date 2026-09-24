@@ -4,7 +4,10 @@ const AIToolkit = require('./index');
 
 const AGENT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const UUID_PATH = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const SESSION_PATH = new RegExp(`^sessions/(${UUID_PATH})(?:/(messages|context|history))?$`, 'i');
+const SESSION_PATH = new RegExp(
+  `^sessions/(${UUID_PATH})(?:/(messages|context|history|cancel))?$`,
+  'i'
+);
 const OPERATIONS = ['chat', 'decide', 'extract', 'summarize', 'validate'];
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const UNPAIRED_SURROGATES =
@@ -128,9 +131,25 @@ function requestInstance(base, state) {
   return ai;
 }
 
-async function runOperation(def, base, input, state, runId, principal, sessionId) {
+function cancelRun(run, code = 'run_cancelled') {
+  if (run.phase !== 'running' || run.controller.signal.aborted) return false;
+  run.controller.abort(Object.assign(new Error('Run cancelled'), { name: 'AbortError', code }));
+  return true;
+}
+
+function cancelledResponse(res, run) {
+  return respond(res, 409, {
+    error: { code: run.controller.signal.reason?.code || 'run_cancelled' },
+    runId: run.runId,
+    toolCallsStarted: run.toolCallsStarted,
+    toolCallIds: run.toolCallIds
+  });
+}
+
+async function runOperation(def, base, input, state, run, principal, sessionId) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { invalid: true };
   const ai = requestInstance(base, state);
+  const signal = run.controller.signal;
   const operation = input.operation || 'chat';
   const data = input.input || {};
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { invalid: true };
@@ -141,9 +160,13 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
     onToolCall:
       def.onToolCall &&
       (async (...args) => {
+        signal.throwIfAborted();
+        run.toolCallsStarted++;
+        if (args[2]?.callId) run.toolCallIds.push(args[2].callId);
         try {
           return await def.onToolCall(...args);
         } catch {
+          if (signal.aborted) signal.throwIfAborted();
           return { error: 'tool_error' };
         }
       })
@@ -152,7 +175,7 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
   let result;
   return ai._runWithTrace(
     operation,
-    runId,
+    run.runId,
     async () => {
       if (operation === 'chat') {
         if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > 8000)
@@ -176,6 +199,7 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
         if (typeof data.criteria !== 'string') return { invalid: true };
         result = await ai.validate(data.criteria, data.subject, data.reference || null, options);
       } else return { invalid: true };
+      signal.throwIfAborted();
       return {
         result,
         state: state
@@ -194,7 +218,7 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
           : null
       };
     },
-    { principal, agentId: def.id, sessionId }
+    { principal, agentId: def.id, sessionId, signal }
   );
 }
 
@@ -246,6 +270,25 @@ function serveAgents(options = {}) {
     throw new Error('maxConnections must be positive');
   const store = options.store;
   let active = 0;
+  let draining = false;
+  const runs = new Map();
+  const startRun = (agentId, principal, sessionId) => {
+    const run = {
+      runId: crypto.randomUUID(),
+      agentId,
+      principal,
+      sessionId,
+      controller: new AbortController(),
+      phase: 'running',
+      toolCallsStarted: 0,
+      toolCallIds: []
+    };
+    run.done = new Promise(resolve => {
+      run.finish = resolve;
+    });
+    runs.set(run.runId, run);
+    return run;
+  };
   const cleanup =
     store?.purgeExpired && setInterval(() => store.purgeExpired().catch(() => {}), 3600000);
   cleanup?.unref();
@@ -256,7 +299,14 @@ function serveAgents(options = {}) {
       if (req.method === 'GET' && pathname === '/healthz')
         return respond(res, 200, { status: 'ok' });
       if (req.method === 'GET' && pathname === '/readyz') {
-        return respond(res, 200, { status: 'ready' });
+        if (draining) res.setHeader('Connection', 'close');
+        return draining
+          ? failure(res, 503, 'shutting_down')
+          : respond(res, 200, { status: 'ready' });
+      }
+      if (draining) {
+        res.setHeader('Connection', 'close');
+        return failure(res, 503, 'shutting_down');
       }
       const header = req.headers.authorization;
       const token =
@@ -297,7 +347,7 @@ function serveAgents(options = {}) {
         return failure(res, 403, 'forbidden');
       const rest = m[2] || '';
       if (
-        ['disable', 'enable'].includes(rest) &&
+        ['disable', 'enable', 'stop'].includes(rest) &&
         options.authenticate &&
         identity?.canManage !== true
       )
@@ -310,18 +360,41 @@ function serveAgents(options = {}) {
         agent.disabled = false;
         return respond(res, 200, { disabled: false });
       }
+      if (req.method === 'POST' && rest === 'stop') {
+        agent.disabled = true;
+        let cancelling = 0;
+        for (const run of runs.values()) {
+          if (run.agentId === def.id && cancelRun(run)) cancelling++;
+        }
+        return respond(res, 202, { disabled: true, cancelling, scope: 'process' });
+      }
+      const s = rest.match(SESSION_PATH);
+      if (req.method === 'POST' && s?.[2] === 'cancel' && def.mode === 'stateful') {
+        const run = [...runs.values()].find(
+          current =>
+            current.agentId === def.id &&
+            current.sessionId === s[1] &&
+            current.principal === principal
+        );
+        if (!run) return failure(res, 409, 'no_active_run');
+        if (run.phase !== 'running') return failure(res, 409, 'run_committing');
+        return respond(res, 202, { cancelling: cancelRun(run), runId: run.runId });
+      }
       if (agent.disabled) return failure(res, 409, 'agent_disabled');
       if (req.method === 'POST' && rest === 'invoke' && def.mode === 'stateless') {
         const input = await readBody(req, maxBody);
         const operation = input?.operation || 'chat';
         if (!def.operations.includes(operation)) return failure(res, 403, 'operation_forbidden');
+        if (agent.disabled) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
+        const run = startRun(def.id, principal);
         try {
-          const runId = crypto.randomUUID();
-          const outcome = await runOperation(def, base, input, undefined, runId, principal);
+          const outcome = await runOperation(def, base, input, undefined, run, principal);
+          if (run.controller.signal.aborted) return cancelledResponse(res, run);
           if (outcome.invalid) return failure(res, 400, 'invalid_input');
+          run.phase = 'responding';
           return respond(
             res,
             outcome.result?.errorCode === 'guard_rejected'
@@ -330,13 +403,18 @@ function serveAgents(options = {}) {
                 ? 502
                 : 200,
             {
-              runId,
+              runId: run.runId,
               output: publicResult(outcome.result, def.exposeToolCalls)
             }
           );
+        } catch (error) {
+          if (run.controller.signal.aborted) return cancelledResponse(res, run);
+          throw error;
         } finally {
+          runs.delete(run.runId);
           active--;
           agent.active--;
+          run.finish();
         }
       }
       if (req.method === 'POST' && rest === 'sessions' && def.mode === 'stateful') {
@@ -354,7 +432,6 @@ function serveAgents(options = {}) {
         );
         return respond(res, 201, { sessionId });
       }
-      const s = rest.match(SESSION_PATH);
       if (def.mode !== 'stateful' || !s) return failure(res, 404, 'not_found');
       const ref = { id: s[1], agent: def.id, principal };
       if (req.method === 'DELETE' && !s[2]) {
@@ -381,11 +458,13 @@ function serveAgents(options = {}) {
         const input = await readBody(req, maxBody);
         if (typeof input?.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 8000)
           return failure(res, 400, 'invalid_input');
+        if (agent.disabled) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
         let acquired;
         let heartbeat;
+        let run;
         try {
           const leaseMs = 60000;
           acquired = await store.acquire(ref, leaseMs);
@@ -395,11 +474,19 @@ function serveAgents(options = {}) {
               acquired.status === 'busy' ? 409 : 404,
               acquired.status === 'busy' ? 'session_busy' : 'not_found'
             );
+          if (agent.disabled) {
+            await store.release(ref, acquired.lease);
+            return failure(res, 409, 'agent_disabled');
+          }
+          run = startRun(def.id, principal, ref.id);
           let renewPromise = null;
           heartbeat = setInterval(() => {
             if (renewPromise) return;
             renewPromise = Promise.resolve()
               .then(() => store.renew(ref, acquired.lease, leaseMs))
+              .then(renewed => {
+                if (!renewed) cancelRun(run, 'lease_lost');
+              })
               .catch(() => {
                 console.warn('nullprotocol: session lease renewal failed');
               })
@@ -408,35 +495,53 @@ function serveAgents(options = {}) {
               });
           }, 10000);
           heartbeat.unref();
-          const runId = crypto.randomUUID();
           const outcome = await runOperation(
             def,
             base,
             { operation: 'chat', input: { prompt: input.prompt } },
             acquired.state,
-            runId,
+            run,
             principal,
             ref.id
           );
           clearInterval(heartbeat);
           heartbeat = null;
+          if (run.controller.signal.aborted) {
+            try {
+              await store.release(ref, acquired.lease);
+            } catch {
+              console.warn('nullprotocol: cancelled session lease release failed');
+            }
+            return cancelledResponse(res, run);
+          }
           if (outcome.result?.success === false) {
             await store.release(ref, acquired.lease);
             return respond(res, 502, { output: publicResult(outcome.result, def.exposeToolCalls) });
           }
+          run.phase = 'committing';
           if (!(await store.commit(ref, acquired.lease, outcome.state)))
             return failure(res, 409, 'lease_lost');
+          run.phase = 'responding';
           return respond(res, 200, {
-            runId,
+            runId: run.runId,
             output: publicResult(outcome.result, def.exposeToolCalls)
           });
         } catch (error) {
-          if (acquired?.lease) await store.release(ref, acquired.lease);
+          if (acquired?.lease) {
+            try {
+              await store.release(ref, acquired.lease);
+            } catch {
+              console.warn('nullprotocol: session lease release failed');
+            }
+          }
+          if (run?.controller.signal.aborted) return cancelledResponse(res, run);
           throw error;
         } finally {
           clearInterval(heartbeat);
+          if (run) runs.delete(run.runId);
           active--;
           agent.active--;
+          run?.finish();
         }
       }
       return failure(res, 404, 'not_found');
@@ -456,12 +561,50 @@ function serveAgents(options = {}) {
   server.headersTimeout = 10000;
   server.maxConnections = maxConnections;
   server.agents = selected;
+  const sockets = new Set();
+  server.on('connection', socket => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
   server.once('close', () => clearInterval(cleanup));
-  server.shutdown = async () => {
-    const closed = new Promise(resolve => server.close(resolve));
-    server.closeIdleConnections?.();
-    await closed;
-    await Promise.all([...selected.values()].map(({ base }) => base.telemetry?.destroy()));
+  let shutdownPromise;
+  const settledWithin = async (promise, ms) => {
+    let timer;
+    try {
+      return await Promise.race([
+        promise.then(() => true),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), ms);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  server.shutdown = ({ drainTimeoutMs = 10000, cancelTimeoutMs = 2000 } = {}) => {
+    if (shutdownPromise) return shutdownPromise;
+    if (
+      !Number.isInteger(drainTimeoutMs) ||
+      drainTimeoutMs < 0 ||
+      !Number.isInteger(cancelTimeoutMs) ||
+      cancelTimeoutMs < 0
+    )
+      return Promise.reject(new Error('Shutdown timeouts must be nonnegative integers'));
+    draining = true;
+    shutdownPromise = (async () => {
+      const closed = new Promise(resolve => server.close(resolve));
+      server.closeIdleConnections?.();
+      const graceful = await settledWithin(closed, drainTimeoutMs);
+      if (!graceful) {
+        const unfinished = [...runs.values()].map(run => run.done);
+        for (const run of runs.values()) cancelRun(run, 'shutdown');
+        await settledWithin(Promise.allSettled(unfinished), cancelTimeoutMs);
+        for (const socket of sockets) socket.destroy();
+        await settledWithin(closed, 1000);
+      }
+      await Promise.all([...selected.values()].map(({ base }) => base.telemetry?.destroy()));
+    })();
+    return shutdownPromise;
   };
   const onSignal = () => {
     server.shutdown().catch(() => {

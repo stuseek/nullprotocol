@@ -390,6 +390,28 @@ describe('TelemetryClient', () => {
   });
 
   describe('destroy', () => {
+    test('bounds flush time and closes an unfinished telemetry request', async () => {
+      jest.useRealTimers();
+      client = new TelemetryClient(activeOptions);
+      const requestSpy = jest.spyOn(https, 'request').mockImplementation(() => {
+        const req = new EventEmitter();
+        req.setTimeout = jest.fn();
+        req.write = jest.fn();
+        req.end = jest.fn();
+        req.destroy = jest.fn(error => req.emit('error', error));
+        return req;
+      });
+      try {
+        client.track('chat', { success: true });
+        await client.destroy({ timeoutMs: 5 });
+        expect(requestSpy).toHaveBeenCalledTimes(1);
+        expect(client.enabled).toBe(false);
+        expect(client.pendingRequests.size).toBe(0);
+      } finally {
+        requestSpy.mockRestore();
+      }
+    });
+
     test('should clear interval and flush', () => {
       // Use real timers for this test since we need clearInterval to be real
       jest.useRealTimers();

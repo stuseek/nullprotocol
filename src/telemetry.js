@@ -37,6 +37,8 @@ class TelemetryClient {
     this.queue = [];
     this.flushInterval = null;
     this.flushing = null;
+    this.pendingRequests = new Set();
+    this.stopping = false;
     this.retryAt = 0;
     this.failures = 0;
     this.droppedEvents = 0;
@@ -195,10 +197,10 @@ class TelemetryClient {
 
   async flush(force = false) {
     if (force) this.retryAt = 0;
-    if (!this.enabled || !this.queue.length || Date.now() < this.retryAt) return;
+    if (!this.enabled || this.stopping || !this.queue.length || Date.now() < this.retryAt) return;
     if (this.flushing) return this.flushing;
     this.flushing = (async () => {
-      while (this.queue.length && Date.now() >= this.retryAt) {
+      while (!this.stopping && this.queue.length && Date.now() >= this.retryAt) {
         const batch = this.queue.slice(0, 50);
         try {
           const response = await this.send(batch);
@@ -254,10 +256,16 @@ class TelemetryClient {
         }
       };
 
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.pendingRequests.delete(req);
+      };
       const req = https.request(options, res => {
         let body = '';
         res.on('data', chunk => (body += chunk));
         res.on('end', () => {
+          cleanup();
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve({ status: res.statusCode, body });
           } else {
@@ -269,19 +277,43 @@ class TelemetryClient {
         });
       });
 
-      req.on('error', reject);
+      this.pendingRequests.add(req);
+      req.on('error', error => {
+        cleanup();
+        reject(error);
+      });
       req.setTimeout(15000, () => req.destroy(new Error('Telemetry request timed out')));
+      timer = setTimeout(() => req.destroy(new Error('Telemetry request timed out')), 15000);
+      timer.unref();
       req.write(data);
       req.end();
     });
   }
 
-  async destroy() {
+  async destroy({ timeoutMs = 5000 } = {}) {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
     }
-    if (this.flushing) await this.flushing;
-    await this.flush(true);
+    const work = (async () => {
+      if (this.flushing) await this.flushing;
+      await this.flush(true);
+    })();
+    let timer;
+    const completed = await Promise.race([
+      work.then(() => true),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      })
+    ]);
+    clearTimeout(timer);
+    if (!completed) {
+      this.stopping = true;
+      for (const request of this.pendingRequests)
+        request.destroy(new Error('Telemetry shutdown deadline reached'));
+      await Promise.race([work.catch(() => {}), new Promise(resolve => setTimeout(resolve, 100))]);
+    }
+    this.enabled = false;
+    this.stopping = true;
   }
 }
 

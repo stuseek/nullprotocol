@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.0 — source release; npm publication pending
+
+- Add process-local `stop` for a named agent and cancellation for the current stateful session turn. Cancellation prevents a session commit and reports which tool calls started.
+- Propagate cancellation to provider requests, retries, decision guards, and cooperative tool callbacks. Aborted provider calls do not count against the circuit breaker.
+- Bound named-service shutdown and telemetry flush. Callbacks that ignore cancellation can outlive shutdown; their side effects cannot be rolled back.
+- A session store's `renew()` must return `true` for a valid lease. Returning `false` now cancels the turn before it commits.
+
 ## 2.4.0 — source release; npm publication pending
 
 - Report metadata for consumed streaming `chat` calls, including completion, provider failure, and early cancellation. Preserve each stream's run ID when generators are read later or interleaved.

@@ -13,6 +13,11 @@ class CircuitBreakerError extends Error {
   }
 }
 
+function cancellationError(signal) {
+  if (signal?.reason instanceof Error && signal.reason.name === 'AbortError') return signal.reason;
+  return Object.assign(new Error('Run cancelled'), { name: 'AbortError' });
+}
+
 class Resilience {
   constructor(options = {}) {
     this.maxRetries = options.maxRetries ?? 2;
@@ -31,6 +36,7 @@ class Resilience {
    * Execute a function with retry, timeout, and circuit breaker protection
    */
   async execute(fn, options = {}) {
+    if (options.signal?.aborted) throw cancellationError(options.signal);
     // Check circuit breaker
     if (this.isTripped()) {
       const cb = this.circuitBreaker;
@@ -49,11 +55,13 @@ class Resilience {
 
     const maxRetries = options.maxRetries ?? this.maxRetries;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (options.signal?.aborted) throw cancellationError(options.signal);
       try {
-        const result = await this._withTimeout(fn, options.timeout ?? this.timeout);
+        const result = await this._withTimeout(fn, options.timeout ?? this.timeout, options.signal);
         this.recordSuccess();
         return result;
       } catch (error) {
+        if (options.signal?.aborted) throw cancellationError(options.signal);
         lastError = error;
 
         // Don't retry non-retryable errors
@@ -65,7 +73,7 @@ class Resilience {
         // Don't wait after the last attempt
         if (attempt < maxRetries) {
           const delay = this._backoffDelay(attempt);
-          await this._sleep(delay);
+          await this._sleep(delay, options.signal);
         }
       }
     }
@@ -131,27 +139,42 @@ class Resilience {
   /**
    * Wrap a function with a timeout
    */
-  _withTimeout(fn, ms) {
-    if (!ms || ms <= 0) return fn();
-
+  _withTimeout(fn, ms, externalSignal) {
     return new Promise((resolve, reject) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => {
-        const err = new Error(`AI request timed out after ${ms}ms`);
-        err.code = 'ETIMEDOUT';
-        controller.abort(err);
-        reject(err);
-      }, ms);
+      let timer;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        externalSignal?.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        controller.abort(externalSignal.reason);
+        cleanup();
+        reject(cancellationError(externalSignal));
+      };
+      if (externalSignal?.aborted) return onAbort();
+      externalSignal?.addEventListener('abort', onAbort, { once: true });
+      if (ms && ms > 0)
+        timer = setTimeout(() => {
+          const err = new Error(`AI request timed out after ${ms}ms`);
+          err.code = 'ETIMEDOUT';
+          controller.abort(err);
+          cleanup();
+          reject(err);
+        }, ms);
 
       Promise.resolve()
-        .then(() => fn(controller.signal))
+        .then(() => {
+          if (externalSignal?.aborted) throw cancellationError(externalSignal);
+          return fn(controller.signal);
+        })
         .then(
           result => {
-            clearTimeout(timer);
+            cleanup();
             resolve(result);
           },
           error => {
-            clearTimeout(timer);
+            cleanup();
             reject(error);
           }
         );
@@ -208,8 +231,21 @@ class Resilience {
     return Math.min(base + jitter, 10000);
   }
 
-  _sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  _sleep(ms, signal) {
+    if (signal?.aborted) return Promise.reject(cancellationError(signal));
+    return new Promise((resolve, reject) => {
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        cleanup();
+        reject(cancellationError(signal));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }
 

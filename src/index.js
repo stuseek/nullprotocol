@@ -548,6 +548,7 @@ class AIToolkit {
 
   async _requestModel(engine, client, params) {
     const started = Date.now();
+    const runSignal = this.runContext.getStore()?.signal;
     const gatewayRequestId =
       engine === 'openai' &&
       typeof this.engines.openai === 'string' &&
@@ -569,7 +570,12 @@ class AIToolkit {
             ? client.chat.completions.create(params, requestOptions)
             : client.messages.create(params, requestOptions);
         },
-        gatewayRequestId ? { maxRetries: 0, timeout: Math.max(this.resilience.timeout, 25000) } : {}
+        {
+          ...(gatewayRequestId
+            ? { maxRetries: 0, timeout: Math.max(this.resilience.timeout, 25000) }
+            : {}),
+          ...(runSignal ? { signal: runSignal } : {})
+        }
       );
     } catch (error) {
       this._traceStep({
@@ -681,9 +687,12 @@ class AIToolkit {
     const maxRounds = 10;
     const toolCalls = [];
     const allowedTools = new Set((options.tools || []).map(tool => tool.name));
+    const run = this.runContext.getStore();
+    const runSignal = run?.signal;
     let currentResponse = rawResponse;
 
     for (let round = 0; round < maxRounds; round++) {
+      runSignal?.throwIfAborted();
       let pendingCalls;
 
       if (engine === 'openai') {
@@ -718,8 +727,10 @@ class AIToolkit {
 
       // Execute tool calls
       const results = [];
-      for (const call of pendingCalls) {
+      for (const [callIndex, call] of pendingCalls.entries()) {
+        runSignal?.throwIfAborted();
         const toolStarted = Date.now();
+        const callId = `${run?.runId || 'local'}:${round}:${callIndex}`;
         let result;
         let failed = !allowedTools.has(call.name) || !!call.argumentError;
         try {
@@ -730,9 +741,30 @@ class AIToolkit {
               : await options.onToolCall(
                   call.name,
                   call.parameters,
-                  ...(this.runContext.getStore()?.principal ? [this.runContext.getStore()] : [])
+                  ...(run?.principal
+                    ? [
+                        {
+                          principal: run.principal,
+                          agentId: run.agentId,
+                          sessionId: run.sessionId,
+                          runId: run.runId,
+                          callId,
+                          signal: runSignal
+                        }
+                      ]
+                    : [])
                 );
         } catch (err) {
+          if (runSignal?.aborted) {
+            this._traceStep({
+              kind: 'tool',
+              started: toolStarted,
+              duration: Date.now() - toolStarted,
+              success: false,
+              errorCode: 'aborted'
+            });
+            runSignal.throwIfAborted();
+          }
           result = { error: err.message };
           failed = true;
         }
@@ -750,6 +782,7 @@ class AIToolkit {
       }
 
       // Send results back
+      runSignal?.throwIfAborted();
       if (engine === 'openai') {
         const choice = currentResponse.choices[0];
         requestParams.messages.push(choice.message);
@@ -898,7 +931,7 @@ class AIToolkit {
           engine,
           duration: Date.now() - start,
           success: false,
-          errorCode: 'provider_error',
+          errorCode: this.runContext.getStore()?.signal?.aborted ? 'aborted' : 'provider_error',
           operation: options.operation
         });
       }
@@ -1370,6 +1403,18 @@ class AIToolkit {
       if (valid && guard) {
         const guardStarted = Date.now();
         const controller = new AbortController();
+        const run = this.runContext.getStore();
+        const runSignal = run?.signal;
+        runSignal?.throwIfAborted();
+        let rejectOnRunAbort;
+        const runAbort = new Promise((_, reject) => {
+          rejectOnRunAbort = reject;
+        });
+        const onRunAbort = () => {
+          controller.abort(runSignal.reason);
+          rejectOnRunAbort(runSignal.reason);
+        };
+        runSignal?.addEventListener('abort', onRunAbort, { once: true });
         const timedOut = Symbol('guard_timeout');
         let timer;
         const candidate = {
@@ -1388,7 +1433,13 @@ class AIToolkit {
               guard(
                 candidate,
                 { context, actions },
-                { ...this.runContext.getStore(), signal: controller.signal }
+                {
+                  principal: run?.principal,
+                  agentId: run?.agentId,
+                  sessionId: run?.sessionId,
+                  runId: run?.runId,
+                  signal: controller.signal
+                }
               )
             ),
             new Promise(resolve => {
@@ -1396,7 +1447,8 @@ class AIToolkit {
                 controller.abort();
                 resolve(timedOut);
               }, guardTimeoutMs);
-            })
+            }),
+            runAbort
           ]);
           if (result === timedOut) {
             guardFailure = 'guard_timeout';
@@ -1404,9 +1456,10 @@ class AIToolkit {
             guardFailure = 'guard_rejected';
           }
         } catch {
-          guardFailure = 'guard_error';
+          guardFailure = runSignal?.aborted ? 'aborted' : 'guard_error';
         } finally {
           clearTimeout(timer);
+          runSignal?.removeEventListener('abort', onRunAbort);
           this._traceStep({
             kind: 'guard',
             started: guardStarted,

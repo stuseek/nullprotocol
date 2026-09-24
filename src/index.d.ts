@@ -119,7 +119,7 @@ export interface ChatOptions extends BaseOptions {
   /** Tools available for the AI to call */
   tools?: ToolDefinition[];
   /** Callback invoked when the AI makes a tool call */
-  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
   /** Enable streaming mode — returns async generator */
   stream?: boolean;
   /** When streaming, collect all chunks and return a ChatResult instead of a generator */
@@ -218,7 +218,10 @@ export declare class Resilience {
     circuitBreakerThreshold?: number;
     circuitBreakerResetMs?: number;
   });
-  execute<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T>;
+  execute<T>(
+    fn: (signal?: AbortSignal) => Promise<T>,
+    options?: { signal?: AbortSignal; timeout?: number; maxRetries?: number }
+  ): Promise<T>;
   isTripped(): boolean;
   reset(): void;
   recordSuccess(): void;
@@ -437,7 +440,7 @@ export interface AgentDefinition extends AIToolkitOptions {
   description?: string;
   tools?: ToolDefinition[];
   schemas?: Record<string, Record<string, any>>;
-  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
   callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
   /** Defaults to 8,192 rough tokens in the named HTTP service. */
   maxHistoryTokens?: number;
@@ -507,7 +510,7 @@ export interface AgentServerOptions {
 
 export interface AgentServer extends Server {
   agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; active: number }>;
-  shutdown(): Promise<void>;
+  shutdown(options?: { drainTimeoutMs?: number; cancelTimeoutMs?: number }): Promise<void>;
 }
 
 export function defineAgent(options: AgentDefinition): AgentDefinition;
