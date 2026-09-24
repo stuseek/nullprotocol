@@ -27,3 +27,7 @@ npm run bench:report -- bench/results/PILOT_FILE.jsonl
 The runner refuses a nonlocal endpoint or a model without `num_ctx 8192`. It records the model digests, source and task hashes, every model response, finish reason, token counts when reported, and per-task scores. Raw runs stay under ignored `bench/results/`; inspect them before sharing. Do not put private application data in tasks.
 
 For a publishable comparison, follow [the larger benchmark plan](https://github.com/stuseek/nullprotocol-web/blob/main/docs/benchmark-plan.md): freeze a held-out set before running it, use enough tasks per category, account for context truncation and model calls, and publish prompts, raw rows, and uncertainty intervals.
+
+## Frozen 48-task comparison
+
+`frozen-tasks.js` defines 12 tasks each for extraction, action choice, tool use, and retrieval from a noisy document. This set extends patterns explored in the pilot, so it is **not independent held-out data**. Freeze and review the tasks, runner, and scorer in a commit before running either model. Then use the same local setup as above and run `npm run bench:frozen`; the runner writes raw JSONL under ignored `bench/results/`. Use `npm run bench:report -- PATH` on the result. The report verifies the task hash, source commit, and expected rows. For structured tasks it compares direct JSON parsing, provider JSON mode, and the SDK; tool tasks use direct and SDK only. Publish the raw output and exact source commit with any task-specific results. One run per task is not a general model-quality estimate.

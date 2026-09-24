@@ -26,6 +26,7 @@
     "example:cicd": "node examples/cicd-analyzer.js",
     "smoke:local": "node examples/local-smoke.js",
     "bench:local": "node bench/run.js",
+    "bench:frozen": "node bench/run.js --suite=frozen",
     "bench:report": "node bench/report.js",
     "serve": "node bin/serve.js"
   },
@@ -96,6 +97,7 @@
     "bench/report.js",
     "bench/score.js",
     "bench/tasks.js",
+    "bench/frozen-tasks.js",
     "bench/modelfiles/qwen3b.Modelfile",
     "bench/modelfiles/qwen7b.Modelfile",
     "bin/serve.js",

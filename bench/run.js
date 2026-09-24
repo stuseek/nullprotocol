@@ -6,7 +6,17 @@ const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { OpenAI } = require('openai');
 const { NullProtocol } = require('../src');
-const tasks = require('./tasks');
+const args = require.main === module ? process.argv.slice(2) : [];
+const suiteArgs = args.filter(arg => arg.startsWith('--suite='));
+const outputArgs = args.filter(arg => !arg.startsWith('--suite='));
+if (suiteArgs.length > 1 || outputArgs.length > 1 || outputArgs.some(arg => arg.startsWith('--'))) {
+  throw new Error('Usage: run.js [--suite=frozen] [OUTPUT.jsonl]');
+}
+const suite = suiteArgs[0]?.slice('--suite='.length) || 'pilot';
+if (!['pilot', 'frozen'].includes(suite)) {
+  throw new Error('Unknown benchmark suite');
+}
+const tasks = require(suite === 'frozen' ? './frozen-tasks' : './tasks');
 const { score } = require('./score');
 const fetch = globalThis.fetch;
 
@@ -20,7 +30,7 @@ if (
   endpointUrl.search ||
   endpointUrl.hash
 ) {
-  throw new Error('The pilot requires a local Ollama endpoint without URL credentials');
+  throw new Error('The benchmark requires a local Ollama endpoint without URL credentials');
 }
 const modelNames = (
   process.env.NULLPROTOCOL_BENCH_MODELS ||
@@ -30,8 +40,12 @@ const modelNames = (
   .map(x => x.trim())
   .filter(Boolean);
 const output =
-  process.argv[2] ||
-  path.join(__dirname, 'results', `pilot-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
+  outputArgs[0] ||
+  path.join(
+    __dirname,
+    'results',
+    `${suite}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
+  );
 const maxTokens = 280;
 
 function prompt(task) {
@@ -169,7 +183,7 @@ async function sdk(task, model, budget) {
   };
 }
 
-async function direct(task, model, budget) {
+async function direct(task, model, budget, jsonMode = false) {
   const api = client();
   const stats = meter(api, budget);
   const start = Date.now();
@@ -180,6 +194,9 @@ async function direct(task, model, budget) {
   try {
     const messages = prompt(task);
     const params = { model, messages, temperature: 0, max_tokens: maxTokens };
+    if (jsonMode) {
+      params.response_format = { type: 'json_object' };
+    }
     if (task.category === 'tool') {
       params.tools = [{ type: 'function', function: task.tool }];
     }
@@ -261,7 +278,8 @@ function manifest(models, digests) {
   const gitRoot = command('git', ['rev-parse', '--show-toplevel']);
   const inSourceRepo = gitRoot && path.resolve(gitRoot) === path.resolve(root);
   return {
-    kind: 'local-pilot',
+    kind: suite === 'frozen' ? 'local-frozen-v1' : 'local-pilot',
+    suite,
     date: new Date().toISOString(),
     sdkCommit: inSourceRepo ? command('git', ['rev-parse', 'HEAD']) : null,
     sourceDirty: inSourceRepo
@@ -277,13 +295,14 @@ function manifest(models, digests) {
     models: models.map(name => ({ name, digest: digests[name] || null })),
     taskSha256: createHash('sha256').update(JSON.stringify(tasks)).digest('hex'),
     tasks: tasks.length,
-    arms: ['direct', 'sdk'],
+    arms: suite === 'frozen' ? ['direct', 'direct-json', 'sdk'] : ['direct', 'sdk'],
     endpoint: endpointUrl.origin,
     temperature: 0,
     maxTokens,
     budget: { structured: 1, tool: 3 },
-    directParser: 'JSON.parse(response.content), no shape validation',
-    note: 'The direct arm uses the same prompt and sampling settings as the SDK. Differences include JSON recovery, output validation, and tool-call filtering. Accepted means JSON parsed for direct and SDK validation passed for SDK. Provider-reported token counts and latency may depend on Ollama prompt caching. This exploratory sample has no statistical power for broad model claims.'
+    directParser:
+      'JSON.parse(response.content), no shape validation; direct-json also requests provider JSON mode for non-tool tasks',
+    note: 'The arms use the same prompts and sampling settings; direct-json uses provider JSON mode for structured tasks and is omitted for tools. Differences include JSON recovery, output validation, and tool-call filtering. Temperature 0 is not a reproducibility guarantee. Accepted means JSON parsed for direct arms and SDK validation passed for SDK. Provider-reported token counts and latency may depend on Ollama prompt caching. These tasks support only narrow task-specific conclusions, not a general model-parity claim.'
   };
 }
 
@@ -308,23 +327,52 @@ async function main() {
     }
     context[name] = Number(match[1]);
   }
+  const runManifest = { ...manifest(modelNames, digests), context };
+  if (suite === 'frozen' && (runManifest.sourceDirty || !runManifest.sdkCommit)) {
+    throw new Error('Freeze the benchmark in a clean source commit before running');
+  }
+  if (suite === 'frozen') {
+    for (const model of modelNames) {
+      const check = await client().chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'Return a JSON object with ready true.' }],
+        temperature: 0,
+        max_tokens: 32,
+        response_format: { type: 'json_object' }
+      });
+      if (JSON.parse(check.choices[0].message.content).ready !== true) {
+        throw new Error(`${model} does not support the JSON-mode baseline`);
+      }
+    }
+  }
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const handle = fs.openSync(output, 'wx');
   const write = value => fs.writeSync(handle, `${JSON.stringify(value)}\n`);
   try {
-    write({ manifest: { ...manifest(modelNames, digests), context } });
+    write({ manifest: runManifest });
     for (const model of modelNames) {
-      await client().chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: 'Reply READY.' }],
-        temperature: 0,
-        max_tokens: 16
-      });
+      if (suite === 'pilot') {
+        await client().chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: 'Reply READY.' }],
+          temperature: 0,
+          max_tokens: 16
+        });
+      }
       for (const [index, task] of tasks.entries()) {
         const budget = task.category === 'tool' ? 3 : 1;
-        for (const arm of index % 2 ? ['sdk', 'direct'] : ['direct', 'sdk']) {
+        const arms =
+          suite === 'frozen' && task.category !== 'tool'
+            ? ['direct', 'direct-json', 'sdk']
+            : ['direct', 'sdk'];
+        if (index % 2) {
+          arms.reverse();
+        }
+        for (const arm of arms) {
           const result =
-            arm === 'sdk' ? await sdk(task, model, budget) : await direct(task, model, budget);
+            arm === 'sdk'
+              ? await sdk(task, model, budget)
+              : await direct(task, model, budget, arm === 'direct-json');
           const correct = score(task, result.payload, result.toolCalls, result.answer);
           write({
             model,

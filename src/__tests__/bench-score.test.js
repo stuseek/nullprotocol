@@ -30,6 +30,21 @@ test('a tool answer requires the right call as well as the right text', () => {
   expect(
     score(task, null, [{ name: 'lookup_order', arguments: { id: 42 } }], 'Order was not shipped')
   ).toBe(false);
+  expect(
+    score(task, null, [{ name: 'lookup_order', arguments: { id: 42 } }], 'Order was unshipped')
+  ).toBe(false);
+});
+
+test('frozen tool tasks require an exact grounded answer', () => {
+  const task = {
+    category: 'tool',
+    expectedCall: { name: 'lookup_booking', arguments: { id: 18 } },
+    expectedAnswer: 'gate=B12'
+  };
+  const call = [task.expectedCall];
+  expect(score(task, null, call, 'gate=B12')).toBe(true);
+  expect(score(task, null, call, 'gate=not B12')).toBe(false);
+  expect(score(task, null, call, 'gate=B12 or C7')).toBe(false);
 });
 
 test('a decision is scored on its chosen action, not the SDK success flag', () => {
