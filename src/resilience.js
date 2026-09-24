@@ -154,7 +154,7 @@ class Resilience {
       };
       if (externalSignal?.aborted) return onAbort();
       externalSignal?.addEventListener('abort', onAbort, { once: true });
-      if (ms && ms > 0)
+      if (ms && ms > 0) {
         timer = setTimeout(() => {
           const err = new Error(`AI request timed out after ${ms}ms`);
           err.code = 'ETIMEDOUT';
@@ -162,6 +162,7 @@ class Resilience {
           cleanup();
           reject(err);
         }, ms);
+      }
 
       Promise.resolve()
         .then(() => {
@@ -203,12 +204,15 @@ class Resilience {
         'UND_ERR_CONNECT_TIMEOUT',
         'UND_ERR_SOCKET'
       ].includes(code)
-    )
+    ) {
       return true;
-    if (['APIConnectionError', 'APIConnectionTimeoutError'].includes(error.constructor?.name))
+    }
+    if (['APIConnectionError', 'APIConnectionTimeoutError'].includes(error.constructor?.name)) {
       return true;
-    if (['fetch failed', 'Connection error.', 'Request timed out.'].includes(error.message))
+    }
+    if (['fetch failed', 'Connection error.', 'Request timed out.'].includes(error.message)) {
       return true;
+    }
 
     // Anthropic overloaded
     if (error.message?.includes('overloaded')) return true;

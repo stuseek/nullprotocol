@@ -63,7 +63,8 @@ describe('ConfigLoader', () => {
     test('should merge options with defaults', () => {
       const config = loader.load({
         temperature: 0.7,
-        customOption: 'value'
+        customOption: 'value',
+        engines: { openai: 'test-key' }
       });
 
       expect(config.temperature).toBe(0.7);

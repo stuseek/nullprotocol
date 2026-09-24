@@ -105,8 +105,9 @@ class TelemetryClient {
         'config_error',
         'internal'
       ]);
-      const count = value =>
-        Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 1_000_000_000) : 0;
+      const count = value => {
+        return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 1_000_000_000) : 0;
+      };
       const steps = data.steps.slice(0, 24).map(step => ({
         kind: step.kind,
         offset: count(step.offset),
@@ -256,7 +257,6 @@ class TelemetryClient {
         }
       };
 
-      let timer;
       const cleanup = () => {
         clearTimeout(timer);
         this.pendingRequests.delete(req);
@@ -277,14 +277,15 @@ class TelemetryClient {
         });
       });
 
+      const timer = setTimeout(() => req.destroy(new Error('Telemetry request timed out')), 15000);
+      timer.unref();
+
       this.pendingRequests.add(req);
       req.on('error', error => {
         cleanup();
         reject(error);
       });
       req.setTimeout(15000, () => req.destroy(new Error('Telemetry request timed out')));
-      timer = setTimeout(() => req.destroy(new Error('Telemetry request timed out')), 15000);
-      timer.unref();
       req.write(data);
       req.end();
     });
@@ -308,8 +309,9 @@ class TelemetryClient {
     clearTimeout(timer);
     if (!completed) {
       this.stopping = true;
-      for (const request of this.pendingRequests)
+      for (const request of this.pendingRequests) {
         request.destroy(new Error('Telemetry shutdown deadline reached'));
+      }
       await Promise.race([work.catch(() => {}), new Promise(resolve => setTimeout(resolve, 100))]);
     }
     this.enabled = false;

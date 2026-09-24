@@ -17,8 +17,9 @@ function toPropertySchema(descriptor) {
   }
 
   if (descriptor && typeof descriptor === 'object' && !Array.isArray(descriptor)) {
-    if (descriptor.type || descriptor.$ref || descriptor.anyOf || descriptor.oneOf)
+    if (descriptor.type || descriptor.$ref || descriptor.anyOf || descriptor.oneOf) {
       return descriptor;
+    }
     return toJsonSchema(descriptor);
   }
 

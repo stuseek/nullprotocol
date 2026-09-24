@@ -96,7 +96,7 @@ function serve(options = {}) {
         try {
           const raw = Buffer.concat(chunks).toString();
           resolve(raw ? JSON.parse(raw) : {});
-        } catch (e) {
+        } catch {
           const error = new Error('Invalid JSON body');
           error.status = 400;
           reject(error);
@@ -140,7 +140,7 @@ function serve(options = {}) {
       try {
         const result = await routes['/health']();
         sendJSON(res, 200, result);
-      } catch (e) {
+      } catch {
         sendJSON(res, 500, { error: 'Internal error' });
       }
       return;
@@ -200,8 +200,8 @@ function serve(options = {}) {
 
   server.listen(port, host, () => {
     console.log(`nullprotocol server running on http://${host}:${port}`);
-    console.log(`  POST /extract, /validate, /summarize, /decide, /chat`);
-    console.log(`  GET  /health`);
+    console.log('  POST /extract, /validate, /summarize, /decide, /chat');
+    console.log('  GET  /health');
     console.log('  Auth: Bearer token required');
   });
 

@@ -14,47 +14,57 @@ const UNPAIRED_SURROGATES =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 function defineAgent(options) {
-  if (!options || !AGENT_ID.test(options.id || ''))
+  if (!options || !AGENT_ID.test(options.id || '')) {
     throw new Error('Agent id must be a stable lowercase slug');
-  if (!['stateless', 'stateful'].includes(options.mode))
+  }
+  if (!['stateless', 'stateful'].includes(options.mode)) {
     throw new Error('Agent mode must be stateless or stateful');
-  if (options.tools && !Array.isArray(options.tools))
+  }
+  if (options.tools && !Array.isArray(options.tools)) {
     throw new Error('Agent tools must be an array');
+  }
   if (
     options.operations !== undefined &&
     (!Array.isArray(options.operations) ||
       !options.operations.length ||
       options.operations.some(operation => !OPERATIONS.includes(operation)) ||
       new Set(options.operations).size !== options.operations.length)
-  )
+  ) {
     throw new Error('Agent operations must be a nonempty list of supported operations');
-  if (options.mode === 'stateful' && options.operations && !options.operations.includes('chat'))
+  }
+  if (options.mode === 'stateful' && options.operations && !options.operations.includes('chat')) {
     throw new Error('Stateful agents must allow chat');
-  if (options.exposeToolCalls !== undefined && typeof options.exposeToolCalls !== 'boolean')
+  }
+  if (options.exposeToolCalls !== undefined && typeof options.exposeToolCalls !== 'boolean') {
     throw new Error('exposeToolCalls must be a boolean');
+  }
   if (
     options.maxHistoryMessages !== undefined &&
     (!Number.isInteger(options.maxHistoryMessages) ||
       options.maxHistoryMessages < 1 ||
       options.maxHistoryMessages > 1000)
-  )
+  ) {
     throw new Error('maxHistoryMessages must be between 1 and 1000');
+  }
   if (
     options.maxHistoryTokens !== undefined &&
     (!Number.isInteger(options.maxHistoryTokens) ||
       options.maxHistoryTokens < 1 ||
       options.maxHistoryTokens > 50000)
-  )
+  ) {
     throw new Error('maxHistoryTokens must be between 1 and 50000');
-  if (options.callOptions?.guard !== undefined && typeof options.callOptions.guard !== 'function')
+  }
+  if (options.callOptions?.guard !== undefined && typeof options.callOptions.guard !== 'function') {
     throw new Error('Agent decision guard must be a function');
+  }
   if (
     options.callOptions?.guardTimeoutMs !== undefined &&
     (!Number.isInteger(options.callOptions.guardTimeoutMs) ||
       options.callOptions.guardTimeoutMs < 1 ||
       options.callOptions.guardTimeoutMs > 120000)
-  )
+  ) {
     throw new Error('Agent guardTimeoutMs must be between 1 and 120000 milliseconds');
+  }
   return Object.freeze({
     ...options,
     tools: options.tools ? [...options.tools] : [],
@@ -97,10 +107,12 @@ function publicResult(result, exposeToolCalls = false) {
 }
 
 async function readBody(req, maxBytes) {
-  if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] || ''))
+  if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] || '')) {
     throw Object.assign(new Error(), { status: 415, code: 'json_required' });
-  if (Number(req.headers['content-length']) > maxBytes)
+  }
+  if (Number(req.headers['content-length']) > maxBytes) {
     throw Object.assign(new Error(), { status: 413, code: 'body_too_large' });
+  }
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -117,8 +129,9 @@ async function readBody(req, maxBytes) {
   const values = [body];
   while (values.length) {
     const value = values.pop();
-    if (typeof value === 'string' && (value.includes('\0') || UNPAIRED_SURROGATE.test(value)))
+    if (typeof value === 'string' && (value.includes('\0') || UNPAIRED_SURROGATE.test(value))) {
       throw Object.assign(new Error(), { status: 400, code: 'invalid_input' });
+    }
     if (value && typeof value === 'object') {
       if (Array.isArray(value)) for (const item of value) values.push(item);
       else for (const [key, item] of Object.entries(value)) values.push(key, item);
@@ -155,6 +168,7 @@ async function runOperation(def, base, input, state, run, principal, sessionId) 
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { invalid: true };
   const ai = requestInstance(base, state);
   const signal = run.controller.signal;
+  signal.throwIfAborted();
   const operation = input.operation || 'chat';
   const data = input.input || {};
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { invalid: true };
@@ -183,20 +197,23 @@ async function runOperation(def, base, input, state, run, principal, sessionId) 
     run.runId,
     async () => {
       if (operation === 'chat') {
-        if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > 8000)
+        if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > 8000) {
           return { invalid: true };
+        }
         result = await ai.chat(data.prompt, { ...chatOptions, trackHistory: !!state });
       } else if (operation === 'decide') {
-        if (!Array.isArray(data.actions) || data.actions.length < 1 || data.actions.length > 30)
+        if (!Array.isArray(data.actions) || data.actions.length < 1 || data.actions.length > 30) {
           return { invalid: true };
+        }
         result = await ai.decide(data.context, data.actions, {
           ...options,
           guard,
           guardTimeoutMs
         });
       } else if (operation === 'extract') {
-        if (typeof data.schema !== 'string' || !Object.hasOwn(def.schemas || {}, data.schema))
+        if (typeof data.schema !== 'string' || !Object.hasOwn(def.schemas || {}, data.schema)) {
           return { invalid: true };
+        }
         result = await ai.extract(data.data, def.schemas[data.schema], options);
       } else if (operation === 'summarize') {
         result = await ai.summarize(data.content, options);
@@ -229,8 +246,9 @@ async function runOperation(def, base, input, state, run, principal, sessionId) 
 
 function serveAgents(options = {}) {
   const apiKey = options.apiKey || process.env.NULLPROTOCOL_API_KEY;
-  if (!apiKey && !options.authenticate)
+  if (!apiKey && !options.authenticate) {
     throw new Error('An API key or authenticate hook is required');
+  }
   const definitions = Array.isArray(options.agents)
     ? options.agents
     : Object.entries(options.agents || {}).map(([id, config]) => ({ ...config, id }));
@@ -242,8 +260,9 @@ function serveAgents(options = {}) {
     const def = defineAgent(input);
     if (only && !only.includes(def.id)) continue;
     if (selected.has(def.id)) throw new Error(`Duplicate agent: ${def.id}`);
-    if (def.mode === 'stateful' && !options.store)
+    if (def.mode === 'stateful' && !options.store) {
       throw new Error(`Stateful agent ${def.id} requires a session store`);
+    }
     const {
       id,
       mode,
@@ -265,19 +284,22 @@ function serveAgents(options = {}) {
   }
   if (!selected.size) throw new Error('No agents selected');
   const maxConcurrent = options.maxConcurrentTurns ?? 32;
-  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1)
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
     throw new Error('maxConcurrentTurns must be positive');
+  }
   const maxBody = options.maxBodyBytes ?? 65536;
-  if (!Number.isSafeInteger(maxBody) || maxBody < 1)
+  if (!Number.isSafeInteger(maxBody) || maxBody < 1) {
     throw new Error('maxBodyBytes must be a positive integer');
+  }
   const maxConnections = options.maxConnections ?? 256;
-  if (!Number.isInteger(maxConnections) || maxConnections < 1)
+  if (!Number.isInteger(maxConnections) || maxConnections < 1) {
     throw new Error('maxConnections must be positive');
+  }
   const store = options.store;
   let active = 0;
   let draining = false;
   const runs = new Map();
-  const startRun = (agentId, principal, sessionId) => {
+  const startRun = (agentId, principal, sessionId, res) => {
     const run = {
       runId: crypto.randomUUID(),
       agentId,
@@ -288,8 +310,16 @@ function serveAgents(options = {}) {
       toolCallsStarted: 0,
       toolCallIds: []
     };
+    const onClose = () => {
+      if (!res.writableEnded) cancelRun(run, 'client_disconnected');
+    };
+    res.once('close', onClose);
+    if (res.destroyed) onClose();
     run.done = new Promise(resolve => {
-      run.finish = resolve;
+      run.finish = () => {
+        res.off('close', onClose);
+        resolve();
+      };
     });
     runs.set(run.runId, run);
     return run;
@@ -301,8 +331,9 @@ function serveAgents(options = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
-      if (req.method === 'GET' && pathname === '/healthz')
+      if (req.method === 'GET' && pathname === '/healthz') {
         return respond(res, 200, { status: 'ok' });
+      }
       if (req.method === 'GET' && pathname === '/readyz') {
         return draining ? shuttingDown(res) : respond(res, 200, { status: 'ready' });
       }
@@ -327,10 +358,12 @@ function serveAgents(options = {}) {
         principal.length > 128 ||
         principal.includes('\0') ||
         UNPAIRED_SURROGATE.test(principal)
-      )
+      ) {
         return failure(res, 401, 'unauthorized');
-      if (identity?.agents !== undefined && !Array.isArray(identity.agents))
+      }
+      if (identity?.agents !== undefined && !Array.isArray(identity.agents)) {
         return failure(res, 403, 'forbidden');
+      }
       if (req.method === 'GET' && pathname === '/v1/agents') {
         return respond(res, 200, {
           agents: [...selected]
@@ -347,15 +380,17 @@ function serveAgents(options = {}) {
       if (!m || !selected.has(m[1])) return failure(res, 404, 'not_found');
       const { def, base } = selected.get(m[1]);
       const agent = selected.get(m[1]);
-      if (options.authenticate && identity?.agents && !identity.agents.includes(def.id))
+      if (options.authenticate && identity?.agents && !identity.agents.includes(def.id)) {
         return failure(res, 403, 'forbidden');
+      }
       const rest = m[2] || '';
       if (
         ['disable', 'enable', 'stop'].includes(rest) &&
         options.authenticate &&
         identity?.canManage !== true
-      )
+      ) {
         return failure(res, 403, 'forbidden');
+      }
       if (req.method === 'POST' && rest === 'disable') {
         agent.disabled = true;
         return respond(res, 200, { disabled: true, activeRuns: agent.active });
@@ -388,13 +423,14 @@ function serveAgents(options = {}) {
       if (req.method === 'POST' && rest === 'invoke' && def.mode === 'stateless') {
         const input = await readBody(req, maxBody);
         if (draining) return shuttingDown(res);
+        if (res.destroyed) return;
         const operation = input?.operation || 'chat';
         if (!def.operations.includes(operation)) return failure(res, 403, 'operation_forbidden');
         if (agent.disabled) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
-        const run = startRun(def.id, principal);
+        const run = startRun(def.id, principal, undefined, res);
         try {
           const outcome = await runOperation(def, base, input, undefined, run, principal);
           if (run.controller.signal.aborted) return cancelledResponse(res, run);
@@ -430,8 +466,9 @@ function serveAgents(options = {}) {
           typeof context !== 'object' ||
           Array.isArray(context) ||
           Buffer.byteLength(JSON.stringify(context)) > 16384
-        )
+        ) {
           return failure(res, 400, 'invalid_context');
+        }
         const sessionId = await store.create(
           { agent: def.id, principal },
           { messages: [], context }
@@ -463,8 +500,13 @@ function serveAgents(options = {}) {
       if (req.method === 'POST' && s[2] === 'messages') {
         const input = await readBody(req, maxBody);
         if (draining) return shuttingDown(res);
-        if (typeof input?.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 8000)
+        if (
+          typeof input?.prompt !== 'string' ||
+          !input.prompt.trim() ||
+          input.prompt.length > 8000
+        ) {
           return failure(res, 400, 'invalid_input');
+        }
         if (agent.disabled) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
@@ -475,17 +517,22 @@ function serveAgents(options = {}) {
         try {
           const leaseMs = 60000;
           acquired = await store.acquire(ref, leaseMs);
-          if (acquired.status !== 'acquired')
+          if (acquired.status !== 'acquired') {
             return failure(
               res,
               acquired.status === 'busy' ? 409 : 404,
               acquired.status === 'busy' ? 'session_busy' : 'not_found'
             );
+          }
           if (draining || agent.disabled) {
             await store.release(ref, acquired.lease);
             return draining ? shuttingDown(res) : failure(res, 409, 'agent_disabled');
           }
-          run = startRun(def.id, principal, ref.id);
+          if (res.destroyed) {
+            await store.release(ref, acquired.lease);
+            return;
+          }
+          run = startRun(def.id, principal, ref.id, res);
           let renewPromise = null;
           heartbeat = setInterval(() => {
             if (renewPromise) return;
@@ -528,8 +575,9 @@ function serveAgents(options = {}) {
             return respond(res, 502, { output: publicResult(outcome.result, def.exposeToolCalls) });
           }
           run.phase = 'committing';
-          if (!(await store.commit(ref, acquired.lease, outcome.state)))
+          if (!(await store.commit(ref, acquired.lease, outcome.state))) {
             return failure(res, 409, 'lease_lost');
+          }
           run.phase = 'responding';
           return respond(res, 200, {
             runId: run.runId,
@@ -597,8 +645,9 @@ function serveAgents(options = {}) {
       drainTimeoutMs < 0 ||
       !Number.isInteger(cancelTimeoutMs) ||
       cancelTimeoutMs < 0
-    )
+    ) {
       return Promise.reject(new Error('Shutdown timeouts must be nonnegative integers'));
+    }
     draining = true;
     shutdownPromise = (async () => {
       const closed = new Promise(resolve => server.close(resolve));

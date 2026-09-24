@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.1 — source release; npm publication pending
+
+- Cancel a named agent's active run when its HTTP caller disconnects. A stateful turn releases its lease without saving partial history; a turn already committing can finish. Started tools may still have side effects.
+- Stop requests waiting for authentication, a body, or a session lease from starting a run after shutdown begins.
+- Cancel a running turn when session lease renewal fails, and wait for any in-flight renewal before committing history.
+- Check the SDK's root source files in lint, alongside examples, benchmarks, and tests.
+
 ## 2.5.0 — source release; npm publication pending
 
 - Add process-local `stop` for a named agent and cancellation for the current stateful session turn. Cancellation prevents a session commit and reports which tool calls started.

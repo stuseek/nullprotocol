@@ -1,6 +1,6 @@
 {
   "name": "nullprotocol",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Reliable Node.js AI building blocks for affordable and local models",
   "main": "src/index.js",
   "scripts": {
@@ -8,8 +8,8 @@
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "lint": "eslint src/**/*.js examples/**/*.js bench/**/*.js",
-    "lint:fix": "eslint src/**/*.js examples/**/*.js bench/**/*.js --fix",
+    "lint": "eslint \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\"",
+    "lint:fix": "eslint \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\" --fix",
     "format": "prettier --write \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\"",
     "validate": "npm run lint && npm run format:check && npm test",

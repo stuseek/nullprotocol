@@ -260,6 +260,284 @@ test('stop reaches the provider request signal without retrying', async () => {
   }
 });
 
+test('client disconnect cancels a stateless model call and frees its slot', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'model', mode: 'stateless', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const agent = isolated.agents.get('model');
+  let started;
+  const entered = new Promise(resolve => {
+    started = resolve;
+  });
+  let cancelled;
+  const aborted = new Promise(resolve => {
+    cancelled = resolve;
+  });
+  agent.base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    started();
+    return new Promise((_, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          cancelled(signal.reason);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
+    });
+  });
+  const controller = new global.AbortController();
+  const request = global
+    .fetch(`http://127.0.0.1:${isolated.address().port}/v1/agents/model/invoke`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ input: { prompt: 'hello' } }),
+      signal: controller.signal
+    })
+    .catch(() => null);
+  try {
+    await entered;
+    controller.abort();
+    expect(await aborted).toMatchObject({ code: 'client_disconnected' });
+    await request;
+    for (let i = 0; i < 20 && agent.active; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(agent.active).toBe(0);
+    expect(agent.base.chat).toHaveBeenCalledTimes(1);
+  } finally {
+    controller.abort();
+    await isolated.shutdown({ drainTimeoutMs: 50, cancelTimeoutMs: 50 });
+  }
+});
+
+test('client disconnect leaves a stateful session unchanged', async () => {
+  const store = new MemorySessionStore();
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    store,
+    agents: [{ id: 'companion', mode: 'stateful', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/companion/sessions`;
+  const agent = isolated.agents.get('companion');
+  let started;
+  const entered = new Promise(resolve => {
+    started = resolve;
+  });
+  let cancelled;
+  const aborted = new Promise(resolve => {
+    cancelled = resolve;
+  });
+  agent.base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    started();
+    return new Promise((_, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          cancelled(signal.reason);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
+    });
+  });
+  const made = await global
+    .fetch(url, { method: 'POST', headers: auth, body: JSON.stringify({ context: { zone: 'a' } }) })
+    .then(response => response.json());
+  const controller = new global.AbortController();
+  const request = global
+    .fetch(`${url}/${made.sessionId}/messages`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'hello' }),
+      signal: controller.signal
+    })
+    .catch(() => null);
+  try {
+    await entered;
+    controller.abort();
+    expect(await aborted).toMatchObject({ code: 'client_disconnected' });
+    await request;
+    const ref = { id: made.sessionId, agent: 'companion', principal: 'service-key' };
+    let acquired;
+    for (let i = 0; i < 20; i++) {
+      acquired = await store.acquire(ref);
+      if (acquired.status === 'acquired') {
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(acquired.status).toBe('acquired');
+    expect(acquired.state).toEqual({ messages: [], context: { zone: 'a' } });
+    await store.release(ref, acquired.lease);
+  } finally {
+    controller.abort();
+    await isolated.shutdown({ drainTimeoutMs: 50, cancelTimeoutMs: 50 });
+  }
+});
+
+test('client disconnect during session acquisition does not start a model call', async () => {
+  const store = new MemorySessionStore();
+  const originalAcquire = store.acquire.bind(store);
+  let acquireStarted;
+  const enteredAcquire = new Promise(resolve => {
+    acquireStarted = resolve;
+  });
+  let resumeAcquire;
+  store.acquire = async (...args) => {
+    acquireStarted();
+    await new Promise(resolve => {
+      resumeAcquire = resolve;
+    });
+    return originalAcquire(...args);
+  };
+  let released;
+  const leaseReleased = new Promise(resolve => {
+    released = resolve;
+  });
+  const originalRelease = store.release.bind(store);
+  store.release = async (...args) => {
+    await originalRelease(...args);
+    released();
+  };
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    store,
+    agents: [{ id: 'companion', mode: 'stateful', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/companion/sessions`;
+  const model = (isolated.agents.get('companion').base.chat = jest.fn());
+  const made = await global
+    .fetch(url, { method: 'POST', headers: auth, body: JSON.stringify({ context: {} }) })
+    .then(response => response.json());
+  let responseClosed;
+  const closed = new Promise(resolve => {
+    responseClosed = resolve;
+  });
+  isolated.on('request', (req, res) => {
+    if (req.url.endsWith('/messages')) {
+      res.once('close', responseClosed);
+    }
+  });
+  const controller = new global.AbortController();
+  const request = global
+    .fetch(`${url}/${made.sessionId}/messages`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'late' }),
+      signal: controller.signal
+    })
+    .catch(() => null);
+  try {
+    await enteredAcquire;
+    controller.abort();
+    await closed;
+    resumeAcquire();
+    const releasedAfterClose = await Promise.race([
+      leaseReleased.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 500))
+    ]);
+    expect(releasedAfterClose).toBe(true);
+    await request;
+    expect(model).not.toHaveBeenCalled();
+    expect(isolated.agents.get('companion').active).toBe(0);
+  } finally {
+    controller.abort();
+    resumeAcquire?.();
+    await isolated.shutdown({ drainTimeoutMs: 50, cancelTimeoutMs: 50 });
+  }
+});
+
+test('client disconnect during history commit keeps the completed turn', async () => {
+  const store = new MemorySessionStore();
+  const originalCommit = store.commit.bind(store);
+  let commitStarted;
+  const enteredCommit = new Promise(resolve => {
+    commitStarted = resolve;
+  });
+  let resumeCommit;
+  store.commit = async (...args) => {
+    commitStarted();
+    await new Promise(resolve => {
+      resumeCommit = resolve;
+    });
+    return originalCommit(...args);
+  };
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    store,
+    agents: [{ id: 'companion', mode: 'stateful', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/companion/sessions`;
+  isolated.agents.get('companion').base.chat = jest.fn(async function (prompt) {
+    this.messages.push({ role: 'user', content: prompt });
+    this.messages.push({ role: 'assistant', content: 'done' });
+    return { success: true, message: 'done' };
+  });
+  const made = await global
+    .fetch(url, { method: 'POST', headers: auth, body: JSON.stringify({ context: {} }) })
+    .then(response => response.json());
+  let responseClosed;
+  const closed = new Promise(resolve => {
+    responseClosed = resolve;
+  });
+  isolated.on('request', (req, res) => {
+    if (req.url.endsWith('/messages')) {
+      res.once('close', responseClosed);
+    }
+  });
+  const controller = new global.AbortController();
+  const request = global
+    .fetch(`${url}/${made.sessionId}/messages`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'finish' }),
+      signal: controller.signal
+    })
+    .catch(() => null);
+  try {
+    await enteredCommit;
+    controller.abort();
+    await closed;
+    resumeCommit();
+    await request;
+    const ref = { id: made.sessionId, agent: 'companion', principal: 'service-key' };
+    let acquired;
+    for (let i = 0; i < 20; i++) {
+      acquired = await store.acquire(ref);
+      if (acquired.status === 'acquired') {
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(acquired.status).toBe('acquired');
+    expect(acquired.state.messages).toEqual([
+      { role: 'user', content: 'finish' },
+      { role: 'assistant', content: 'done' }
+    ]);
+    await store.release(ref, acquired.lease);
+  } finally {
+    controller.abort();
+    resumeCommit?.();
+    await isolated.shutdown({ drainTimeoutMs: 50, cancelTimeoutMs: 50 });
+  }
+});
+
 test('stop signals a running tool and reports that the callback started', async () => {
   let toolStarted;
   const ready = new Promise(resolve => {

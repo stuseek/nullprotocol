@@ -1588,10 +1588,12 @@ class AIToolkit {
           onUsage: usage => {
             const input = usage?.prompt_tokens ?? usage?.input_tokens;
             const output = usage?.completion_tokens ?? usage?.output_tokens;
-            if (Number.isSafeInteger(input) && input >= 0)
+            if (Number.isSafeInteger(input) && input >= 0) {
               inputTokens = Math.min(1_000_000_000, input);
-            if (Number.isSafeInteger(output) && output >= 0)
+            }
+            if (Number.isSafeInteger(output) && output >= 0) {
               outputTokens = Math.min(1_000_000_000, output);
+            }
           }
         });
         const ai = this;
@@ -1650,9 +1652,9 @@ class AIToolkit {
             return result;
           }
           if (shouldTrack) {
-            if (Array.isArray(userPrompt))
+            if (Array.isArray(userPrompt)) {
               userPrompt.forEach(message => this.addMessage(message.role, message.content));
-            else this.addMessage('user', userPrompt);
+            } else this.addMessage('user', userPrompt);
             this.addMessage('assistant', full);
           }
 
@@ -1698,9 +1700,9 @@ class AIToolkit {
 
       // Auto-track conversation history
       if (shouldTrack) {
-        if (Array.isArray(userPrompt))
+        if (Array.isArray(userPrompt)) {
           userPrompt.forEach(message => this.addMessage(message.role, message.content));
-        else this.addMessage('user', userPrompt);
+        } else this.addMessage('user', userPrompt);
         this.addMessage('assistant', messageText);
       }
 

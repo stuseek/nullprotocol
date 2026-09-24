@@ -21,6 +21,9 @@ module.exports = [
         clearTimeout: 'readonly',
         URL: 'readonly',
         AbortSignal: 'readonly',
+        AbortController: 'readonly',
+        structuredClone: 'readonly',
+        fetch: 'readonly',
         jest: 'readonly',
         describe: 'readonly',
         test: 'readonly',
@@ -36,7 +39,8 @@ module.exports = [
       'no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
-        caughtErrorsIgnorePattern: '^_'
+        caughtErrorsIgnorePattern: '^_',
+        ignoreRestSiblings: true
       }],
       'no-console': ['warn', {
         allow: ['warn', 'error']
@@ -51,7 +55,7 @@ module.exports = [
       'no-func-assign': 'error',
       'no-irregular-whitespace': 'error',
       'no-unexpected-multiline': 'error',
-      'curly': ['error', 'all'],
+      'curly': ['error', 'multi-line'],
       'dot-notation': 'error',
       'eqeqeq': ['error', 'always', { null: 'ignore' }],
       'no-multi-spaces': 'error',
@@ -67,7 +71,7 @@ module.exports = [
       'keyword-spacing': 'error',
       'no-trailing-spaces': 'error',
       'object-curly-spacing': ['error', 'always'],
-      'quotes': ['error', 'single', { avoidEscape: true }],
+      'quotes': ['error', 'single', { avoidEscape: true, allowTemplateLiterals: true }],
       'semi': ['error', 'always'],
       'semi-spacing': 'error',
       'space-before-blocks': 'error',
@@ -92,6 +96,12 @@ module.exports = [
   },
   {
     files: ['examples/**/*.js'],
+    rules: {
+      'no-console': 'off'
+    }
+  },
+  {
+    files: ['src/server.js'],
     rules: {
       'no-console': 'off'
     }
