@@ -468,6 +468,72 @@ test('shutdown stays bounded when a callback ignores cancellation', async () => 
   expect(isolated.agents.get('model').active).toBe(0);
 });
 
+test('shutdown cannot start a stateful turn after session acquisition resumes', async () => {
+  const store = new MemorySessionStore();
+  const originalAcquire = store.acquire.bind(store);
+  let acquireStarted;
+  const enteredAcquire = new Promise(resolve => {
+    acquireStarted = resolve;
+  });
+  let resumeAcquire;
+  store.acquire = async (...args) => {
+    acquireStarted();
+    await new Promise(resolve => {
+      resumeAcquire = resolve;
+    });
+    return originalAcquire(...args);
+  };
+  let released;
+  const leaseReleased = new Promise(resolve => {
+    released = resolve;
+  });
+  const originalRelease = store.release.bind(store);
+  store.release = async (...args) => {
+    await originalRelease(...args);
+    released();
+  };
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    store,
+    agents: [{ id: 'companion', mode: 'stateful', engines: { openai: 'test' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}/v1/agents/companion/sessions`;
+  const model = (isolated.agents.get('companion').base.chat = jest.fn());
+  const made = await global
+    .fetch(url, { method: 'POST', headers: auth, body: JSON.stringify({ context: {} }) })
+    .then(response => response.json());
+  const ref = { id: made.sessionId, agent: 'companion', principal: 'service-key' };
+  const request = global
+    .fetch(`${url}/${ref.id}/messages`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ prompt: 'late' })
+    })
+    .catch(() => null);
+  try {
+    await enteredAcquire;
+    await isolated.shutdown({ drainTimeoutMs: 5, cancelTimeoutMs: 5 });
+    resumeAcquire();
+    const releasedAfterShutdown = await Promise.race([
+      leaseReleased.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 500))
+    ]);
+    expect(releasedAfterShutdown).toBe(true);
+    await request;
+    expect(model).not.toHaveBeenCalled();
+    expect(isolated.agents.get('companion').active).toBe(0);
+    const reacquired = await originalAcquire(ref);
+    expect(reacquired.status).toBe('acquired');
+    expect(reacquired.state.messages).toEqual([]);
+    await originalRelease(ref, reacquired.lease);
+  } finally {
+    resumeAcquire?.();
+  }
+});
+
 test('all disabled agents can be enabled through a ready service', async () => {
   try {
     expect((await call('/v1/agents/worker/disable', 'POST')).status).toBe(200);
@@ -525,26 +591,21 @@ test('model NUL bytes are removed from stored conversation history', async () =>
   }
 });
 
-test('a transient lease renewal error does not discard a completed turn', async () => {
+test('a failed lease renewal cancels the turn before side effects can continue', async () => {
   const originalInterval = global.setInterval;
   const originalRenew = sessionStore.renew;
   const base = server.agents.get('companion').base;
   const originalChat = base.chat;
-  let attempts = 0;
   global.setInterval = (callback, delay, ...args) =>
     originalInterval(callback, delay === 10000 ? 5 : delay, ...args);
-  sessionStore.renew = async function (...args) {
-    attempts++;
-    if (attempts === 1) {
-      throw new Error('temporary store failure');
-    }
-    return originalRenew.apply(this, args);
+  sessionStore.renew = async () => {
+    throw new Error('store unavailable');
   };
-  base.chat = jest.fn(async function (prompt) {
-    await new Promise(resolve => setTimeout(resolve, 35));
-    this.messages.push({ role: 'user', content: prompt });
-    this.messages.push({ role: 'assistant', content: 'done' });
-    return { success: true, message: 'done' };
+  base.chat = jest.fn(async function () {
+    const signal = this.runContext.getStore().signal;
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
   });
   try {
     const made = await call('/v1/agents/companion/sessions', 'POST', { context: {} });
@@ -555,13 +616,58 @@ test('a transient lease renewal error does not discard a completed turn', async 
         prompt: 'work'
       }
     );
-    expect(attempts).toBeGreaterThan(0);
-    expect(response.status).toBe(200);
+    expect(response).toMatchObject({ status: 409, body: { error: { code: 'lease_lost' } } });
     const ref = { id: made.body.sessionId, agent: 'companion', principal: 'service-key' };
     const acquired = await sessionStore.acquire(ref);
-    expect(acquired.state.messages).toHaveLength(2);
+    expect(acquired.state.messages).toEqual([]);
     await sessionStore.release(ref, acquired.lease);
   } finally {
+    global.setInterval = originalInterval;
+    sessionStore.renew = originalRenew;
+    base.chat = originalChat;
+  }
+});
+
+test('a turn waits for an in-flight lease renewal before committing', async () => {
+  const originalInterval = global.setInterval;
+  const originalRenew = sessionStore.renew;
+  const base = server.agents.get('companion').base;
+  const originalChat = base.chat;
+  let renewalStarted;
+  const started = new Promise(resolve => {
+    renewalStarted = resolve;
+  });
+  let rejectRenewal;
+  const pendingRenewal = new Promise((_, reject) => {
+    rejectRenewal = reject;
+  });
+  global.setInterval = (callback, delay, ...args) =>
+    originalInterval(callback, delay === 10000 ? 5 : delay, ...args);
+  sessionStore.renew = async () => {
+    renewalStarted();
+    return pendingRenewal;
+  };
+  base.chat = jest.fn(async function (prompt) {
+    await started;
+    this.messages.push({ role: 'user', content: prompt });
+    this.messages.push({ role: 'assistant', content: 'done' });
+    return { success: true, message: 'done' };
+  });
+  try {
+    const made = await call('/v1/agents/companion/sessions', 'POST', { context: {} });
+    const turn = call(`/v1/agents/companion/sessions/${made.body.sessionId}/messages`, 'POST', {
+      prompt: 'work'
+    });
+    await started;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    rejectRenewal(new Error('store unavailable'));
+    expect(await turn).toMatchObject({ status: 409, body: { error: { code: 'lease_lost' } } });
+    const ref = { id: made.body.sessionId, agent: 'companion', principal: 'service-key' };
+    const acquired = await sessionStore.acquire(ref);
+    expect(acquired.state.messages).toEqual([]);
+    await sessionStore.release(ref, acquired.lease);
+  } finally {
+    rejectRenewal(new Error('test cleanup'));
     global.setInterval = originalInterval;
     sessionStore.renew = originalRenew;
     base.chat = originalChat;

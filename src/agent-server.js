@@ -81,6 +81,11 @@ function failure(res, status, code) {
   respond(res, status, { error: { code } });
 }
 
+function shuttingDown(res) {
+  res.setHeader('Connection', 'close');
+  return failure(res, 503, 'shutting_down');
+}
+
 function publicResult(result, exposeToolCalls = false) {
   if (result?.errorCode === 'guard_rejected') return { success: false, error: 'decision_rejected' };
   if (result?.success === false) return { success: false, error: 'agent_failed' };
@@ -299,14 +304,10 @@ function serveAgents(options = {}) {
       if (req.method === 'GET' && pathname === '/healthz')
         return respond(res, 200, { status: 'ok' });
       if (req.method === 'GET' && pathname === '/readyz') {
-        if (draining) res.setHeader('Connection', 'close');
-        return draining
-          ? failure(res, 503, 'shutting_down')
-          : respond(res, 200, { status: 'ready' });
+        return draining ? shuttingDown(res) : respond(res, 200, { status: 'ready' });
       }
       if (draining) {
-        res.setHeader('Connection', 'close');
-        return failure(res, 503, 'shutting_down');
+        return shuttingDown(res);
       }
       const header = req.headers.authorization;
       const token =
@@ -317,6 +318,9 @@ function serveAgents(options = {}) {
         identity = await options.authenticate(req);
         principal = identity?.principal;
       } else if (token && constantTimeEqual(token, apiKey)) principal = 'service-key';
+      if (draining) {
+        return shuttingDown(res);
+      }
       if (
         !principal ||
         typeof principal !== 'string' ||
@@ -383,6 +387,7 @@ function serveAgents(options = {}) {
       if (agent.disabled) return failure(res, 409, 'agent_disabled');
       if (req.method === 'POST' && rest === 'invoke' && def.mode === 'stateless') {
         const input = await readBody(req, maxBody);
+        if (draining) return shuttingDown(res);
         const operation = input?.operation || 'chat';
         if (!def.operations.includes(operation)) return failure(res, 403, 'operation_forbidden');
         if (agent.disabled) return failure(res, 409, 'agent_disabled');
@@ -419,6 +424,7 @@ function serveAgents(options = {}) {
       }
       if (req.method === 'POST' && rest === 'sessions' && def.mode === 'stateful') {
         const body = await readBody(req, maxBody);
+        if (draining) return shuttingDown(res);
         const context = body?.context || {};
         if (
           typeof context !== 'object' ||
@@ -456,6 +462,7 @@ function serveAgents(options = {}) {
       }
       if (req.method === 'POST' && s[2] === 'messages') {
         const input = await readBody(req, maxBody);
+        if (draining) return shuttingDown(res);
         if (typeof input?.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 8000)
           return failure(res, 400, 'invalid_input');
         if (agent.disabled) return failure(res, 409, 'agent_disabled');
@@ -474,9 +481,9 @@ function serveAgents(options = {}) {
               acquired.status === 'busy' ? 409 : 404,
               acquired.status === 'busy' ? 'session_busy' : 'not_found'
             );
-          if (agent.disabled) {
+          if (draining || agent.disabled) {
             await store.release(ref, acquired.lease);
-            return failure(res, 409, 'agent_disabled');
+            return draining ? shuttingDown(res) : failure(res, 409, 'agent_disabled');
           }
           run = startRun(def.id, principal, ref.id);
           let renewPromise = null;
@@ -489,6 +496,7 @@ function serveAgents(options = {}) {
               })
               .catch(() => {
                 console.warn('nullprotocol: session lease renewal failed');
+                cancelRun(run, 'lease_lost');
               })
               .finally(() => {
                 renewPromise = null;
@@ -506,6 +514,7 @@ function serveAgents(options = {}) {
           );
           clearInterval(heartbeat);
           heartbeat = null;
+          if (renewPromise) await renewPromise;
           if (run.controller.signal.aborted) {
             try {
               await store.release(ref, acquired.lease);
