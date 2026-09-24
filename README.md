@@ -242,8 +242,6 @@ A named agent is a configuration you define in code. Requests do not create agen
 const { serveAgents, MemorySessionStore } = require('nullprotocol');
 
 serveAgents({
-  host: '127.0.0.1',
-  port: 3000,
   apiKey: process.env.NULLPROTOCOL_API_KEY,
   store: new MemorySessionStore(),
   agents: [
@@ -266,7 +264,7 @@ serveAgents({
 
 Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. For `extract`, define schemas in the agent configuration and pass a schema name in `input.schema`; request bodies cannot supply executable JSON Schema. For a stateful agent, first call `POST /v1/agents/game-character/sessions` with `{ "context": {} }`, then `POST /v1/agents/game-character/sessions/:sessionId/messages` with `{ "prompt": "Hello" }`. Use `DELETE .../history` or `DELETE .../context` to clear those separately, and `DELETE .../sessions/:sessionId` to remove the session. Non-health routes require an API key or an `authenticate(req)` hook. When a hook is supplied, the API key is ignored. An API key grants access to all agent and management routes; use the hook for caller-specific access. The hook may return `{ principal, agents, canManage }`; `principal` isolates sessions, `agents` limits agent access, and `canManage` permits `enable` and `disable`. Set `canManage` only for trusted operators. Tool callbacks receive a third argument with `principal`, `agentId`, `sessionId`, and `runId` to enforce permissions.
 
-`MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service reads `PORT` and binds to `0.0.0.0` on managed hosts; `nullprotocol-serve --config ./agents.js` loads its configuration from a local module.
+`MemorySessionStore` is for a single process. For multiple dynos, apply `sql/session-store.sql` to your own PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity; each turn takes a renewable lease so simultaneous writes to one session return `session_busy`. The service removes expired PostgreSQL sessions hourly while running. `POST /v1/agents/:id/disable` blocks new requests in the current process; it does not cancel calls already running or persist across restarts. Your app controls deployments and long-term agent configuration. The named service uses `PORT`, then `NULLPROTOCOL_PORT`, then 3000 for its port. Its host is `NULLPROTOCOL_HOST`, or `0.0.0.0` when `PORT` is set, or `127.0.0.1` otherwise. Explicit `port` and `host` options take precedence. For CLI use, export the options object from `agents.js` instead of calling `serveAgents` in that file; then run `npx nullprotocol-serve --config ./agents.js` from the project where you installed the library.
 
 Set `telemetry: true`, `telemetryEndpoint`, and `telemetryKey` on each definition to report its `id` to a Space. The telemetry server does not run agents or receive conversation history. Successful invocation responses include a `runId` shared with their telemetry events. Keep the ingest key on the server, away from browsers.
 

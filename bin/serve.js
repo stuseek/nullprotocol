@@ -6,9 +6,9 @@
  * Start the NullProtocol HTTP server.
  *
  * Usage:
- *   npx --package nullprotocol nullprotocol-serve
- *   npx --package nullprotocol nullprotocol-serve --port 8080
- *   NULLPROTOCOL_PORT=8080 NULLPROTOCOL_API_KEY=secret npx --package nullprotocol nullprotocol-serve
+ *   npx nullprotocol-serve
+ *   npx nullprotocol-serve --port 8080
+ *   npx nullprotocol-serve --config ./agents.js
  *
  * Environment:
  *   OPENAI_API_KEY       - OpenAI API key
@@ -34,28 +34,38 @@ for (let i = 0; i < args.length; i++) {
   else if (arg === '--host' && args[i + 1]) opts.host = args[++i];
   else if (arg === '--engine' && args[i + 1]) opts.defaultEngine = args[++i];
   else if (arg === '--help' || arg === '-h') {
-    console.log(`nullprotocol serve — run model operations as HTTP endpoints
+    console.log(`nullprotocol-serve — run model operations as HTTP endpoints
 
 Usage:
-  npx --package nullprotocol nullprotocol-serve [options]
+  npx nullprotocol-serve [options]
+
+Install this source release from GitHub before running the command.
+The package is not published to npm yet.
 
 Options:
   --port <n>       Port to listen on (default: 3000)
-  --host <addr>    Bind address (default: 127.0.0.1)
+  --host <addr>    Bind address (default: 127.0.0.1 locally)
   --engine <name>  Default AI engine: openai or anthropic
   --config <file>  JavaScript module exporting server options, including agents
 
 Environment variables:
   OPENAI_API_KEY, ANTHROPIC_API_KEY, NULLPROTOCOL_PORT,
-  NULLPROTOCOL_HOST, NULLPROTOCOL_API_KEY, NULLPROTOCOL_CORS
+  NULLPROTOCOL_HOST, NULLPROTOCOL_API_KEY, NULLPROTOCOL_CORS,
+  NP_AGENTS (comma-separated agent IDs when --config defines agents)
 
-Endpoints:
+Named agents use PORT, then NULLPROTOCOL_PORT, then 3000. The host is
+NULLPROTOCOL_HOST, or 0.0.0.0 when PORT is set, or 127.0.0.1 otherwise.
+Explicit port and host options take precedence.
+
+Legacy single-agent endpoints:
   POST /extract    { data, schema, ...opts }
   POST /validate   { criteria, subject, reference?, ...opts }
   POST /summarize  { content, ...opts }
   POST /decide     { context, actions, ...opts }
   POST /chat       { prompt, ...opts }
   GET  /health     Server status + circuit breaker stats
+
+Named agents: POST /v1/agents/:id/invoke (see README for session routes)
 `);
     process.exit(0);
   }

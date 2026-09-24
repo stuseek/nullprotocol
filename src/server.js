@@ -9,7 +9,7 @@
  *   const server = serve({ port: 3000, engines: { anthropic: '...' } });
  *
  * Or CLI:
- *   npx --package nullprotocol nullprotocol-serve
+ *   npx nullprotocol-serve
  */
 
 const http = require('http');
