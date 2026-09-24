@@ -191,7 +191,7 @@ test('operations and tool output are controlled by the agent definition', async 
     expect(JSON.stringify(response)).not.toContain('secret');
     expect(agent.base.chat).toHaveBeenCalledTimes(1);
   } finally {
-    await new Promise(resolve => restricted.close(resolve));
+    await restricted.shutdown();
   }
 });
 
@@ -252,6 +252,6 @@ test('custom identity scopes agent listing and management', async () => {
       ).status
     ).toBe(403);
   } finally {
-    await new Promise(resolve => managed.close(resolve));
+    await managed.shutdown();
   }
 });
