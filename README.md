@@ -262,6 +262,8 @@ await ai.telemetry?.destroy();
 
 The library does not start or require the telemetry server. Hosted telemetry requires a Space ingest key; public account provisioning is not available yet.
 
+Team Spaces can opt into a run timeline with `telemetryTimeline: true` alongside `telemetry: true`. Each completed nonstreaming top-level call sends one extra metadata event with up to 24 model, tool, and decision-guard steps. It includes timing, status, model ID, and reported token counts, never prompts, replies, tool names, arguments, or results. Open a run from its event in the Space dashboard. The timeline counts toward the Space's daily event limit; if the process dies or the queue cannot flush, it may be absent. Streaming calls do not emit timelines. The Team plan is assigned manually in the hosted beta; this option does not upgrade a Space.
+
 ## Named agents and HTTP service
 
 A named agent is a configuration you define in code. Requests do not create agents. One process can serve several definitions; `only: ['support']` or `NP_AGENTS=support` lets the same code serve one agent per deployment.

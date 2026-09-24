@@ -41,6 +41,7 @@ class ConfigLoader {
       temperature: 0.3,
       maxTokens: 1000,
       telemetry: false,
+      telemetryTimeline: false,
       validateOutputs: false,
       withExecutor: false,
       logging: false,
@@ -145,6 +146,9 @@ class ConfigLoader {
       process.env.AI_TELEMETRY === 'false'
     ) {
       config.telemetry = false;
+    }
+    if (process.env.NULLPROTOCOL_TELEMETRY_TIMELINE === 'true') {
+      config.telemetryTimeline = true;
     }
 
     if (process.env.AI_VALIDATE_OUTPUTS === 'true') {

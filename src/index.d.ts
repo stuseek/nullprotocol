@@ -50,6 +50,8 @@ export interface AIToolkitOptions {
   /** Optional ingest path on telemetryEndpoint (default /api/telemetry). */
   telemetryPath?: string;
   telemetry?: boolean;
+  /** Opt-in Team run timeline: one metadata event per nonstreaming call, counted in the Space's daily event limit. */
+  telemetryTimeline?: boolean;
   /** Separate Space-scoped key for explicit shared context reads and writes. */
   spaceContextKey?: string;
   /** HTTPS origin of the NullProtocol API. */

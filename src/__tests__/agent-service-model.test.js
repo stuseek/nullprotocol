@@ -74,6 +74,7 @@ beforeAll(async () => {
         mode: 'stateless',
         ...model,
         telemetry: true,
+        telemetryTimeline: true,
         telemetryEndpoint: 'https://telemetry.example.test',
         telemetryKey: 'np_ingest_local_test',
         callOptions: {
@@ -119,9 +120,23 @@ test('stateless requests reach the provider without sharing history', async () =
   expect(first.body.runId).not.toBe(second.body.runId);
   await agentServer.agents.get('worker').base.telemetry.flush();
   const firstRun = deliveredEvents.filter(event => event.runId === first.body.runId);
-  expect(firstRun.map(event => event.event)).toEqual(['model_usage', 'ai_request', 'chat']);
+  expect(firstRun.map(event => event.event)).toEqual([
+    'model_usage',
+    'ai_request',
+    'chat',
+    'run.trace'
+  ]);
   expect(firstRun.every(event => event.agentId === 'worker')).toBe(true);
   expect(firstRun[0].data).toMatchObject({ inputTokens: 10, outputTokens: 3 });
+  expect(firstRun.at(-1).data).toMatchObject({
+    operation: 'chat',
+    status: 'completed',
+    stepsTotal: 1,
+    truncated: false,
+    steps: [
+      { kind: 'model', success: true, model: 'local-model', inputTokens: 10, outputTokens: 3 }
+    ]
+  });
   expect(JSON.stringify(firstRun)).not.toContain('prompt-marker-7f3');
   expect(JSON.stringify(firstRun)).not.toContain('reply:');
 });
@@ -150,6 +165,18 @@ test('decide with configured tools receives a plain model response', async () =>
   expect(requests.at(-1).tools).toBeUndefined();
 });
 
+test('invalid HTTP input does not emit a run timeline', async () => {
+  await agentServer.agents.get('worker').base.telemetry.flush();
+  const before = deliveredEvents.filter(event => event.event === 'run.trace').length;
+  const response = await post('/v1/agents/worker/invoke', {
+    operation: 'decide',
+    input: { context: {}, actions: [] }
+  });
+  expect(response.status).toBe(400);
+  await agentServer.agents.get('worker').base.telemetry.flush();
+  expect(deliveredEvents.filter(event => event.event === 'run.trace')).toHaveLength(before);
+});
+
 test('server-owned decision guard rejects a model choice without exposing it as an action', async () => {
   trustedQueue = 480;
   try {
@@ -162,6 +189,13 @@ test('server-owned decision guard rejects a model choice without exposing it as 
     expect(response.body.output).toEqual({ success: false, error: 'decision_rejected' });
     expect(guardRuntime).toMatchObject({ principal: 'service-key', agentId: 'worker' });
     expect(typeof guardRuntime.runId).toBe('string');
+    await agentServer.agents.get('worker').base.telemetry.flush();
+    const trace = deliveredEvents.find(
+      event => event.event === 'run.trace' && event.runId === response.body.runId
+    );
+    expect(trace.data.status).toBe('failed');
+    expect(trace.data.steps.map(step => step.kind)).toEqual(['model', 'guard']);
+    expect(trace.data.steps[1].errorCode).toBe('guard_rejected');
   } finally {
     trustedQueue = 0;
   }

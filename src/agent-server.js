@@ -150,45 +150,52 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
   };
   const options = { ...modelOptions };
   let result;
-  return base.runContext.run({ runId, principal, agentId: def.id, sessionId }, async () => {
-    if (operation === 'chat') {
-      if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > 8000)
-        return { invalid: true };
-      result = await ai.chat(data.prompt, { ...chatOptions, trackHistory: !!state });
-    } else if (operation === 'decide') {
-      if (!Array.isArray(data.actions) || data.actions.length < 1 || data.actions.length > 30)
-        return { invalid: true };
-      result = await ai.decide(data.context, data.actions, {
-        ...options,
-        guard,
-        guardTimeoutMs
-      });
-    } else if (operation === 'extract') {
-      if (typeof data.schema !== 'string' || !Object.hasOwn(def.schemas || {}, data.schema))
-        return { invalid: true };
-      result = await ai.extract(data.data, def.schemas[data.schema], options);
-    } else if (operation === 'summarize') {
-      result = await ai.summarize(data.content, options);
-    } else if (operation === 'validate') {
-      if (typeof data.criteria !== 'string') return { invalid: true };
-      result = await ai.validate(data.criteria, data.subject, data.reference || null, options);
-    } else return { invalid: true };
-    return {
-      result,
-      state: state
-        ? {
-            messages: ai.messages
-              .slice(-(def.maxHistoryMessages ?? 50))
-              .filter((_, i, all) => i || all[0].role !== 'assistant')
-              .map(message => ({
-                ...message,
-                content: message.content.replaceAll('\0', '').replace(UNPAIRED_SURROGATES, '\uFFFD')
-              })),
-            context: state.context
-          }
-        : null
-    };
-  });
+  return ai._runWithTrace(
+    operation,
+    runId,
+    async () => {
+      if (operation === 'chat') {
+        if (typeof data.prompt !== 'string' || !data.prompt.trim() || data.prompt.length > 8000)
+          return { invalid: true };
+        result = await ai.chat(data.prompt, { ...chatOptions, trackHistory: !!state });
+      } else if (operation === 'decide') {
+        if (!Array.isArray(data.actions) || data.actions.length < 1 || data.actions.length > 30)
+          return { invalid: true };
+        result = await ai.decide(data.context, data.actions, {
+          ...options,
+          guard,
+          guardTimeoutMs
+        });
+      } else if (operation === 'extract') {
+        if (typeof data.schema !== 'string' || !Object.hasOwn(def.schemas || {}, data.schema))
+          return { invalid: true };
+        result = await ai.extract(data.data, def.schemas[data.schema], options);
+      } else if (operation === 'summarize') {
+        result = await ai.summarize(data.content, options);
+      } else if (operation === 'validate') {
+        if (typeof data.criteria !== 'string') return { invalid: true };
+        result = await ai.validate(data.criteria, data.subject, data.reference || null, options);
+      } else return { invalid: true };
+      return {
+        result,
+        state: state
+          ? {
+              messages: ai.messages
+                .slice(-(def.maxHistoryMessages ?? 50))
+                .filter((_, i, all) => i || all[0].role !== 'assistant')
+                .map(message => ({
+                  ...message,
+                  content: message.content
+                    .replaceAll('\0', '')
+                    .replace(UNPAIRED_SURROGATES, '\uFFFD')
+                })),
+              context: state.context
+            }
+          : null
+      };
+    },
+    { principal, agentId: def.id, sessionId }
+  );
 }
 
 function serveAgents(options = {}) {

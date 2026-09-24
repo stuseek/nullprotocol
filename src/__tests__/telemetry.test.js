@@ -1,4 +1,5 @@
 const { TelemetryClient } = require('../telemetry');
+const AIToolkit = require('../index');
 const https = require('https');
 const { EventEmitter } = require('events');
 const activeOptions = { token: 'test', endpoint: 'https://test.endpoint' };
@@ -46,6 +47,86 @@ describe('TelemetryClient', () => {
   });
 
   describe('track', () => {
+    test('provider timeout gets the timeout step code', async () => {
+      const ai = new AIToolkit({
+        engines: { openai: 'test' },
+        telemetry: true,
+        telemetryTimeline: true,
+        telemetryKey: 'test',
+        telemetryEndpoint: 'https://test.endpoint'
+      });
+      ai.resilience.execute = jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }));
+      await expect(
+        ai._runWithTrace('chat', '33333333-3333-4333-a333-333333333333', () =>
+          ai._requestModel('openai', {}, { model: 'small' })
+        )
+      ).rejects.toThrow('timeout');
+      const trace = ai.telemetry.queue.find(item => item.event === 'run.trace');
+      expect(trace.data.status).toBe('failed');
+      expect(trace.data.steps[0].errorCode).toBe('timeout');
+      ai.telemetry.enabled = false;
+      await ai.telemetry.destroy();
+    });
+    test('trace event keeps only bounded metadata and a stable retry ID', () => {
+      client = new TelemetryClient(activeOptions);
+      const runId = '11111111-1111-4111-a111-111111111111';
+      const data = {
+        operation: 'chat',
+        status: 'completed',
+        duration: 20,
+        stepsTotal: 1,
+        truncated: false,
+        steps: [
+          {
+            kind: 'model',
+            offset: 0,
+            duration: 10,
+            success: true,
+            model: 'small',
+            prompt: 'PRIVATE PROMPT',
+            output: 'PRIVATE REPLY'
+          }
+        ]
+      };
+      client.trackTrace(runId, data);
+      client.trackTrace(runId, data);
+      expect(client.queue).toHaveLength(2);
+      expect(client.queue[0].eventId).toBe(client.queue[1].eventId);
+      expect(client.queue[0].data.steps[0]).toEqual({
+        kind: 'model',
+        offset: 0,
+        duration: 10,
+        success: true,
+        model: 'small'
+      });
+      expect(JSON.stringify(client.queue)).not.toContain('PRIVATE');
+    });
+
+    test('long run trace is clipped below ingest limit', () => {
+      client = new TelemetryClient(activeOptions);
+      client.trackTrace('22222222-2222-4222-a222-222222222222', {
+        operation: 'chat',
+        status: 'completed',
+        duration: 100,
+        stepsTotal: 24,
+        truncated: false,
+        steps: Array.from({ length: 24 }, () => ({
+          kind: 'model',
+          offset: 1,
+          duration: 1,
+          success: true,
+          model: 'm'.repeat(128),
+          inputTokens: 1,
+          outputTokens: 1
+        }))
+      });
+      expect(client.queue).toHaveLength(1);
+      expect(Buffer.byteLength(JSON.stringify(client.queue[0]))).toBeLessThanOrEqual(4096);
+      expect(client.queue[0].data.truncated).toBe(true);
+      expect(client.queue[0].data.steps.length).toBeLessThan(24);
+    });
     test('should add events to queue when enabled', () => {
       client = new TelemetryClient(activeOptions);
 

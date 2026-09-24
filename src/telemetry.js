@@ -84,6 +84,73 @@ class TelemetryClient {
     }
   }
 
+  trackTrace(runId, data) {
+    if (!this.enabled) return;
+    try {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) return;
+      const operations = ['extract', 'validate', 'summarize', 'decide', 'chat'];
+      if (!operations.includes(data.operation)) return;
+      const codes = new Set([
+        'provider_error',
+        'rate_limited',
+        'timeout',
+        'aborted',
+        'schema_mismatch',
+        'guard_rejected',
+        'guard_error',
+        'guard_timeout',
+        'tool_error',
+        'config_error',
+        'internal'
+      ]);
+      const count = value =>
+        Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 1_000_000_000) : 0;
+      const steps = data.steps.slice(0, 24).map(step => ({
+        kind: step.kind,
+        offset: count(step.offset),
+        duration: count(step.duration),
+        success: !!step.success,
+        ...(typeof step.model === 'string' &&
+        /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(step.model)
+          ? { model: step.model }
+          : {}),
+        ...(step.inputTokens !== undefined ? { inputTokens: count(step.inputTokens) } : {}),
+        ...(step.outputTokens !== undefined ? { outputTokens: count(step.outputTokens) } : {}),
+        ...(codes.has(step.errorCode) ? { errorCode: step.errorCode } : {})
+      }));
+      const hash = crypto.createHash('sha256').update(`run.trace:${runId}`).digest('hex');
+      const eventId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+      const safe = {
+        event: 'run.trace',
+        eventId,
+        runId,
+        agentId: this.agentId,
+        ...(this.environment ? { environment: this.environment } : {}),
+        timestamp: Date.now(),
+        data: {
+          operation: data.operation,
+          status: ['completed', 'failed', 'aborted'].includes(data.status) ? data.status : 'failed',
+          duration: count(data.duration),
+          stepsTotal: count(data.stepsTotal),
+          truncated: !!data.truncated,
+          steps
+        }
+      };
+      while (Buffer.byteLength(JSON.stringify(safe)) > 4096 && steps.length) {
+        steps.pop();
+        safe.data.truncated = true;
+      }
+      if (this.queue.length >= 1000 || Buffer.byteLength(JSON.stringify(safe)) > 4096) {
+        this.droppedEvents++;
+        return;
+      }
+      this.queue.push(safe);
+      if (this.queue.length >= 50) void this.flush();
+    } catch {
+      this.droppedEvents++;
+    }
+  }
+
   sanitizeData(data) {
     const safe = { ...data };
 

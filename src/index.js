@@ -97,6 +97,10 @@ class AIToolkit {
       throw new Error('agentId must be a stable lowercase slug (up to 64 characters)');
     }
     this.runContext = new AsyncLocalStorage();
+    if (typeof this.config.telemetryTimeline !== 'boolean') {
+      throw new Error('telemetryTimeline must be a boolean');
+    }
+    this.telemetryTimeline = this.config.telemetryTimeline;
 
     this.spaceContext = null;
     if (this.config.spaceContextKey || this.config.spaceContextEndpoint) {
@@ -161,9 +165,61 @@ class AIToolkit {
       const operation = this[name];
       this[name] = function (...args) {
         if (this.runContext.getStore()?.runId) return operation.apply(this, args);
-        return this.runContext.run({ runId: randomUUID() }, () => operation.apply(this, args));
+        if (name === 'chat' && args[1]?.stream) {
+          return this.runContext.run({ runId: randomUUID() }, () => operation.apply(this, args));
+        }
+        return this._runWithTrace(name, randomUUID(), () => operation.apply(this, args));
       };
     }
+  }
+
+  async _runWithTrace(operation, runId, fn, extra = {}) {
+    const started = Date.now();
+    const trace =
+      this.telemetryTimeline && this.telemetry ? { started, steps: [], total: 0 } : null;
+    return this.runContext.run({ ...extra, runId, trace }, async () => {
+      let status = 'completed';
+      let report = true;
+      try {
+        const value = await fn();
+        if (value?.invalid) report = false;
+        if (value?.success === false || value?.result?.success === false) status = 'failed';
+        return value;
+      } catch (error) {
+        status = error?.name === 'AbortError' ? 'aborted' : 'failed';
+        throw error;
+      } finally {
+        if (trace && report) {
+          this.telemetry.trackTrace(runId, {
+            operation,
+            status,
+            duration: Math.min(1_000_000_000, Date.now() - started),
+            stepsTotal: trace.total,
+            truncated: trace.total > trace.steps.length,
+            steps: trace.steps
+          });
+        }
+      }
+    });
+  }
+
+  _traceStep(step) {
+    const trace = this.runContext.getStore()?.trace;
+    if (!trace) return;
+    trace.total++;
+    if (trace.steps.length >= 24) return;
+    const clipped = Math.min(1_000_000_000, Math.max(0, Math.trunc(step.duration)));
+    const offset = Math.min(1_000_000_000, Math.max(0, Math.trunc(step.started - trace.started)));
+    trace.steps.push({
+      kind: step.kind,
+      offset,
+      duration: clipped,
+      success: !!step.success,
+      ...(step.model ? { model: step.model } : {}),
+      ...(step.inputTokens !== undefined ? { inputTokens: step.inputTokens } : {}),
+      ...(step.outputTokens !== undefined ? { outputTokens: step.outputTokens } : {}),
+      ...(step.errorCode ? { errorCode: step.errorCode } : {})
+    });
   }
 
   /**
@@ -416,28 +472,62 @@ class AIToolkit {
   }
 
   async _requestModel(engine, client, params) {
+    const started = Date.now();
     const gatewayRequestId =
       engine === 'openai' &&
       typeof this.engines.openai === 'string' &&
       this.engines.openai.startsWith('np_inf_')
         ? randomUUID()
         : null;
-    const response = await this.resilience.execute(
-      signal => {
-        const requestOptions = {
-          signal,
-          maxRetries: 0,
-          ...(gatewayRequestId
-            ? { headers: { 'X-NullProtocol-Request-Id': gatewayRequestId } }
-            : {})
-        };
-        return engine === 'openai'
-          ? client.chat.completions.create(params, requestOptions)
-          : client.messages.create(params, requestOptions);
-      },
-      gatewayRequestId ? { maxRetries: 0, timeout: Math.max(this.resilience.timeout, 25000) } : {}
-    );
+    let response;
+    try {
+      response = await this.resilience.execute(
+        signal => {
+          const requestOptions = {
+            signal,
+            maxRetries: 0,
+            ...(gatewayRequestId
+              ? { headers: { 'X-NullProtocol-Request-Id': gatewayRequestId } }
+              : {})
+          };
+          return engine === 'openai'
+            ? client.chat.completions.create(params, requestOptions)
+            : client.messages.create(params, requestOptions);
+        },
+        gatewayRequestId ? { maxRetries: 0, timeout: Math.max(this.resilience.timeout, 25000) } : {}
+      );
+    } catch (error) {
+      this._traceStep({
+        kind: 'model',
+        started,
+        duration: Date.now() - started,
+        success: false,
+        model: params.model,
+        errorCode:
+          error?.code === 'ETIMEDOUT' || error?.name === 'TimeoutError'
+            ? 'timeout'
+            : error?.name === 'AbortError'
+              ? 'aborted'
+              : error?.status === 429
+                ? 'rate_limited'
+                : 'provider_error'
+      });
+      throw error;
+    }
     const usage = response?.usage;
+    this._traceStep({
+      kind: 'model',
+      started,
+      duration: Date.now() - started,
+      success: true,
+      model: params.model,
+      ...(Number.isSafeInteger(usage?.prompt_tokens ?? usage?.input_tokens)
+        ? { inputTokens: usage.prompt_tokens ?? usage.input_tokens }
+        : {}),
+      ...(Number.isSafeInteger(usage?.completion_tokens ?? usage?.output_tokens)
+        ? { outputTokens: usage.completion_tokens ?? usage.output_tokens }
+        : {})
+    });
     if (this.telemetry && usage) {
       this.telemetry.track('model_usage', {
         engine,
@@ -554,7 +644,9 @@ class AIToolkit {
       // Execute tool calls
       const results = [];
       for (const call of pendingCalls) {
+        const toolStarted = Date.now();
         let result;
+        let failed = !allowedTools.has(call.name) || !!call.argumentError;
         try {
           result = !allowedTools.has(call.name)
             ? { error: `Tool ${call.name} is not allowed` }
@@ -567,7 +659,16 @@ class AIToolkit {
                 );
         } catch (err) {
           result = { error: err.message };
+          failed = true;
         }
+        if (result && typeof result === 'object' && Object.hasOwn(result, 'error')) failed = true;
+        this._traceStep({
+          kind: 'tool',
+          started: toolStarted,
+          duration: Date.now() - toolStarted,
+          success: !failed,
+          ...(failed ? { errorCode: 'tool_error' } : {})
+        });
         const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
         toolCalls.push({ name: call.name, parameters: call.parameters, result });
         results.push({ id: call.id, result: resultStr });
@@ -1150,6 +1251,7 @@ class AIToolkit {
             decision.confidence <= 1));
       let guardFailure = null;
       if (valid && guard) {
+        const guardStarted = Date.now();
         const controller = new AbortController();
         const timedOut = Symbol('guard_timeout');
         let timer;
@@ -1188,6 +1290,13 @@ class AIToolkit {
           guardFailure = 'guard_error';
         } finally {
           clearTimeout(timer);
+          this._traceStep({
+            kind: 'guard',
+            started: guardStarted,
+            duration: Date.now() - guardStarted,
+            success: !guardFailure,
+            ...(guardFailure ? { errorCode: guardFailure } : {})
+          });
         }
       }
       const accepted = valid && !guardFailure;

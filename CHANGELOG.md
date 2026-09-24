@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0 — source release; npm publication pending
+
+- Add opt-in, metadata-only run timelines for Team Spaces with `telemetryTimeline: true`. One bounded trace covers a top-level nonstreaming call, including model, tool, and decision-guard steps. The standalone library still works without hosted telemetry.
+
 ## 2.2.0 — source release; npm publication pending
 
 Breaking behavior for the named HTTP service: its stored history budget is 8,192 rough tokens per agent (previously 50,000), `MemorySessionStore` allows 2,000 total sessions (previously 10,000), and `/readyz` stays 200 when every agent is disabled. Configure `maxHistoryTokens` or `maxSessions` to restore the earlier limits.
