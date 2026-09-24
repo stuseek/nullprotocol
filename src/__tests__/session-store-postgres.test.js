@@ -3,6 +3,7 @@ const { resolve } = require('path');
 const { randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const { PostgresSessionStore } = require('../session-store');
+const { serveAgents } = require('../agent-server');
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -92,5 +93,44 @@ suite('PostgreSQL session store', () => {
       status: 429,
       code: 'session_limit_reached'
     });
+  });
+
+  test('HTTP cancellation finds a PostgreSQL session across UUID casing', async () => {
+    const server = serveAgents({
+      port: 0,
+      handleSignals: false,
+      apiKey: 'test-key',
+      store,
+      agents: [{ id: agent, mode: 'stateful', engines: { openai: 'test' } }]
+    });
+    let started;
+    const running = new Promise(resolve => {
+      started = resolve;
+    });
+    server.agents.get(agent).base.chat = jest.fn(async function () {
+      const signal = this.runContext.getStore().signal;
+      started();
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    try {
+      await new Promise(resolve => server.once('listening', resolve));
+      const root = `http://127.0.0.1:${server.address().port}/v1/agents/${agent}/sessions`;
+      const headers = { Authorization: 'Bearer test-key', 'Content-Type': 'application/json' };
+      const post = (url, body) =>
+        fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const created = await post(root, { context: {} });
+      expect(created.status).toBe(201);
+      const { sessionId } = await created.json();
+      const turn = post(`${root}/${sessionId.toUpperCase()}/messages`, { prompt: 'hello' });
+      await running;
+      const cancelled = await post(`${root}/${sessionId}/cancel`, {});
+      expect(cancelled.status).toBe(202);
+      expect((await cancelled.json()).cancelling).toBe(true);
+      expect((await turn).status).toBe(409);
+    } finally {
+      await server.shutdown({ drainTimeoutMs: 0, cancelTimeoutMs: 1000 });
+    }
   });
 });

@@ -444,6 +444,7 @@ export interface AgentDefinition extends AIToolkitOptions {
   callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
   /** Defaults to 8,192 rough tokens in the named HTTP service. */
   maxHistoryTokens?: number;
+  /** At least 2; history retains whole user/assistant exchanges within this cap. */
   maxHistoryMessages?: number;
   operations?: Array<'chat' | 'decide' | 'extract' | 'summarize' | 'validate'>;
   exposeToolCalls?: boolean;

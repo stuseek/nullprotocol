@@ -63,9 +63,10 @@ test('sessions retain history, then clear or delete it', async () => {
   const made = await call('/v1/agents/companion/sessions', 'POST', { context: { map: 'forest' } });
   expect(made.status).toBe(201);
   const path = `/v1/agents/companion/sessions/${made.body.sessionId}`;
-  expect((await call(`${path}/messages`, 'POST', { prompt: 'hello' })).body.output.message).toBe(
-    '0'
-  );
+  const uppercasePath = path.replace(made.body.sessionId, made.body.sessionId.toUpperCase());
+  expect(
+    (await call(`${uppercasePath}/messages`, 'POST', { prompt: 'hello' })).body.output.message
+  ).toBe('0');
   expect((await call(`${path}/messages`, 'POST', { prompt: 'again' })).body.output.message).toBe(
     '1'
   );
@@ -153,7 +154,8 @@ test('cancelling one stateful turn leaves its history and context unchanged', as
   });
   const path = `/v1/agents/companion/sessions/${made.body.sessionId}`;
   try {
-    const turn = call(`${path}/messages`, 'POST', { prompt: 'hello' });
+    const uppercasePath = path.replace(made.body.sessionId, made.body.sessionId.toUpperCase());
+    const turn = call(`${uppercasePath}/messages`, 'POST', { prompt: 'hello' });
     await started;
     sessionStore.release = async function (...args) {
       await originalRelease.apply(this, args);
@@ -1133,6 +1135,7 @@ test('invalid agent limits fail at startup', () => {
     { operations: ['unknown'] },
     { operations: ['chat', 'chat'] },
     { maxHistoryMessages: 0 },
+    { maxHistoryMessages: 1 },
     { maxHistoryMessages: -1 },
     { exposeToolCalls: 'yes' }
   ]) {

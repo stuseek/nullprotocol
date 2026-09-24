@@ -3,11 +3,8 @@ const crypto = require('crypto');
 const AIToolkit = require('./index');
 
 const AGENT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const UUID_PATH = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const SESSION_PATH = new RegExp(
-  `^sessions/(${UUID_PATH})(?:/(messages|context|history|cancel))?$`,
-  'i'
-);
+const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const SESSION_PATH = new RegExp(`^sessions/(${UUID_PATH})(?:/(messages|context|history|cancel))?$`);
 const OPERATIONS = ['chat', 'decide', 'extract', 'summarize', 'validate'];
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const UNPAIRED_SURROGATES =
@@ -41,10 +38,10 @@ function defineAgent(options) {
   if (
     options.maxHistoryMessages !== undefined &&
     (!Number.isInteger(options.maxHistoryMessages) ||
-      options.maxHistoryMessages < 1 ||
+      options.maxHistoryMessages < 2 ||
       options.maxHistoryMessages > 1000)
   ) {
-    throw new Error('maxHistoryMessages must be between 1 and 1000');
+    throw new Error('maxHistoryMessages must be between 2 and 1000');
   }
   if (
     options.maxHistoryTokens !== undefined &&
@@ -408,11 +405,12 @@ function serveAgents(options = {}) {
         return respond(res, 202, { disabled: true, cancelling, scope: 'process' });
       }
       const s = rest.match(SESSION_PATH);
+      const sessionId = s?.[1].toLowerCase();
       if (req.method === 'POST' && s?.[2] === 'cancel' && def.mode === 'stateful') {
         const run = [...runs.values()].find(
           current =>
             current.agentId === def.id &&
-            current.sessionId === s[1] &&
+            current.sessionId === sessionId &&
             current.principal === principal
         );
         if (!run) return failure(res, 409, 'no_active_run');
@@ -476,7 +474,7 @@ function serveAgents(options = {}) {
         return respond(res, 201, { sessionId });
       }
       if (def.mode !== 'stateful' || !s) return failure(res, 404, 'not_found');
-      const ref = { id: s[1], agent: def.id, principal };
+      const ref = { id: sessionId, agent: def.id, principal };
       if (req.method === 'DELETE' && !s[2]) {
         const status = await store.delete(ref);
         return status === 'deleted'

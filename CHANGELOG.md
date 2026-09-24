@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.2 — source release; npm publication pending
+
+- Treat session UUIDs consistently across HTTP, memory storage, and PostgreSQL, including cancellation and tool callbacks.
+- Reject `maxHistoryMessages: 1`, which could not retain a complete conversation exchange. Document how odd limits retain complete exchanges.
+
 ## 2.5.1 — source release; npm publication pending
 
 - Cancel a named agent's active run when its HTTP caller disconnects. A stateful turn releases its lease without saving partial history; a turn already committing can finish. Started tools may still have side effects.

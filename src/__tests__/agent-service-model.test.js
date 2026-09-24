@@ -86,7 +86,8 @@ beforeAll(async () => {
         tools: [{ name: 'read_logs', description: 'Read logs' }],
         onToolCall: async () => ({ ok: true })
       },
-      { id: 'companion', mode: 'stateful', ...model, basePrompt: 'You are a game merchant.' }
+      { id: 'companion', mode: 'stateful', ...model, basePrompt: 'You are a game merchant.' },
+      { id: 'short-memory', mode: 'stateful', ...model, maxHistoryMessages: 3 }
     ]
   });
   await new Promise(resolve => agentServer.on('listening', resolve));
@@ -153,6 +154,21 @@ test('stateful session persists history and keeps context out of system text', a
   expect(last.messages[0].content).not.toContain('forest');
   expect(last.messages.at(-1).content).toContain('forest');
   expect(last.messages.map(m => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+});
+
+test('odd message limit preserves the latest complete exchange', async () => {
+  const created = await post('/v1/agents/short-memory/sessions', { context: {} });
+  expect(created.status).toBe(201);
+  const path = `/v1/agents/short-memory/sessions/${created.body.sessionId}/messages`;
+  expect((await post(path, { prompt: 'one' })).body.output.message).toBe('reply:1');
+  expect((await post(path, { prompt: 'two' })).body.output.message).toBe('reply:2');
+  expect((await post(path, { prompt: 'three' })).body.output.message).toBe('reply:2');
+  expect(requests.at(-1).messages.map(message => message.role)).toEqual([
+    'system',
+    'user',
+    'assistant',
+    'user'
+  ]);
 });
 
 test('decide with configured tools receives a plain model response', async () => {
