@@ -7,6 +7,9 @@ describe('ConfigLoader', () => {
   beforeEach(() => {
     loader = new ConfigLoader();
     originalEnv = { ...process.env };
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.AI_TOOLKIT_TOKEN;
   });
 
   afterEach(() => {

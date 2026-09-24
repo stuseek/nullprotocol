@@ -1,28 +1,26 @@
 /**
  * Integration tests — real API calls.
- * Requires ANTHROPIC_API_KEY in env (OPENAI_API_KEY optional).
+ * Requires explicit opt-in and at least one provider API key in env.
  *
- * Run: DOTENV_PATH=/path/to/.env npx jest src/__tests__/integration.test.js --verbose
+ * Run: NULLPROTOCOL_LIVE_TESTS=1 DOTENV_PATH=/path/to/.env npx jest src/__tests__/integration.test.js --verbose
  */
 
-const path = require('path');
 const http = require('http');
 
-// Load env from aisec-v2
-const envPath = process.env.DOTENV_PATH || path.resolve(__dirname, '../../../../aisec-v2/.env');
-try {
+const runLiveTests = process.env.NULLPROTOCOL_LIVE_TESTS === '1';
+if (runLiveTests && process.env.DOTENV_PATH) {
   const fs = require('fs');
-  const content = fs.readFileSync(envPath, 'utf8');
+  const content = fs.readFileSync(process.env.DOTENV_PATH, 'utf8');
   for (const line of content.split('\n')) {
     const match = line.match(/^([A-Z_]+)=(.+)$/);
     if (match && !process.env[match[1]]) {
       process.env[match[1]] = match[2].trim();
     }
   }
-} catch {}
+}
 
-const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
-const hasOpenAI = !!process.env.OPENAI_API_KEY;
+const hasAnthropic = runLiveTests && !!process.env.ANTHROPIC_API_KEY;
+const hasOpenAI = runLiveTests && !!process.env.OPENAI_API_KEY;
 
 const AIToolkit = require('../index');
 const { CircuitBreakerError } = require('../resilience');

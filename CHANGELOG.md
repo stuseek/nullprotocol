@@ -6,6 +6,7 @@
 - Stop requests waiting for authentication, a body, or a session lease from starting a run after shutdown begins.
 - Cancel a running turn when session lease renewal fails, and wait for any in-flight renewal before committing history.
 - Check the SDK's root source files in lint, alongside examples, benchmarks, and tests.
+- Require an explicit flag for paid provider integration tests and remove automatic key loading from a neighboring project.
 
 ## 2.5.0 — source release; npm publication pending
 
