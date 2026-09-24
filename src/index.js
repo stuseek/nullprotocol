@@ -419,7 +419,42 @@ class AIToolkit {
   /**
    * Handle tool call loop for chat with tools
    */
-  async _handleToolCalls(rawResponse, engine, client, requestParams, options) {
+  _fitToolContext(engine, params, tools, historyCount) {
+    if (!this.maxContextLength) return historyCount;
+    const messages = params.messages;
+    const messageChars = message =>
+      (message.content == null ? 0 : this._contextChars(message.content)) +
+      (message.tool_calls ? this._contextChars(message.tool_calls) : 0);
+    const totalChars = () =>
+      (engine === 'anthropic' ? this._contextChars(params.system) : 0) +
+      (tools ? this._contextChars(tools) : 0) +
+      messages.reduce((sum, message) => sum + messageChars(message), 0);
+
+    let length = totalChars();
+    const firstHistory = engine === 'openai' ? 1 : 0;
+    const removedHistory = [];
+    while (historyCount && length > this.maxContextLength) {
+      removedHistory.push(...messages.splice(firstHistory, 1));
+      historyCount--;
+      while (historyCount && messages[firstHistory]?.role === 'assistant') {
+        removedHistory.push(...messages.splice(firstHistory, 1));
+        historyCount--;
+      }
+      length = totalChars();
+    }
+    if (length > this.maxContextLength) {
+      throw new Error(
+        `Current request exceeds maxContextLength (${this.maxContextLength} characters)`
+      );
+    }
+    for (const message of removedHistory) {
+      const index = this.messages.indexOf(message);
+      if (index !== -1) this.messages.splice(index, 1);
+    }
+    return historyCount;
+  }
+
+  async _handleToolCalls(rawResponse, engine, client, requestParams, options, historyCount = 0) {
     const maxRounds = 10;
     const toolCalls = [];
     const allowedTools = new Set((options.tools || []).map(tool => tool.name));
@@ -479,6 +514,7 @@ class AIToolkit {
         for (const r of results) {
           requestParams.messages.push({ role: 'tool', tool_call_id: r.id, content: r.result });
         }
+        historyCount = this._fitToolContext(engine, requestParams, options.tools, historyCount);
         currentResponse = await this._requestModel(engine, client, requestParams);
       } else {
         // Anthropic
@@ -491,6 +527,7 @@ class AIToolkit {
             content: r.result
           }))
         });
+        historyCount = this._fitToolContext(engine, requestParams, options.tools, historyCount);
         currentResponse = await this._requestModel(engine, client, requestParams);
       }
     }
@@ -551,7 +588,8 @@ class AIToolkit {
               'openai',
               client,
               params,
-              options
+              options,
+              history.length
             );
             return { text: result.text, toolCalls: result.toolCalls };
           }
@@ -584,7 +622,8 @@ class AIToolkit {
               'anthropic',
               client,
               params,
-              options
+              options,
+              history.length
             );
             return { text: result.text, toolCalls: result.toolCalls };
           }

@@ -12,8 +12,9 @@
 
 - Allow an explicit `telemetryPath` without changing how existing `telemetryEndpoint` URLs resolve.
 - Bound telemetry batches to the ingest contract and retry temporary failures with backoff.
-- Flush service telemetry during graceful shutdown and redact provider errors from HTTP responses.
-- Require server-defined extraction schemas and pass caller identity to tool callbacks.
+- Flush named-agent service telemetry during graceful shutdown and redact provider errors from its HTTP responses.
+- Require server-defined extraction schemas in the named-agent service and pass caller identity to tool callbacks.
+- Keep the context character budget after tool results by trimming older chat turns or rejecting an oversized current turn.
 - Include `error` in failed `validate` and `decide` results.
 - Reject implicit chaining after a failed operation instead of sending a failure or stale result to a model.
 

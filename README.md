@@ -170,7 +170,7 @@ const ai = new NullProtocol({
 ai.setMaxContextLength(8_000);
 ```
 
-If the system text, current input, or tool definitions alone exceed the budget, the request fails. The count is an approximation based on characters, not the provider's tokenizer. `maxHistoryTokens` remains a separate rough cap for stored chat history. Automatic model based compaction is not part of this release.
+If the system text, current input, or tool definitions alone exceed the budget, the request fails. The budget is checked again after each round of tool calls. Older chat turns are removed if needed; a tool result that makes the current turn too large fails before another model request without removing additional saved history. The count is an approximation based on characters, not the provider's tokenizer. `maxHistoryTokens` remains a separate rough cap for stored chat history. Automatic model based compaction is not part of this release.
 
 ## Optional telemetry
 
@@ -243,6 +243,8 @@ serve({
 ```
 
 Routes: `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat`, and `GET /health`. Add `cors` only when browser access is needed. Set `host: '0.0.0.0'` explicitly to expose the server outside localhost.
+
+This adapter accepts an extraction schema in the request body and returns model error text to its authenticated caller. The named-agent service uses schemas defined in code and redacts provider errors. If you enable telemetry in this adapter, flush it with `await server.ai.telemetry?.destroy()` before closing the server.
 
 ## Moving from `@stuseek/ai-toolkit`
 

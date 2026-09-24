@@ -197,4 +197,95 @@ describe('safety regressions', () => {
     expect(result.error).toContain('maxContextLength');
     expect(create).not.toHaveBeenCalled();
   });
+
+  test('tool results trim old chat turns before the next OpenAI request', async () => {
+    const ai = new AIToolkit({ engines: { openai: 'test' }, maxContextLength: 190 });
+    ai.addMessage('user', 'a'.repeat(70));
+    ai.addMessage('assistant', 'b'.repeat(70));
+    const requests = [];
+    ai.clients.openai = {
+      chat: {
+        completions: {
+          create: jest.fn(async params => {
+            requests.push(JSON.parse(JSON.stringify(params.messages)));
+            return requests.length === 1
+              ? {
+                  choices: [
+                    {
+                      finish_reason: 'tool_calls',
+                      message: {
+                        role: 'assistant',
+                        tool_calls: [{ id: '1', function: { name: 'read', arguments: '{}' } }]
+                      }
+                    }
+                  ]
+                }
+              : { choices: [{ finish_reason: 'stop', message: { content: 'done' } }] };
+          })
+        }
+      }
+    };
+
+    const response = await ai.makeAIRequest(
+      { system: 'rules', user: 'now' },
+      { includeHistory: true, tools: [{ name: 'read' }], onToolCall: async () => 'x'.repeat(60) }
+    );
+    expect(response.text).toBe('done');
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toHaveLength(4);
+    expect(requests[1].map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool'
+    ]);
+    expect(ai.getHistory()).toEqual([]);
+  });
+
+  test.each(['openai', 'anthropic'])(
+    '%s tool results cannot exceed the current context budget',
+    async engine => {
+      const ai = new AIToolkit({
+        engines: { [engine]: 'test' },
+        defaultEngine: engine,
+        maxContextLength: 120
+      });
+      ai.addMessage('user', 'old question');
+      ai.addMessage('assistant', 'old answer');
+      const savedHistory = ai.getHistory();
+      const create = jest.fn().mockResolvedValue(
+        engine === 'openai'
+          ? {
+              choices: [
+                {
+                  finish_reason: 'tool_calls',
+                  message: {
+                    role: 'assistant',
+                    tool_calls: [{ id: '1', function: { name: 'read', arguments: '{}' } }]
+                  }
+                }
+              ]
+            }
+          : {
+              stop_reason: 'tool_use',
+              content: [{ type: 'tool_use', id: '1', name: 'read', input: {} }]
+            }
+      );
+      ai.clients[engine] =
+        engine === 'openai' ? { chat: { completions: { create } } } : { messages: { create } };
+
+      await expect(
+        ai.makeAIRequest(
+          { system: 'rules', user: 'now' },
+          {
+            includeHistory: true,
+            tools: [{ name: 'read' }],
+            onToolCall: async () => 'x'.repeat(150)
+          }
+        )
+      ).rejects.toThrow('maxContextLength');
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(ai.getHistory()).toEqual(savedHistory);
+    }
+  );
 });
