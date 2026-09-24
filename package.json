@@ -1,6 +1,6 @@
 {
   "name": "nullprotocol",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Reliable Node.js AI building blocks for affordable and local models",
   "main": "src/index.js",
   "scripts": {
@@ -25,6 +25,7 @@
     "example:customer": "node examples/customer-support.js",
     "example:devops": "node examples/devops-incident.js",
     "example:cicd": "node examples/cicd-analyzer.js",
+    "smoke:local": "node examples/local-smoke.js",
     "serve": "node bin/serve.js"
   },
   "keywords": [
@@ -89,6 +90,7 @@
     "src/session-store.js",
     "src/index.d.ts",
     "bin/serve.js",
+    "examples/local-smoke.js",
     "sql/session-store.sql",
     "assets/nullprotocol.png",
     "README.md",

@@ -124,7 +124,7 @@ export interface ValidateResult {
   score: number;
   reasoning: string;
   confidence: number;
-  recommendation: string;
+  recommendation?: 'pass' | 'fail' | 'conditional';
   error?: string;
 }
 

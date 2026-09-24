@@ -153,6 +153,41 @@ describe('Validate', () => {
     expect(result.reasoning).toBe('Valid email format');
     expect(result.confidence).toBe(0.95);
     expect(result.recommendation).toBe('pass');
+    const messages = ai.makeAIRequest.mock.calls[0][0];
+    expect(messages.user).toContain('"pass"');
+    expect(messages.user).toContain('"fail"');
+    expect(messages.user).toContain('"conditional"');
+  });
+
+  test('rejects a recommendation outside the contract', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({
+        score: 0.9,
+        reasoning: 'Looks fine',
+        confidence: 0.8,
+        recommendation: 'approve'
+      })
+    );
+    expect((await ai.validate('rule', 'subject')).success).toBe(false);
+  });
+
+  test('rejects a missing recommendation or out-of-range confidence', async () => {
+    const ai = createAI();
+    ai.makeAIRequest
+      .mockResolvedValueOnce(
+        JSON.stringify({ score: 0.9, reasoning: 'Looks fine', confidence: 0.8 })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          score: 0.9,
+          reasoning: 'Looks fine',
+          confidence: 80,
+          recommendation: 'pass'
+        })
+      );
+    expect((await ai.validate('rule', 'subject')).success).toBe(false);
+    expect((await ai.validate('rule', 'subject')).success).toBe(false);
   });
 
   test('handles validation error', async () => {
@@ -240,6 +275,14 @@ describe('Summarize', () => {
     expect(result.summary).toBe('');
     expect(result.error).toContain('Failed');
   });
+
+  test('rejects confidence outside zero to one', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({ summary: 'Short', keyPoints: [], confidence: 80 })
+    );
+    expect((await ai.summarize('text')).success).toBe(false);
+  });
 });
 
 // ─── Decide ─────────────────────────────────────────────────────
@@ -273,6 +316,14 @@ describe('Decide', () => {
     expect(result.action).toBeNull();
     expect(result.confidence).toBe(0);
     expect(result.error).toBe('Decision failed');
+  });
+
+  test('rejects confidence outside zero to one', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify({ action: 'review', reasoning: 'Check it', confidence: 80 })
+    );
+    expect((await ai.decide({}, ['review'])).success).toBe(false);
   });
 });
 
@@ -857,6 +908,98 @@ describe('_handleToolCalls OpenAI', () => {
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0].name).toBe('get_weather');
     expect(result.toolCalls[0].result).toBe('sunny, 72F');
+  });
+
+  test('handles a tool call even when the provider reports stop', async () => {
+    const ai = createAI();
+    const response = {
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            tool_calls: [{ id: 'call_1', function: { name: 'lookup', arguments: '{}' } }]
+          }
+        }
+      ]
+    };
+    const client = {
+      chat: {
+        completions: {
+          create: jest.fn().mockResolvedValue({
+            choices: [{ finish_reason: 'stop', message: { content: 'done' } }]
+          })
+        }
+      }
+    };
+    const onToolCall = jest.fn().mockResolvedValue('found');
+    const result = await ai._handleToolCalls(
+      response,
+      'openai',
+      client,
+      { messages: [] },
+      { tools: [{ name: 'lookup' }], onToolCall }
+    );
+    expect(onToolCall).toHaveBeenCalledWith('lookup', {});
+    expect(result.text).toBe('done');
+  });
+
+  test('returns malformed tool arguments to the model without executing the callback', async () => {
+    const ai = createAI();
+    const response = {
+      choices: [
+        {
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            tool_calls: [{ id: 'call_1', function: { name: 'lookup', arguments: '{broken' } }]
+          }
+        }
+      ]
+    };
+    const client = {
+      chat: {
+        completions: {
+          create: jest.fn().mockResolvedValue({
+            choices: [{ finish_reason: 'stop', message: { content: 'cannot look up' } }]
+          })
+        }
+      }
+    };
+    const onToolCall = jest.fn();
+    const params = { messages: [] };
+    const result = await ai._handleToolCalls(response, 'openai', client, params, {
+      tools: [{ name: 'lookup' }],
+      onToolCall
+    });
+    expect(onToolCall).not.toHaveBeenCalled();
+    expect(params.messages[1].content).toContain('invalid_tool_arguments');
+    expect(result.text).toBe('cannot look up');
+  });
+
+  test('enforces the tool round limit when the provider reports stop with tool calls', async () => {
+    const ai = createAI();
+    const response = {
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            tool_calls: [{ id: 'call_1', function: { name: 'lookup', arguments: '{}' } }]
+          }
+        }
+      ]
+    };
+    ai._requestModel = jest.fn().mockResolvedValue(response);
+    await expect(
+      ai._handleToolCalls(
+        response,
+        'openai',
+        {},
+        { messages: [] },
+        { tools: [{ name: 'lookup' }], onToolCall: jest.fn().mockResolvedValue('ok') }
+      )
+    ).rejects.toThrow('Tool-call limit of 10 rounds reached');
   });
 });
 

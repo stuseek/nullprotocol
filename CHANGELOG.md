@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — source release; npm publication pending
+
+- Ask for valid JSON in structured operations. Treat input text as data in prompts and quote criteria and summary focus.
+- Require `validate` recommendations to be `pass`, `fail`, or `conditional`; responses missing a recommendation now fail. Check confidence ranges in validation, summary, and decision results.
+- Handle OpenAI-compatible tool calls reported with `stop` and return malformed tool arguments to the model without invoking the callback.
+- Add a single-run smoke test for a local model, with checks for each operation and tool dispatch.
+
 ## 1.3.1 — source release; npm publication pending
 
 - Accept a managed inference key with an explicit gateway URL, and reject accidental use of OpenAI's endpoint.

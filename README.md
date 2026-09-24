@@ -63,14 +63,22 @@ if (!result.success) {
 
 `extract` checks the response with a local JSON Schema validator. The shorthand above requires every field and checks its type. You can pass a full JSON Schema object when you need optional fields or stricter rules. Validation catches malformed output; it cannot prove that the extracted facts are true.
 
+To check a real local model against all five operations and a tool call, run:
+
+```sh
+NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
+```
+
+This uses [Ollama's OpenAI-compatible endpoint](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx) at `127.0.0.1:11434` by default. Set `NULLPROTOCOL_MODEL_URL` (or `NULLPROTOCOL_OPENAI_BASE_URL`) and `NULLPROTOCOL_MODEL_KEY` for another compatible server. The smoke test makes one request per example, checks the format and a few obvious facts, and exercises tool dispatch. It does not measure model reliability or decision quality; the first request may include model loading time.
+
 ## What it does
 
 | Operation | Result | Local check |
 | --- | --- | --- |
 | `extract(data, schema)` | Structured data | JSON Schema validation |
-| `validate(criteria, subject)` | Score and reasoning | Score range and response shape |
-| `summarize(content)` | Summary and key points | Response shape and length |
-| `decide(context, actions)` | Selected action | Membership in the allowed list |
+| `validate(criteria, subject)` | Score and reasoning | Score and confidence ranges, recommendation enum |
+| `summarize(content)` | Summary and key points | Response shape, length, confidence range |
+| `decide(context, actions)` | Selected action | Membership in the allowed list, confidence range |
 | `chat(prompt)` | Text or tool calls | Nonstreaming: nonempty response, tool allowlist |
 
 Nonstreaming operations return `{ success, ... }`. Model and validation failures appear as `{ success: false, error }`. Handle those results before acting on them. Streaming `chat` returns an async generator unless you set `collect: true`.
