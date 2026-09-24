@@ -4,6 +4,15 @@ This is a small development sample for finding failures, not evidence for a mode
 
 The scorer in `score.js` checks task facts independently of the SDK's `success` flag. `accepted` means parseable JSON in the direct arm and validated output in the SDK arm, so compare `correct` separately. `silentWrong` means an arm accepted an incorrect answer. Tool scoring requires both the expected tool call and a consistent final answer. The fixture has only two tool tasks and a simple text check; inspect those raw outputs. The sample is too small for a marketing percentage or an assertion that 3B matches 7B. Ollama's reported prompt tokens and latency can vary with prompt caching.
 
+The [recorded pilot](published/local-pilot-2026-09-24.jsonl) ran against commit `020e413` on September 24, 2026. Each model and arm saw each task once:
+
+| Local model | Direct call | SDK |
+| --- | ---: | ---: |
+| Qwen 2.5 3B Instruct | 7/12 correct | 11/12 correct |
+| Qwen 2.5 7B Instruct | 12/12 correct | 12/12 correct |
+
+The four 3B decision outputs were correct decisions wrapped in single-element arrays; the SDK unwrapped and checked them. Both arms repeated the same wrong status after an order lookup with 3B. These are development tasks, not a held-out evaluation. Inspect the raw rows with `npm run bench:report -- bench/published/local-pilot-2026-09-24.jsonl`.
+
 Install the OpenAI peer dependency, then prepare the two local models. The derived names set an 8192-token context window without copying model weights:
 
 ```sh
