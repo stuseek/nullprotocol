@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.0 — source release; npm publication pending
+
+- Report metadata for consumed streaming `chat` calls, including completion, provider failure, and early cancellation. Preserve each stream's run ID when generators are read later or interleaved.
+- Add an opt-in Team run timeline for streamed `chat` with a model step and provider-reported usage when available. Stream events contain no prompts, replies, error messages, or text lengths.
+- Streaming timeouts now throw `TimeoutError` instead of silently returning a partial reply. Time spent by the caller processing yielded chunks does not count toward the provider timeout.
+
 ## 2.3.0 — source release; npm publication pending
 
 - Add opt-in, metadata-only run timelines for Team Spaces with `telemetryTimeline: true`. One bounded trace covers a top-level nonstreaming call, including model, tool, and decision-guard steps. The standalone library still works without hosted telemetry.

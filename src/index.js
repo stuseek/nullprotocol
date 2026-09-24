@@ -189,6 +189,7 @@ class AIToolkit {
         status = error?.name === 'AbortError' ? 'aborted' : 'failed';
         throw error;
       } finally {
+        if (trace) trace.closed = true;
         if (trace && report) {
           this.telemetry.trackTrace(runId, {
             operation,
@@ -220,6 +221,80 @@ class AIToolkit {
       ...(step.outputTokens !== undefined ? { outputTokens: step.outputTokens } : {}),
       ...(step.errorCode ? { errorCode: step.errorCode } : {})
     });
+  }
+
+  _streamErrorCode(error) {
+    if (error?.name === 'AbortError') return 'aborted';
+    if (error?.code === 'ETIMEDOUT' || error?.name === 'TimeoutError') return 'timeout';
+    if (error?.status === 429) return 'rate_limited';
+    return 'provider_error';
+  }
+
+  _recordStreamingChat(details) {
+    if (!this.telemetry) return;
+    const { context, started, status, errorCode, inputTokens, outputTokens, modelAttempted } =
+      details;
+    const engine = ['openai', 'anthropic'].includes(details.engine) ? details.engine : undefined;
+    const model =
+      typeof details.model === 'string' &&
+      /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(details.model)
+        ? details.model
+        : undefined;
+    const duration = Math.min(1_000_000_000, Math.max(0, Date.now() - started));
+    const success = status === 'completed';
+    const usage = {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {})
+    };
+    const emit = () => {
+      if (success && Object.keys(usage).length) {
+        this.telemetry.track('model_usage', { engine, model, ...usage });
+      }
+      this.telemetry.track('ai_request', {
+        engine,
+        model,
+        operation: 'chat',
+        duration,
+        success,
+        ...(errorCode ? { errorCode } : {})
+      });
+      this.telemetry.track('chat', {
+        engine,
+        model,
+        duration,
+        success,
+        ...(errorCode ? { errorCode } : {})
+      });
+      if (this.telemetryTimeline && context?.runId && !context.trace?.closed) {
+        const step = {
+          kind: 'model',
+          started,
+          duration,
+          success,
+          model,
+          ...(success ? usage : {}),
+          ...(errorCode ? { errorCode } : {})
+        };
+        if (context.trace) {
+          if (modelAttempted) this._traceStep(step);
+        } else {
+          this.telemetry.trackTrace(context.runId, {
+            operation: 'chat',
+            status,
+            duration,
+            stepsTotal: modelAttempted ? 1 : 0,
+            truncated: false,
+            steps: modelAttempted ? [{ ...step, offset: 0 }] : []
+          });
+        }
+      }
+    };
+    try {
+      if (context) this.runContext.run(context, emit);
+      else emit();
+    } catch {
+      // Telemetry must not change the result of a stream.
+    }
   }
 
   /**
@@ -854,14 +929,32 @@ class AIToolkit {
     const history = this._fitContext(system, user, options.includeHistory);
     const controller = new AbortController();
     const timeout = this.config.timeout ?? 30000;
-    const timer =
-      timeout > 0
-        ? setTimeout(
-            () => controller.abort(new Error(`AI stream timed out after ${timeout}ms`)),
-            timeout
-          )
-        : null;
+    let timedOut = false;
+    let finished = false;
+    let remaining = timeout;
+    let armedAt;
+    let timer;
+    const armTimer = () => {
+      if (timeout <= 0 || timedOut) return;
+      armedAt = Date.now();
+      timer = setTimeout(() => {
+        timedOut = true;
+        timer = null;
+        controller.abort();
+      }, remaining);
+    };
+    const pauseTimer = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      remaining = Math.max(1, remaining - (Date.now() - armedAt));
+    };
+    const timeoutError = () =>
+      Object.assign(new Error(`AI stream timed out after ${timeout}ms`), {
+        name: 'TimeoutError'
+      });
 
+    armTimer();
     try {
       switch (engine) {
         case 'openai': {
@@ -870,6 +963,7 @@ class AIToolkit {
           if (Array.isArray(user)) msgArray.push(...user);
           else msgArray.push({ role: 'user', content: user });
 
+          options.onModelStart?.();
           const stream = await client.chat.completions.create(
             {
               model: resolvedModel,
@@ -882,8 +976,18 @@ class AIToolkit {
           );
 
           for await (const chunk of stream) {
+            if (chunk.choices?.[0]?.finish_reason && !timedOut) {
+              finished = true;
+            }
+            if (chunk.usage && typeof options.onUsage === 'function') {
+              options.onUsage(chunk.usage);
+            }
             const delta = chunk.choices?.[0]?.delta?.content;
-            if (delta) yield delta;
+            if (delta) {
+              pauseTimer();
+              yield delta;
+              armTimer();
+            }
           }
           break;
         }
@@ -894,6 +998,7 @@ class AIToolkit {
           if (Array.isArray(user)) msgArray.push(...user);
           else msgArray.push({ role: 'user', content: user });
 
+          options.onModelStart?.();
           const stream = client.messages.stream(
             {
               model: resolvedModel,
@@ -906,8 +1011,15 @@ class AIToolkit {
           );
 
           for await (const event of stream) {
+            if (event.type === 'message_stop' && !timedOut) {
+              finished = true;
+            }
+            const usage = event.message?.usage || event.usage;
+            if (usage && typeof options.onUsage === 'function') options.onUsage(usage);
             if (event.type === 'content_block_delta' && event.delta?.text) {
+              pauseTimer();
               yield event.delta.text;
+              armTimer();
             }
           }
           break;
@@ -916,6 +1028,11 @@ class AIToolkit {
         default:
           throw new Error(`Unknown engine: ${engine}`);
       }
+      if (timedOut && !finished) throw timeoutError();
+    } catch (error) {
+      if (finished) return;
+      if (timedOut && !finished) throw timeoutError();
+      throw error;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -1394,8 +1511,6 @@ class AIToolkit {
         : typeof prompt === 'string'
           ? prompt
           : JSON.stringify(prompt);
-      const promptText = typeof userPrompt === 'string' ? userPrompt : JSON.stringify(userPrompt);
-
       const messages = this.buildMessages(system, userPrompt, additionalContext);
 
       // Streaming path
@@ -1404,15 +1519,70 @@ class AIToolkit {
           success: false,
           error: 'Streaming result is not available for chaining'
         };
+        const context = this.runContext.getStore();
+        const engine = apiOptions.engine || this.defaultEngine;
+        const model = this._resolveModel(apiOptions.model, engine);
+        let inputTokens;
+        let outputTokens;
+        let modelStarted = false;
         const generator = this.makeStreamRequest(messages, {
           ...apiOptions,
           includeHistory: shouldTrack,
-          operation: 'chat'
+          operation: 'chat',
+          onModelStart: () => {
+            modelStarted = true;
+          },
+          onUsage: usage => {
+            const input = usage?.prompt_tokens ?? usage?.input_tokens;
+            const output = usage?.completion_tokens ?? usage?.output_tokens;
+            if (Number.isSafeInteger(input) && input >= 0)
+              inputTokens = Math.min(1_000_000_000, input);
+            if (Number.isSafeInteger(output) && output >= 0)
+              outputTokens = Math.min(1_000_000_000, output);
+          }
         });
+        const ai = this;
+        const observed = !this.telemetry
+          ? generator
+          : (async function* () {
+              const started = Date.now();
+              let hasText = false;
+              let complete = false;
+              let errorCode;
+              try {
+                for await (const chunk of generator) {
+                  if (/\S/.test(chunk)) hasText = true;
+                  yield chunk;
+                }
+                complete = true;
+              } catch (error) {
+                errorCode = modelStarted || hasText ? ai._streamErrorCode(error) : 'config_error';
+                throw error;
+              } finally {
+                let status = 'failed';
+                if (complete && hasText) status = 'completed';
+                else if (!complete && (!errorCode || errorCode === 'aborted')) status = 'aborted';
+                const failureCode =
+                  status === 'completed'
+                    ? undefined
+                    : errorCode || (status === 'aborted' ? 'aborted' : 'provider_error');
+                ai._recordStreamingChat({
+                  context,
+                  started,
+                  engine,
+                  model,
+                  status,
+                  errorCode: failureCode,
+                  modelAttempted: modelStarted || hasText,
+                  inputTokens,
+                  outputTokens
+                });
+              }
+            })();
 
         if (collect) {
           let full = '';
-          for await (const chunk of generator) {
+          for await (const chunk of observed) {
             full += chunk;
           }
 
@@ -1438,7 +1608,7 @@ class AIToolkit {
           return result;
         }
 
-        return generator;
+        return observed;
       }
 
       // Standard (non-streaming) path
@@ -1488,8 +1658,6 @@ class AIToolkit {
       if (this.telemetry) {
         this.telemetry.track('chat', {
           duration: Date.now() - start,
-          promptLength: promptText.length,
-          responseLength: messageText?.length || 0,
           success: true
         });
       }
