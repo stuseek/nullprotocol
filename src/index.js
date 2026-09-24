@@ -1072,9 +1072,18 @@ class AIToolkit {
    */
   async decide(context, actions, options = {}) {
     const start = Date.now();
-    const { additionalContext, ...apiOptions } = options;
+    const { additionalContext, guard, guardTimeoutMs = 30000, ...apiOptions } = options;
 
     try {
+      if (guard !== undefined && typeof guard !== 'function') {
+        throw new TypeError('guard must be a function');
+      }
+      if (
+        guard &&
+        (!Number.isInteger(guardTimeoutMs) || guardTimeoutMs < 1 || guardTimeoutMs > 120000)
+      ) {
+        throw new RangeError('guardTimeoutMs must be between 1 and 120000 milliseconds');
+      }
       // Support chaining - use last result if context not provided
       if (!context && this.lastResult) {
         if (this.lastResult.success === false) throw new Error('Cannot chain from a failed result');
@@ -1107,18 +1116,71 @@ class AIToolkit {
           (typeof decision.confidence === 'number' &&
             decision.confidence >= 0 &&
             decision.confidence <= 1));
+      let guardFailure = null;
+      if (valid && guard) {
+        const controller = new AbortController();
+        const timedOut = Symbol('guard_timeout');
+        let timer;
+        const candidate = {
+          success: true,
+          action: decision.action,
+          reasoning: decision.reasoning,
+          confidence: typeof decision.confidence === 'number' ? decision.confidence : 0,
+          parameters:
+            decision.parameters && typeof decision.parameters === 'object'
+              ? structuredClone(decision.parameters)
+              : {}
+        };
+        try {
+          const result = await Promise.race([
+            Promise.resolve().then(() =>
+              guard(
+                candidate,
+                { context, actions },
+                { ...this.runContext.getStore(), signal: controller.signal }
+              )
+            ),
+            new Promise(resolve => {
+              timer = setTimeout(() => {
+                controller.abort();
+                resolve(timedOut);
+              }, guardTimeoutMs);
+            })
+          ]);
+          if (result === timedOut) {
+            guardFailure = 'guard_timeout';
+          } else if (result !== true) {
+            guardFailure = 'guard_rejected';
+          }
+        } catch {
+          guardFailure = 'guard_error';
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      const accepted = valid && !guardFailure;
       const result = {
-        success: !!valid,
-        action: valid ? decision.action : null,
-        reasoning: valid ? decision.reasoning : 'Invalid decision result',
-        confidence: valid && typeof decision.confidence === 'number' ? decision.confidence : 0,
+        success: !!accepted,
+        action: accepted ? decision.action : null,
+        reasoning: accepted
+          ? decision.reasoning
+          : guardFailure
+            ? 'Decision rejected by application guard'
+            : 'Invalid decision result',
+        confidence: accepted && typeof decision.confidence === 'number' ? decision.confidence : 0,
         parameters:
-          valid && decision.parameters && typeof decision.parameters === 'object'
+          accepted && decision.parameters && typeof decision.parameters === 'object'
             ? decision.parameters
             : {},
-        ...(valid
+        ...(guardFailure ? { rejectedAction: decision.action } : {}),
+        ...(guardFailure ? { errorCode: guardFailure } : {}),
+        ...(accepted
           ? {}
-          : { error: 'Model selected an action outside the allowed list or returned invalid data' })
+          : {
+              error: guardFailure
+                ? 'Decision rejected by application guard'
+                : 'Model selected an action outside the allowed list or returned invalid data'
+            })
       };
 
       // Store for chaining
@@ -1128,11 +1190,11 @@ class AIToolkit {
       if (this.telemetry) {
         this.telemetry.track('decide', {
           duration: Date.now() - start,
-          actionCount: actions.length,
+          actionCount: allowedActions.length,
           chosenAction: result.action,
           confidence: result.confidence,
           success: result.success,
-          ...(!result.success ? { errorCode: 'schema_mismatch' } : {})
+          ...(!result.success ? { errorCode: guardFailure || 'schema_mismatch' } : {})
         });
       }
 

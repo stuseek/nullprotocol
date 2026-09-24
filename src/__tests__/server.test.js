@@ -156,10 +156,12 @@ describe('Server — authenticated requests', () => {
 
     const res = await request(port, 'POST', '/decide', {
       context: { score: 90 },
-      actions: ['approve', 'reject']
+      actions: ['approve', 'reject'],
+      guard: false
     });
     expect(res.status).toBe(200);
     expect(res.body.action).toBe('approve');
+    expect(server.ai.decide.mock.calls[0][2].guard).toBeUndefined();
   });
 
   test('POST /chat strips stream option', async () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0 — source release; npm publication pending
+
+- Add an optional application-owned `decide` guard. Only an explicit `true` accepts a structurally valid model choice; rejection clears the executable action.
+- Bound guard execution time and pass the named HTTP agent's run identity and abort signal to its server-side guard.
+- Keep HTTP callers from supplying a guard, check guard configuration at service startup, and return HTTP 422 for rejected choices without revealing them. Record guard rejection categories without decision content in telemetry.
+
 ## 1.4.0 — source release; npm publication pending
 
 - Ask for valid JSON in structured operations. Treat input text as data in prompts and quote criteria and summary focus.

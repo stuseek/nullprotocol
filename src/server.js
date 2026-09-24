@@ -53,6 +53,7 @@ function serve(options = {}) {
     },
     '/decide': async (requestAI, body) => {
       const { context, actions, ...opts } = body;
+      delete opts.guard;
       return requestAI.decide(context, actions, opts);
     },
     '/chat': async (requestAI, body) => {

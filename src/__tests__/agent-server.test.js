@@ -87,6 +87,18 @@ test('disable blocks new calls without creating more agents', async () => {
   expect((await call('/v1/agents')).body.agents).toHaveLength(2);
 });
 
+test('invalid server-owned guard configuration fails before listening', () => {
+  for (const callOptions of [{ guard: 'yes' }, { guard: () => true, guardTimeoutMs: 0 }]) {
+    expect(() =>
+      serveAgents({
+        port: 0,
+        apiKey: 'test-key',
+        agents: [{ id: 'invalid', mode: 'stateless', engines: { openai: 'test' }, callOptions }]
+      })
+    ).toThrow(/guard/i);
+  }
+});
+
 test('authentication and malformed input are rejected', async () => {
   expect((await call('/v1/agents', 'GET', undefined, {})).status).toBe(401);
   expect((await call('/v1/agents/worker/invoke', 'POST', { input: { prompt: '' } })).status).toBe(

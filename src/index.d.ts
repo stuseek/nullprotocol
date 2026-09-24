@@ -94,7 +94,18 @@ export interface SummarizeOptions extends BaseOptions {
   focus?: string;
 }
 
-export interface DecideOptions extends BaseOptions {}
+export type DecisionAction = string | { action: string; [key: string]: unknown };
+
+export interface DecideOptions extends BaseOptions {
+  /** Application-owned check. Only true accepts a structurally valid model decision. Treat input.context as untrusted for HTTP agents. */
+  guard?: (
+    decision: DecideResult,
+    input: { context: any; actions: DecisionAction[] },
+    runtime: { principal?: string; agentId?: string; sessionId?: string; runId?: string; signal: AbortSignal }
+  ) => boolean | Promise<boolean>;
+  /** Guard timeout in milliseconds (default 30000, maximum 120000). */
+  guardTimeoutMs?: number;
+}
 
 export interface ChatOptions extends BaseOptions {
   /** Custom system prompt for the conversation */
@@ -142,6 +153,10 @@ export interface DecideResult {
   reasoning: string;
   confidence: number;
   parameters: Record<string, any>;
+  /** Model-selected action when the application guard rejected it. Never execute it. */
+  rejectedAction?: string;
+  /** Set when an application guard rejects or cannot finish checking a decision. */
+  errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout';
   error?: string;
 }
 
@@ -260,7 +275,7 @@ export declare class AIToolkit {
    */
   decide(
     context: any,
-    actions: string[],
+    actions: DecisionAction[],
     options?: DecideOptions
   ): Promise<DecideResult>;
 
@@ -330,7 +345,7 @@ export function summarize(
 
 export function decide(
   context?: any,
-  actions?: string[],
+  actions?: DecisionAction[],
   options?: DecideOptions
 ): Promise<DecideResult>;
 
@@ -395,7 +410,7 @@ export interface AgentDefinition extends AIToolkitOptions {
   tools?: ToolDefinition[];
   schemas?: Record<string, Record<string, any>>;
   onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
-  callOptions?: BaseOptions;
+  callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'>;
   maxHistoryMessages?: number;
 }
 

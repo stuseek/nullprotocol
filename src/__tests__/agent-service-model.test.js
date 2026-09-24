@@ -6,6 +6,8 @@ let agentServer;
 let agentUrl;
 const requests = [];
 const deliveredEvents = [];
+let trustedQueue = 0;
+let guardRuntime;
 const headers = { Authorization: 'Bearer local-test', 'Content-Type': 'application/json' };
 
 function listen(server) {
@@ -74,6 +76,12 @@ beforeAll(async () => {
         telemetry: true,
         telemetryEndpoint: 'https://telemetry.example.test',
         telemetryKey: 'np_ingest_local_test',
+        callOptions: {
+          guard: ({ action }, _input, runtime) => {
+            guardRuntime = runtime;
+            return action === (trustedQueue > 0 ? 'inspect' : 'wait');
+          }
+        },
         tools: [{ name: 'read_logs', description: 'Read logs' }],
         onToolCall: async () => ({ ok: true })
       },
@@ -140,4 +148,21 @@ test('decide with configured tools receives a plain model response', async () =>
   expect(response.status).toBe(200);
   expect(response.body.output).toMatchObject({ success: true, action: 'wait' });
   expect(requests.at(-1).tools).toBeUndefined();
+});
+
+test('server-owned decision guard rejects a model choice without exposing it as an action', async () => {
+  trustedQueue = 480;
+  try {
+    const response = await post('/v1/agents/worker/invoke', {
+      operation: 'decide',
+      guard: true,
+      input: { context: { queue: 0 }, actions: ['wait', 'inspect'], guard: false }
+    });
+    expect(response.status).toBe(422);
+    expect(response.body.output).toEqual({ success: false, error: 'decision_rejected' });
+    expect(guardRuntime).toMatchObject({ principal: 'service-key', agentId: 'worker' });
+    expect(typeof guardRuntime.runId).toBe('string');
+  } finally {
+    trustedQueue = 0;
+  }
 });

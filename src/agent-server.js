@@ -11,6 +11,15 @@ function defineAgent(options) {
     throw new Error('Agent mode must be stateless or stateful');
   if (options.tools && !Array.isArray(options.tools))
     throw new Error('Agent tools must be an array');
+  if (options.callOptions?.guard !== undefined && typeof options.callOptions.guard !== 'function')
+    throw new Error('Agent decision guard must be a function');
+  if (
+    options.callOptions?.guardTimeoutMs !== undefined &&
+    (!Number.isInteger(options.callOptions.guardTimeoutMs) ||
+      options.callOptions.guardTimeoutMs < 1 ||
+      options.callOptions.guardTimeoutMs > 120000)
+  )
+    throw new Error('Agent guardTimeoutMs must be between 1 and 120000 milliseconds');
   return Object.freeze({ ...options, tools: options.tools ? [...options.tools] : [] });
 }
 
@@ -34,6 +43,7 @@ function failure(res, status, code) {
 }
 
 function publicResult(result) {
+  if (result?.errorCode === 'guard_rejected') return { success: false, error: 'decision_rejected' };
   return result?.success === false ? { success: false, error: 'agent_failed' } : result;
 }
 
@@ -71,8 +81,9 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
   const operation = input.operation || 'chat';
   const data = input.input || {};
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { invalid: true };
+  const { guard, guardTimeoutMs, ...modelOptions } = def.callOptions || {};
   const chatOptions = {
-    ...def.callOptions,
+    ...modelOptions,
     tools: def.tools,
     onToolCall:
       def.onToolCall &&
@@ -84,7 +95,7 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
         }
       })
   };
-  const options = { ...def.callOptions };
+  const options = { ...modelOptions };
   let result;
   return base.runContext.run({ runId, principal, agentId: def.id, sessionId }, async () => {
     if (operation === 'chat') {
@@ -94,7 +105,11 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
     } else if (operation === 'decide') {
       if (!Array.isArray(data.actions) || data.actions.length < 1 || data.actions.length > 30)
         return { invalid: true };
-      result = await ai.decide(data.context, data.actions, options);
+      result = await ai.decide(data.context, data.actions, {
+        ...options,
+        guard,
+        guardTimeoutMs
+      });
     } else if (operation === 'extract') {
       if (typeof data.schema !== 'string' || !Object.hasOwn(def.schemas || {}, data.schema))
         return { invalid: true };
@@ -210,10 +225,18 @@ function serveAgents(options = {}) {
           const runId = crypto.randomUUID();
           const outcome = await runOperation(def, base, input, undefined, runId, principal);
           if (outcome.invalid) return failure(res, 400, 'invalid_input');
-          return respond(res, outcome.result?.success === false ? 502 : 200, {
-            runId,
-            output: publicResult(outcome.result)
-          });
+          return respond(
+            res,
+            outcome.result?.errorCode === 'guard_rejected'
+              ? 422
+              : outcome.result?.success === false
+                ? 502
+                : 200,
+            {
+              runId,
+              output: publicResult(outcome.result)
+            }
+          );
         } finally {
           active--;
           agent.active--;
