@@ -56,32 +56,31 @@ class TelemetryClient {
     if (!this.enabled) {
       return;
     }
+    try {
+      const runId = this.currentRunId?.();
+      const safeData = {
+        event,
+        eventId: crypto.randomUUID(),
+        agentId: this.agentId,
+        ...(this.environment ? { environment: this.environment } : {}),
+        ...(runId ? { runId } : {}),
+        timestamp: Date.now(),
+        sessionId: this.sessionId,
+        data: this.sanitizeData(data)
+      };
 
-    const runId = this.currentRunId?.();
-    const safeData = {
-      event,
-      eventId: crypto.randomUUID(),
-      agentId: this.agentId,
-      ...(this.environment ? { environment: this.environment } : {}),
-      ...(runId ? { runId } : {}),
-      timestamp: Date.now(),
-      sessionId: this.sessionId,
-      data: this.sanitizeData(data)
-    };
+      if (Buffer.byteLength(JSON.stringify(safeData)) > 4096 || this.queue.length >= 1000) {
+        this.droppedEvents++;
+        return;
+      }
+      this.queue.push(safeData);
 
-    if (Buffer.byteLength(JSON.stringify(safeData)) > 4096) {
+      if (this.queue.length >= 50) {
+        void this.flush();
+      }
+    } catch {
+      // Observability must not turn a successful model call into an application error.
       this.droppedEvents++;
-      return;
-    }
-    if (this.queue.length >= 1000) {
-      this.droppedEvents++;
-      return;
-    }
-    this.queue.push(safeData);
-
-    // Flush if queue is large
-    if (this.queue.length >= 50) {
-      this.flush();
     }
   }
 

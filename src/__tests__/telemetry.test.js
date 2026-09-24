@@ -73,6 +73,25 @@ describe('TelemetryClient', () => {
 
       expect(client.flush).toHaveBeenCalled();
     });
+
+    test('drops an unserializable event without interrupting the caller', () => {
+      client = new TelemetryClient(activeOptions);
+      expect(() => client.track('model_usage', { model: 1n })).not.toThrow();
+      expect(client.queue).toHaveLength(0);
+      expect(client.droppedEvents).toBe(1);
+    });
+
+    test('drops an event when run correlation fails without interrupting the caller', () => {
+      client = new TelemetryClient({
+        ...activeOptions,
+        currentRunId: () => {
+          throw new Error('correlation unavailable');
+        }
+      });
+      expect(() => client.track('chat', { success: true })).not.toThrow();
+      expect(client.queue).toHaveLength(0);
+      expect(client.droppedEvents).toBe(1);
+    });
   });
 
   describe('sanitizeData', () => {

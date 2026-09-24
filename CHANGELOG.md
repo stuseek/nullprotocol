@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.2 — source release; npm publication pending
+
+- Drop telemetry events that cannot be serialized or correlated without changing the result of an agent call.
+
 ## 2.1.1 — source release; npm publication pending
 
 - Parse JSON with braces and brackets inside quoted strings without accepting a nested fragment from a truncated response.
