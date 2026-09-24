@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0 — source release; npm publication pending
+
+Breaking behavior for the named HTTP service: its stored history budget is 8,192 rough tokens per agent (previously 50,000), `MemorySessionStore` allows 2,000 total sessions (previously 10,000), and `/readyz` stays 200 when every agent is disabled. Configure `maxHistoryTokens` or `maxSessions` to restore the earlier limits.
+
+- Keep `/readyz` reachable when all agents are disabled so operators can enable them again.
+- Reject request strings that PostgreSQL cannot store and repair invalid model characters in saved session history.
+- Refresh a session's expiry when a turn starts; validate named-agent history budgets and retain the current turn when older history is trimmed.
+- Let a transient session-lease renewal error retry on the next heartbeat; the final commit remains conditional on a valid lease.
+
 ## 2.1.2 — source release; npm publication pending
 
 - Drop telemetry events that cannot be serialized or correlated without changing the result of an agent call.

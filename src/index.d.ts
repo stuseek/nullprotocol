@@ -437,6 +437,8 @@ export interface AgentDefinition extends AIToolkitOptions {
   schemas?: Record<string, Record<string, any>>;
   onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string }) => any | Promise<any>;
   callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
+  /** Defaults to 8,192 rough tokens in the named HTTP service. */
+  maxHistoryTokens?: number;
   maxHistoryMessages?: number;
   operations?: Array<'chat' | 'decide' | 'extract' | 'summarize' | 'validate'>;
   exposeToolCalls?: boolean;
@@ -455,7 +457,7 @@ export interface SessionRef {
 
 export interface SessionStore {
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
@@ -467,7 +469,7 @@ export interface SessionStore {
 export declare class MemorySessionStore implements SessionStore {
   constructor(options?: { maxSessions?: number; maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
@@ -478,7 +480,7 @@ export declare class MemorySessionStore implements SessionStore {
 export declare class PostgresSessionStore implements SessionStore {
   constructor(pool: { query(sql: string, values?: unknown[]): Promise<any>; connect(): Promise<any> }, options?: { maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;

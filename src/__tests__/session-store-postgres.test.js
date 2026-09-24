@@ -64,6 +64,22 @@ suite('PostgreSQL session store', () => {
     expect(await store.purgeExpired()).toBeGreaterThanOrEqual(1);
   });
 
+  test('starting a turn refreshes PostgreSQL session expiry', async () => {
+    const id = await store.create(owner, { messages: [], context: {} });
+    const ref = { ...owner, id };
+    await pool.query("UPDATE np_sessions SET expires_at=now()+interval '1 minute' WHERE id=$1", [
+      id
+    ]);
+    const acquired = await store.acquire(ref);
+    expect(acquired.status).toBe('acquired');
+    const expiry = await pool.query(
+      "SELECT expires_at>now()+interval '23 hours' AS extended FROM np_sessions WHERE id=$1",
+      [id]
+    );
+    expect(expiry.rows[0].extended).toBe(true);
+    await store.release(ref, acquired.lease);
+  });
+
   test('concurrent creates cannot exceed the principal quota', async () => {
     const limited = new PostgresSessionStore(pool, { maxSessionsPerPrincipal: 1 });
     const principal = `quota-${randomUUID()}`;

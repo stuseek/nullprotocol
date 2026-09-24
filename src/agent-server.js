@@ -6,6 +6,9 @@ const AGENT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const UUID_PATH = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const SESSION_PATH = new RegExp(`^sessions/(${UUID_PATH})(?:/(messages|context|history))?$`, 'i');
 const OPERATIONS = ['chat', 'decide', 'extract', 'summarize', 'validate'];
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const UNPAIRED_SURROGATES =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 function defineAgent(options) {
   if (!options || !AGENT_ID.test(options.id || ''))
@@ -33,6 +36,13 @@ function defineAgent(options) {
       options.maxHistoryMessages > 1000)
   )
     throw new Error('maxHistoryMessages must be between 1 and 1000');
+  if (
+    options.maxHistoryTokens !== undefined &&
+    (!Number.isInteger(options.maxHistoryTokens) ||
+      options.maxHistoryTokens < 1 ||
+      options.maxHistoryTokens > 50000)
+  )
+    throw new Error('maxHistoryTokens must be between 1 and 50000');
   if (options.callOptions?.guard !== undefined && typeof options.callOptions.guard !== 'function')
     throw new Error('Agent decision guard must be a function');
   if (
@@ -90,11 +100,23 @@ async function readBody(req, maxBytes) {
     if (size > maxBytes) throw Object.assign(new Error(), { status: 413, code: 'body_too_large' });
     chunks.push(chunk);
   }
+  let body;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
     throw Object.assign(new Error(), { status: 400, code: 'invalid_json' });
   }
+  const values = [body];
+  while (values.length) {
+    const value = values.pop();
+    if (typeof value === 'string' && (value.includes('\0') || UNPAIRED_SURROGATE.test(value)))
+      throw Object.assign(new Error(), { status: 400, code: 'invalid_input' });
+    if (value && typeof value === 'object') {
+      if (Array.isArray(value)) for (const item of value) values.push(item);
+      else for (const [key, item] of Object.entries(value)) values.push(key, item);
+    }
+  }
+  return body;
 }
 
 function requestInstance(base, state) {
@@ -157,7 +179,11 @@ async function runOperation(def, base, input, state, runId, principal, sessionId
         ? {
             messages: ai.messages
               .slice(-(def.maxHistoryMessages ?? 50))
-              .filter((_, i, all) => i || all[0].role !== 'assistant'),
+              .filter((_, i, all) => i || all[0].role !== 'assistant')
+              .map(message => ({
+                ...message,
+                content: message.content.replaceAll('\0', '').replace(UNPAIRED_SURROGATES, '\uFFFD')
+              })),
             context: state.context
           }
         : null
@@ -193,7 +219,12 @@ function serveAgents(options = {}) {
       exposeToolCalls,
       ...modelOptions
     } = def;
-    const base = new AIToolkit({ ...modelOptions, agentId: id, trackHistory: false });
+    const base = new AIToolkit({
+      ...modelOptions,
+      maxHistoryTokens: def.maxHistoryTokens ?? 8192,
+      agentId: id,
+      trackHistory: false
+    });
     selected.set(id, { def, base, disabled: false, active: 0 });
   }
   if (!selected.size) throw new Error('No agents selected');
@@ -218,8 +249,7 @@ function serveAgents(options = {}) {
       if (req.method === 'GET' && pathname === '/healthz')
         return respond(res, 200, { status: 'ok' });
       if (req.method === 'GET' && pathname === '/readyz') {
-        const ready = selected.size && [...selected.values()].some(a => !a.disabled);
-        return respond(res, ready ? 200 : 503, { status: ready ? 'ready' : 'unavailable' });
+        return respond(res, 200, { status: 'ready' });
       }
       const header = req.headers.authorization;
       const token =
@@ -230,7 +260,13 @@ function serveAgents(options = {}) {
         identity = await options.authenticate(req);
         principal = identity?.principal;
       } else if (token && constantTimeEqual(token, apiKey)) principal = 'service-key';
-      if (!principal || typeof principal !== 'string' || principal.length > 128)
+      if (
+        !principal ||
+        typeof principal !== 'string' ||
+        principal.length > 128 ||
+        principal.includes('\0') ||
+        UNPAIRED_SURROGATE.test(principal)
+      )
         return failure(res, 401, 'unauthorized');
       if (identity?.agents !== undefined && !Array.isArray(identity.agents))
         return failure(res, 403, 'forbidden');
@@ -352,13 +388,17 @@ function serveAgents(options = {}) {
               acquired.status === 'busy' ? 409 : 404,
               acquired.status === 'busy' ? 'session_busy' : 'not_found'
             );
-          let leaseLost = false;
-          heartbeat = setInterval(async () => {
-            try {
-              if (!(await store.renew(ref, acquired.lease, leaseMs))) leaseLost = true;
-            } catch {
-              leaseLost = true;
-            }
+          let renewPromise = null;
+          heartbeat = setInterval(() => {
+            if (renewPromise) return;
+            renewPromise = Promise.resolve()
+              .then(() => store.renew(ref, acquired.lease, leaseMs))
+              .catch(() => {
+                console.warn('nullprotocol: session lease renewal failed');
+              })
+              .finally(() => {
+                renewPromise = null;
+              });
           }, 10000);
           heartbeat.unref();
           const runId = crypto.randomUUID();
@@ -376,10 +416,6 @@ function serveAgents(options = {}) {
           if (outcome.result?.success === false) {
             await store.release(ref, acquired.lease);
             return respond(res, 502, { output: publicResult(outcome.result, def.exposeToolCalls) });
-          }
-          if (leaseLost) {
-            await store.release(ref, acquired.lease);
-            return failure(res, 409, 'lease_lost');
           }
           if (!(await store.commit(ref, acquired.lease, outcome.state)))
             return failure(res, 409, 'lease_lost');

@@ -592,6 +592,27 @@ describe('Conversation History', () => {
     expect(totalChars).toBeLessThanOrEqual(40);
   });
 
+  test('trimHistory preserves the current turn when a long answer exceeds the budget', () => {
+    const ai = createAI({ maxHistoryTokens: 10 });
+    ai.addMessage('user', 'What happened?');
+    ai.addMessage('assistant', 'a'.repeat(100));
+    const history = ai.getHistory();
+    expect(history.map(message => message.role)).toEqual(['user', 'assistant']);
+    expect(history[1].content.length).toBeGreaterThan(0);
+    expect(history.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThanOrEqual(
+      40
+    );
+  });
+
+  test('trimHistory does not split an emoji while shortening the current answer', () => {
+    const ai = createAI({ maxHistoryTokens: 3 });
+    ai.addMessage('user', 'hello');
+    ai.addMessage('assistant', 'abcd😀efghij');
+    const answer = ai.getHistory()[1].content;
+    expect(answer).not.toMatch(/^[\uDC00-\uDFFF]/);
+    expect(answer.length + ai.getHistory()[0].content.length).toBeLessThanOrEqual(12);
+  });
+
   test('auto-tracks history in chat when trackHistory=true', async () => {
     const ai = createAI({ trackHistory: true });
     ai.makeAIRequest.mockResolvedValue('Hi there!');

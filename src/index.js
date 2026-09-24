@@ -266,7 +266,28 @@ class AIToolkit {
       (sum, message) => sum + this._contextChars(message.content),
       0
     );
-    while (this.messages.length > 0 && totalChars > maxChars) {
+    const last = this.messages.length - 1;
+    const keep =
+      this.messages[last]?.role === 'assistant' && this.messages[last - 1]?.role === 'user' ? 2 : 1;
+    while (this.messages.length > keep && totalChars > maxChars) {
+      totalChars -= this._contextChars(this.messages.shift().content);
+      while (this.messages.length > keep && this.messages[0]?.role === 'assistant') {
+        totalChars -= this._contextChars(this.messages.shift().content);
+      }
+    }
+    for (let i = this.messages.length - 1; i >= 0 && totalChars > maxChars; i--) {
+      const message = this.messages[i];
+      if (typeof message.content !== 'string') continue;
+      const minimum = i === this.messages.length - 1 ? 1 : 0;
+      let remove = Math.min(totalChars - maxChars, message.content.length - minimum);
+      const nextCode = message.content.charCodeAt(remove);
+      if (remove > 0 && nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+        remove += remove < message.content.length - 1 ? 1 : -1;
+      }
+      message.content = message.content.slice(remove);
+      totalChars -= remove;
+    }
+    while (this.messages.length && totalChars > maxChars) {
       totalChars -= this._contextChars(this.messages.shift().content);
       while (this.messages[0]?.role === 'assistant') {
         totalChars -= this._contextChars(this.messages.shift().content);

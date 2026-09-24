@@ -5,7 +5,7 @@ function clone(value) {
 }
 
 class MemorySessionStore {
-  constructor({ maxSessions = 10000, maxSessionsPerPrincipal = 1000 } = {}) {
+  constructor({ maxSessions = 2000, maxSessionsPerPrincipal = 1000 } = {}) {
     if (!Number.isInteger(maxSessions) || maxSessions < 1)
       throw new Error('maxSessions must be positive');
     if (!Number.isInteger(maxSessionsPerPrincipal) || maxSessionsPerPrincipal < 1)
@@ -55,12 +55,13 @@ class MemorySessionStore {
     return item;
   }
 
-  async acquire(ref, leaseMs = 30000) {
+  async acquire(ref, leaseMs = 30000, ttlMs = 86400000) {
     const item = this._find(ref);
     if (!item) return { status: 'not_found' };
     if (item.lease && item.leaseUntil > Date.now()) return { status: 'busy' };
     item.lease = randomUUID();
     item.leaseUntil = Date.now() + leaseMs;
+    item.expiresAt = Math.max(item.expiresAt, Date.now() + ttlMs);
     return { status: 'acquired', lease: item.lease, state: clone(item.state) };
   }
 
@@ -155,13 +156,14 @@ class PostgresSessionStore {
     }
   }
 
-  async acquire(ref, leaseMs = 30000) {
+  async acquire(ref, leaseMs = 30000, ttlMs = 86400000) {
     const lease = randomUUID();
     const result = await this.pool.query(
-      `UPDATE np_sessions SET lease_token=$4, lease_until=now()+($5::bigint * interval '1 millisecond')
+      `UPDATE np_sessions SET lease_token=$4, lease_until=now()+($5::bigint * interval '1 millisecond'),
+       expires_at=greatest(expires_at,now()+($6::bigint * interval '1 millisecond'))
        WHERE id=$1 AND agent=$2 AND principal=$3 AND expires_at>now()
          AND (lease_token IS NULL OR lease_until<now()) RETURNING state`,
-      [ref.id, ref.agent, ref.principal, lease, leaseMs]
+      [ref.id, ref.agent, ref.principal, lease, leaseMs, ttlMs]
     );
     if (result.rowCount) return { status: 'acquired', lease, state: result.rows[0].state };
     const found = await this.pool.query(
