@@ -31,6 +31,7 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+bench/results/
 
 # Package files
 *.tgz

@@ -307,6 +307,31 @@ describe('Decide', () => {
     expect(result.confidence).toBe(0.85);
   });
 
+  test('accepts one wrapped decision but rejects ambiguous candidates', async () => {
+    const ai = createAI();
+    const candidate = {
+      action: 'inspect_logs',
+      reasoning: 'High errors',
+      confidence: 0.8,
+      parameters: {}
+    };
+    ai.makeAIRequest.mockResolvedValueOnce(JSON.stringify([candidate]));
+    const accepted = await ai.decide({ errorRate: 0.35 }, ['inspect_logs', 'monitor']);
+    expect(accepted).toMatchObject({ success: true, action: 'inspect_logs' });
+    ai.makeAIRequest.mockResolvedValueOnce(JSON.stringify([candidate, candidate]));
+    const rejected = await ai.decide({ errorRate: 0.35 }, ['inspect_logs', 'monitor']);
+    expect(rejected).toMatchObject({ success: false, action: null });
+  });
+
+  test('does not choose a fallback action inside malformed JSON', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(
+      '{"action":"monitor","parameters":{"ids":[1}, "fallback":{"action":"rollback","reasoning":"wrong","confidence":1,"parameters":{}}}'
+    );
+    const result = await ai.decide({}, ['monitor', 'rollback']);
+    expect(result).toMatchObject({ success: false, action: null });
+  });
+
   test('application guard rejects an allowed but unsafe action before execution', async () => {
     const ai = createAI({ withExecutor: true });
     ai.telemetry = { track: jest.fn() };
@@ -772,6 +797,49 @@ describe('parseJSON', () => {
   test('handles JSON with leading text', () => {
     const ai = createAI();
     expect(ai.parseJSON('Here is the result: {"a":1}')).toEqual({ a: 1 });
+    expect(ai.parseJSON('Here is the result:\n```json\n{"a":1}\n```\nDone.')).toEqual({
+      a: 1
+    });
+  });
+
+  test('keeps brackets and escaped quotes inside JSON strings', () => {
+    const ai = createAI();
+    const value = { message: 'A } ] and "quoted" value', nested: [{ state: 'ok' }] };
+    expect(ai.parseJSON(`Result: ${JSON.stringify(value)} Done.`)).toEqual(value);
+  });
+
+  test('finds a complete value after an invalid bracketed fragment', () => {
+    const ai = createAI();
+    expect(ai.parseJSON('Draft: {oops} Final: {"count":2}')).toEqual({ count: 2 });
+  });
+
+  test('does not salvage a nested fragment from invalid outer JSON', () => {
+    const ai = createAI();
+    expect(ai.parseJSON('{"task":{"count":2},"broken":oops}')).toEqual({
+      error: 'Failed to parse response'
+    });
+    expect(ai.parseJSON('{"task":{"count":2}')).toEqual({
+      error: 'Failed to parse response'
+    });
+    expect(ai.parseJSON('{"results":[{"id":1},{"id":2')).toEqual({
+      error: 'Failed to parse response'
+    });
+    expect(ai.parseJSON('{"a":[1}, "task":{"count":2}}')).toEqual({
+      error: 'Failed to parse response'
+    });
+    expect(ai.parseJSON('{"results":[{"id":1}}, {"id":2}]}')).toEqual({
+      error: 'Failed to parse response'
+    });
+    expect(
+      ai.parseJSON(
+        '{"action":"monitor","parameters":{"ids":[1}, "fallback":{"action":"rollback","reasoning":"wrong","confidence":1,"parameters":{}}}'
+      )
+    ).toEqual({ error: 'Failed to parse response' });
+  });
+
+  test('rejects a long truncated value without scanning nested fragments', () => {
+    const ai = createAI();
+    expect(ai.parseJSON('['.repeat(50_000))).toEqual({ error: 'Failed to parse response' });
   });
 
   test('returns error object on unparseable input', () => {

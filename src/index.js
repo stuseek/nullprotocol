@@ -809,60 +809,51 @@ class AIToolkit {
       }
 
       const cleaned = response
-        .replace(/```json\s*/gi, '')
-        .replace(/```\s*/g, '')
-        .trim();
-
-      const objectMatch = cleaned.match(/^\{[\s\S]*\}$/);
-      if (objectMatch) {
-        return JSON.parse(objectMatch[0]);
-      }
-
-      const arrayMatch = cleaned.match(/^\[[\s\S]*\]$/);
-      if (arrayMatch) {
-        return JSON.parse(arrayMatch[0]);
-      }
-
-      const firstObject = cleaned.indexOf('{');
-      const firstArray = cleaned.indexOf('[');
-
-      if (firstObject === -1 && firstArray === -1) {
+        .trim()
+        .replace(/^```(?:json)?\s*\n?/i, '')
+        .replace(/\n?```\s*$/, '');
+      try {
         return JSON.parse(cleaned);
+      } catch {
+        // Models sometimes prefix JSON with a short explanation. Find the first
+        // complete value without treating brackets inside JSON strings as syntax.
       }
 
-      const isArray = firstArray !== -1 && (firstObject === -1 || firstArray < firstObject);
-
-      if (isArray) {
-        let depth = 0;
-        const start = firstArray;
-        for (let i = firstArray; i < cleaned.length; i++) {
-          if (cleaned[i] === '[') {
-            depth++;
+      for (let start = 0; start < cleaned.length; start++) {
+        if (cleaned[start] !== '{' && cleaned[start] !== '[') continue;
+        const closing = [cleaned[start] === '{' ? '}' : ']'];
+        let quoted = false;
+        let escaped = false;
+        let candidateEnd = null;
+        for (let i = start + 1; i < cleaned.length; i++) {
+          const char = cleaned[i];
+          if (quoted) {
+            if (escaped) escaped = false;
+            else if (char === '\\') escaped = true;
+            else if (char === '"') quoted = false;
+            continue;
           }
-          if (cleaned[i] === ']') {
-            depth--;
-          }
-          if (depth === 0) {
-            return JSON.parse(cleaned.substring(start, i + 1));
+          if (char === '"') quoted = true;
+          else if (char === '{') closing.push('}');
+          else if (char === '[') closing.push(']');
+          else if (char === '}' || char === ']') {
+            if (closing.pop() !== char) {
+              throw new Error('Mismatched JSON brackets');
+            }
+            if (closing.length === 0) {
+              candidateEnd = i;
+              try {
+                return JSON.parse(cleaned.slice(start, i + 1));
+              } catch {
+                break;
+              }
+            }
           }
         }
-      } else {
-        let depth = 0;
-        const start = firstObject;
-        for (let i = firstObject; i < cleaned.length; i++) {
-          if (cleaned[i] === '{') {
-            depth++;
-          }
-          if (cleaned[i] === '}') {
-            depth--;
-          }
-          if (depth === 0) {
-            return JSON.parse(cleaned.substring(start, i + 1));
-          }
-        }
+        if (candidateEnd === null) break;
+        start = candidateEnd;
       }
-
-      return JSON.parse(cleaned);
+      throw new Error('No complete JSON value');
     } catch (error) {
       if (this.debug) {
         console.error('JSON parse error:', error.message);
@@ -1115,7 +1106,13 @@ class AIToolkit {
         operation: 'decide'
       });
 
-      const decision = this.parseJSON(response);
+      const parsedDecision = this.parseJSON(response);
+      // Some smaller models wrap one requested object in a JSON array.
+      // Accept only an unambiguous single candidate; all usual checks still run.
+      const decision =
+        Array.isArray(parsedDecision) && parsedDecision.length === 1
+          ? parsedDecision[0]
+          : parsedDecision;
 
       const allowedActions = Array.isArray(actions)
         ? actions.map(action => (typeof action === 'string' ? action : action?.action))

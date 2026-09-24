@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1 — source release; npm publication pending
+
+- Parse JSON with braces and brackets inside quoted strings without accepting a nested fragment from a truncated response.
+- Accept an unambiguous single-object array in `decide`, while still checking the action allowlist and application guard.
+- Add a local two-model comparison pilot with raw per-task results and independent scoring. It does not support a broad model-quality claim.
+
 ## 2.1.0 — source release; npm publication pending
 
 - Add opt-in shared Space context with explicit versioned JSON reads, writes, and deletion.
