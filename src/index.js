@@ -105,6 +105,7 @@ class AIToolkit {
       this.telemetry = new TelemetryClient({
         token: this.config.telemetryKey,
         endpoint: this.config.telemetryEndpoint,
+        path: this.config.telemetryPath,
         agentId: this.agentId,
         environment: this.config.environment,
         currentRunId: () => this.runContext.getStore()?.runId,

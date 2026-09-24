@@ -91,8 +91,10 @@ describe('safety regressions', () => {
       telemetry: true,
       telemetryKey: 'key',
       telemetryEndpoint: 'https://example.test',
+      telemetryPath: '/custom-ingest',
       timeout: 0
     });
+    expect(ai.telemetry.path).toBe('/custom-ingest');
     ai.telemetry.track = jest.fn();
     ai.clients.openai = {
       chat: {

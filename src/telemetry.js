@@ -10,9 +10,25 @@ class TelemetryClient {
   constructor(options = {}) {
     this.token = options.token;
     this.endpoint = options.endpoint || null;
+    this.path = options.path || '/api/telemetry';
+    if (
+      options.path !== undefined &&
+      (typeof options.path !== 'string' ||
+        !options.path.startsWith('/') ||
+        options.path.startsWith('//') ||
+        /[\\#]/.test(options.path))
+    ) {
+      throw new Error('Telemetry path must start with one slash and contain no fragment');
+    }
     this.enabled = options.enabled !== false && !!this.token && !!this.endpoint;
-    if (this.enabled && new URL(this.endpoint).protocol !== 'https:') {
-      throw new Error('Telemetry endpoint must use HTTPS');
+    this.url = null;
+    if (this.enabled) {
+      const endpoint = new URL(this.endpoint);
+      if (endpoint.protocol !== 'https:') throw new Error('Telemetry endpoint must use HTTPS');
+      this.url = new URL(this.path, endpoint);
+      if (this.url.origin !== endpoint.origin) {
+        throw new Error('Telemetry path must stay on the endpoint origin');
+      }
     }
     this.sessionId = this.generateSessionId();
     this.agentId = options.agentId || 'default-agent';
@@ -155,7 +171,7 @@ class TelemetryClient {
     return new Promise((resolve, reject) => {
       const data = JSON.stringify({ events });
 
-      const url = new URL('/api/telemetry', this.endpoint);
+      const url = this.url;
       if (url.protocol !== 'https:') {
         reject(new Error('Telemetry endpoint must use HTTPS'));
         return;
@@ -163,7 +179,7 @@ class TelemetryClient {
       const options = {
         hostname: url.hostname,
         port: url.port || 443,
-        path: url.pathname,
+        path: url.pathname + url.search,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

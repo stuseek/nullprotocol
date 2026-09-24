@@ -202,6 +202,7 @@ describe('TelemetryClient', () => {
       });
       await client.flush();
       expect(requestOptions.headers.Authorization).toBe('Bearer test');
+      expect(requestOptions.path).toBe('/api/telemetry');
       expect(body).toContain('"inputTokens":12');
       expect(body).not.toContain('private prompt');
       expect(body).not.toContain('private reply');
@@ -209,6 +210,77 @@ describe('TelemetryClient', () => {
     } finally {
       requestSpy.mockRestore();
     }
+  });
+
+  test('uses an explicit ingest path without changing the endpoint host', async () => {
+    client = new TelemetryClient({
+      token: 'test',
+      endpoint: 'https://test.endpoint/old-path',
+      path: '/ingest/v2?source=app'
+    });
+    let requestOptions;
+    const requestSpy = jest.spyOn(https, 'request').mockImplementation((options, onResponse) => {
+      requestOptions = options;
+      const req = new EventEmitter();
+      req.setTimeout = jest.fn();
+      req.write = jest.fn();
+      req.end = () => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        onResponse(res);
+        res.emit('end');
+      };
+      return req;
+    });
+
+    try {
+      await client.send([]);
+      expect(requestSpy).toHaveBeenCalledTimes(1);
+      expect(requestOptions.hostname).toBe('test.endpoint');
+      expect(requestOptions.path).toBe('/ingest/v2?source=app');
+    } finally {
+      requestSpy.mockRestore();
+    }
+  });
+
+  test('keeps the legacy default path when the endpoint contains a path', async () => {
+    client = new TelemetryClient({
+      token: 'test',
+      endpoint: 'https://test.endpoint/api/telemetry/'
+    });
+    let requestOptions;
+    const requestSpy = jest.spyOn(https, 'request').mockImplementation((options, onResponse) => {
+      requestOptions = options;
+      const req = new EventEmitter();
+      req.setTimeout = jest.fn();
+      req.write = jest.fn();
+      req.end = () => {
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        onResponse(res);
+        res.emit('end');
+      };
+      return req;
+    });
+
+    try {
+      await client.send([]);
+      expect(requestOptions.path).toBe('/api/telemetry');
+    } finally {
+      requestSpy.mockRestore();
+    }
+  });
+
+  test('rejects a path that could change the telemetry host', () => {
+    expect(() => new TelemetryClient({ ...activeOptions, path: '//other.example/ingest' })).toThrow(
+      'Telemetry path'
+    );
+    expect(
+      () => new TelemetryClient({ ...activeOptions, path: '/\\other.example/ingest' })
+    ).toThrow('Telemetry path');
+    expect(
+      () => new TelemetryClient({ ...activeOptions, path: '/\t/other.example/ingest' })
+    ).toThrow('Telemetry path');
   });
 
   test('rejects a non-HTTPS endpoint before queueing events', () => {

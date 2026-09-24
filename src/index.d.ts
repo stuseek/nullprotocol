@@ -45,7 +45,10 @@ export interface AIToolkitOptions {
   openaiBaseURL?: string;
   token?: string;
   telemetryKey?: string;
+  /** HTTPS service origin; any path in this URL is ignored. */
   telemetryEndpoint?: string;
+  /** Optional ingest path on telemetryEndpoint (default /api/telemetry). */
+  telemetryPath?: string;
   telemetry?: boolean;
   /** Stable identity in telemetry. Calls and sessions do not create new agents. */
   agentId?: string;

@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Allow an explicit `telemetryPath` without changing how existing `telemetryEndpoint` URLs resolve.
 - Bound telemetry batches to the ingest contract and retry temporary failures with backoff.
 - Flush service telemetry during graceful shutdown and redact provider errors from HTTP responses.
 - Require server-defined extraction schemas and pass caller identity to tool callbacks.
