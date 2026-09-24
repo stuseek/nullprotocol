@@ -73,7 +73,7 @@ NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
 
 This uses [Ollama's OpenAI-compatible endpoint](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx) at `127.0.0.1:11434` by default. Set `NULLPROTOCOL_MODEL_URL` (or `NULLPROTOCOL_OPENAI_BASE_URL`) and `NULLPROTOCOL_MODEL_KEY` for another compatible server. The smoke test makes one request per example, checks the format and a few obvious facts, and exercises tool dispatch. It does not measure model reliability or decision quality; the first request may include model loading time.
 
-For an exploratory direct-call comparison with local 3B and 7B models, see [the benchmark runner](bench/README.md). Its small fixed task set is for finding failures, not model-quality claims.
+For exploratory direct-call comparisons with local 3B and 7B models, see [the benchmark runner](bench/README.md) and its [frozen 48-task result](bench/published/frozen-qwen-2026-09-24.md). The tasks expose formatting recovery and wrong decisions; they do not support a general model-quality claim.
 
 ## What it does
 
