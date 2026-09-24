@@ -244,7 +244,7 @@ await ai.spaceContext.delete('ops', 'last-check', next.version);
 
 Telemetry is off by default. With `telemetry: true`, an HTTPS endpoint, and a key, the client sends operation metadata and model token usage when the provider returns it. `telemetryEndpoint` selects the host; the client posts to `/api/telemetry` there, even if that URL contains a path. For a different ingest route, set `telemetryPath` to a path beginning with `/`. Streaming `chat`, including `collect: true`, does not currently emit telemetry events. It excludes prompts, responses, tool parameters, and credentials from event bodies. The key goes in the authorization header. The client buffers up to 1,000 events and uses a 15-second socket inactivity timeout per batch.
 
-For the hosted beta, use `https://api.nullprotocol.ai/api/telemetry` as `TELEMETRY_ENDPOINT` and issue a Space ingest key in the [cabinet](https://nullprotocol-app.stuseek.chatgpt.site/). Keep the key on your server.
+For the hosted beta, use `https://api.nullprotocol.ai/api/telemetry` as `TELEMETRY_ENDPOINT` and issue a Space ingest key in the [cabinet](https://app.nullprotocol.ai/). Keep the key on your server.
 
 ```js
 const ai = new NullProtocol({
