@@ -2,6 +2,7 @@
 
 const { ConfigLoader } = require('./config');
 const { TelemetryClient } = require('./telemetry');
+const { SpaceContextClient, SpaceContextError } = require('./space-context');
 const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
 const { Resilience, CircuitBreakerError } = require('./resilience');
 const { validateExtraction: validateSchema } = require('./schema');
@@ -96,6 +97,19 @@ class AIToolkit {
       throw new Error('agentId must be a stable lowercase slug (up to 64 characters)');
     }
     this.runContext = new AsyncLocalStorage();
+
+    this.spaceContext = null;
+    if (this.config.spaceContextKey || this.config.spaceContextEndpoint) {
+      if (!this.config.spaceContextKey || !this.config.spaceContextEndpoint) {
+        throw new Error(
+          'Shared Space context requires both spaceContextKey and spaceContextEndpoint'
+        );
+      }
+      this.spaceContext = new SpaceContextClient({
+        key: this.config.spaceContextKey,
+        endpoint: this.config.spaceContextEndpoint
+      });
+    }
 
     this.telemetry = null;
     if (this.config.telemetry && (!this.config.telemetryKey || !this.config.telemetryEndpoint)) {
@@ -1526,6 +1540,8 @@ module.exports.presets = PRESETS;
 module.exports.Resilience = Resilience;
 module.exports.CircuitBreakerError = CircuitBreakerError;
 module.exports.ConfirmationRequiredError = ConfirmationRequiredError;
+module.exports.SpaceContextClient = SpaceContextClient;
+module.exports.SpaceContextError = SpaceContextError;
 module.exports.serve = function (options) {
   return require('./server').serve(options);
 };

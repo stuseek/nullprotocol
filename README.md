@@ -6,7 +6,7 @@ Build on inexpensive or local language models without trusting every byte they r
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
-The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service. A beta [Space dashboard](https://nullprotocol-app.stuseek.chatgpt.site/) is deployed for existing accounts; public signup is closed. The `nullprotocol` package has not been published to npm yet; install this source release from GitHub.
+The library is MIT licensed and runs without an account. Telemetry and shared Space context are optional and live in a separate service. A beta [Space dashboard](https://app.nullprotocol.ai/) is deployed for existing accounts; public signup is closed. The `nullprotocol` package has not been published to npm yet; install this source release from GitHub.
 
 ## Install
 
@@ -21,6 +21,8 @@ Node.js 18 or newer is required. The command pins an OpenAI SDK version that wor
 The separate API has a disabled-by-default managed inference route. Once a team is provisioned with model credit and an `np_inf_` key, the SDK can use it through the OpenAI client:
 
 ```js
+const { NullProtocol } = require('nullprotocol');
+
 const ai = new NullProtocol({
   engines: { openai: process.env.NULLPROTOCOL_INFERENCE_KEY },
   openaiBaseURL: 'https://api.nullprotocol.ai/v1',
@@ -213,6 +215,30 @@ ai.setMaxContextLength(8_000);
 ```
 
 If the system text, current input, or tool definitions alone exceed the budget, the request fails. The budget is checked again after each round of tool calls. Older chat turns are removed if needed; a tool result that makes the current turn too large fails before another model request without removing additional saved history. The count is an approximation based on characters, not the provider's tokenizer. `maxHistoryTokens` remains a separate rough cap for stored chat history. Automatic model based compaction is not part of this release.
+
+## Shared Space context
+
+Agents in one Space can explicitly share small JSON documents. Create a separate context key in the Space dashboard, then keep it on your server. This works independently of telemetry and your model provider.
+
+```js
+const { NullProtocol } = require('nullprotocol');
+
+const ai = new NullProtocol({
+  engines: { openai: process.env.MODEL_API_KEY },
+  spaceContextKey: process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY,
+  spaceContextEndpoint: 'https://api.nullprotocol.ai'
+});
+
+const current = await ai.spaceContext.get('ops', 'last-check');
+const next = await ai.spaceContext.put(
+  'ops', 'last-check',
+  { checkedAt: new Date().toISOString(), status: 'ok' },
+  { ifVersion: current?.version ?? null, ttlSeconds: 3600 }
+);
+await ai.spaceContext.delete('ops', 'last-check', next.version);
+```
+
+`ifVersion: null` creates an absent document; use the returned version for updates and deletion. A stale version returns `SpaceContextError` with `status: 409`. A missing or expired document reads as `null`. Each Space holds up to 100 documents, each bounded to 4 KiB in PostgreSQL JSONB text (its formatting can make the accepted input slightly smaller), with optional expiry up to 30 days. Namespace and key are lowercase slugs. The API stores document contents until deletion or expiry, so avoid secrets and personal data. Shared values are never inserted into model prompts automatically; your application chooses what to read and send. A context key has separate read and write permissions and cannot access telemetry or managed inference.
 
 ## Optional telemetry
 

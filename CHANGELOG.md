@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0 — source release; npm publication pending
+
+- Add opt-in shared Space context with explicit versioned JSON reads, writes, and deletion.
+- Keep its Space-scoped read/write key separate from telemetry and managed inference keys. No shared value is added to a model request automatically.
+- Expose `SpaceContextClient` and `SpaceContextError` for applications that do not need an AI runtime instance.
+
 ## 2.0.0 — source release; npm publication pending
 
 Breaking changes: named HTTP agents omit `toolCalls` from responses unless `exposeToolCalls: true`. The legacy `serve()` adapter ignores caller-supplied model options and hides provider errors. Session stores now cap active sessions per principal at 1,000 by default; `PostgresSessionStore` requires `pg.Pool`.

@@ -50,6 +50,10 @@ export interface AIToolkitOptions {
   /** Optional ingest path on telemetryEndpoint (default /api/telemetry). */
   telemetryPath?: string;
   telemetry?: boolean;
+  /** Separate Space-scoped key for explicit shared context reads and writes. */
+  spaceContextKey?: string;
+  /** HTTPS origin of the NullProtocol API. */
+  spaceContextEndpoint?: string;
   /** Stable identity in telemetry. Calls and sessions do not create new agents. */
   agentId?: string;
   /** Optional label checked against the Space ingest key. */
@@ -186,6 +190,25 @@ export declare class ConfirmationRequiredError extends Error {
   action: string;
 }
 
+export interface SpaceContextDocument<T = unknown> {
+  value: T;
+  version: string;
+  expires_at: string | null;
+  updated_at: string;
+}
+
+export declare class SpaceContextError extends Error {
+  status: number;
+  code: string;
+}
+
+export declare class SpaceContextClient {
+  constructor(options: { key: string; endpoint: string; fetchImpl?: typeof fetch });
+  get<T = unknown>(namespace: string, key: string): Promise<SpaceContextDocument<T> | null>;
+  put<T = unknown>(namespace: string, key: string, value: T, options: { ifVersion: string | null; ttlSeconds?: number | null }): Promise<SpaceContextDocument<T>>;
+  delete(namespace: string, key: string, ifVersion: string): Promise<void>;
+}
+
 export declare class Resilience {
   constructor(options?: {
     maxRetries?: number;
@@ -203,6 +226,9 @@ export declare class Resilience {
 
 export declare class AIToolkit {
   constructor(options?: AIToolkitOptions);
+
+  /** Optional, explicit Space store. Values are never added to model prompts automatically. */
+  spaceContext: SpaceContextClient | null;
 
   /** Resilience instance (retry + circuit breaker + timeout) */
   resilience: Resilience;

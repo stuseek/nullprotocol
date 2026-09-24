@@ -110,6 +110,14 @@ class ConfigLoader {
       config.telemetryEndpoint = process.env.NULLPROTOCOL_TELEMETRY_ENDPOINT;
     }
 
+    if (process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY) {
+      config.spaceContextKey = process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY;
+    }
+
+    if (process.env.NULLPROTOCOL_SPACE_CONTEXT_ENDPOINT) {
+      config.spaceContextEndpoint = process.env.NULLPROTOCOL_SPACE_CONTEXT_ENDPOINT;
+    }
+
     // Settings
     if (process.env.AI_DEFAULT_ENGINE) {
       config.defaultEngine = process.env.AI_DEFAULT_ENGINE;
