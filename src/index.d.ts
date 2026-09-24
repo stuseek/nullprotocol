@@ -50,7 +50,7 @@ export interface AIToolkitOptions {
   /** Optional ingest path on telemetryEndpoint (default /api/telemetry). */
   telemetryPath?: string;
   telemetry?: boolean;
-  /** Opt-in Team run timeline: one metadata event per completed call or consumed stream, counted in the Space's daily event limit. */
+  /** Opt-in Team run timeline: one metadata event per eligible call or consumed stream, including failures and cancellations. Counts toward the Space's daily event limit. */
   telemetryTimeline?: boolean;
   /** Separate Space-scoped key for explicit shared context reads and writes. */
   spaceContextKey?: string;
