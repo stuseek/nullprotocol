@@ -6,7 +6,7 @@ Build on inexpensive or local language models without trusting every byte they r
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
-The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service; the dashboard is still in development. The `nullprotocol` package has not been published to npm yet; install this source release from GitHub.
+The library is MIT licensed and runs without an account. Telemetry is optional and lives in a separate service. A beta [Space dashboard](https://nullprotocol-app.stuseek.chatgpt.site/) is deployed for existing accounts; public signup is closed. The `nullprotocol` package has not been published to npm yet; install this source release from GitHub.
 
 ## Install
 
