@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.0 — source release; npm publication pending
+
+- Add optional Agent Center connection for a named HTTP service: one manifest and heartbeat per process, with revisioned pause, resume, and stop across all its agents.
+- Start a centrally controlled runtime paused until its first sync, and pause after 45 seconds without a successful sync. Keep local process controls and standalone use independent of the platform.
+- Keep runtime, telemetry, shared context, and model credentials separate. The control manifest contains only agent metadata and observed state.
+
 ## 2.5.2 — source release; npm publication pending
 
 - Treat session UUIDs consistently across HTTP, memory storage, and PostgreSQL, including cancellation and tool callbacks.

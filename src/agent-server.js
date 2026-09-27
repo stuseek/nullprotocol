@@ -242,6 +242,35 @@ async function runOperation(def, base, input, state, run, principal, sessionId) 
 }
 
 function serveAgents(options = {}) {
+  const runtimeKey = options.runtimeKey || process.env.NULLPROTOCOL_RUNTIME_KEY;
+  const runtimeEndpoint = options.runtimeEndpoint || process.env.NULLPROTOCOL_RUNTIME_ENDPOINT;
+  if (!!runtimeKey !== !!runtimeEndpoint) {
+    throw new Error('Runtime control requires both runtimeKey and runtimeEndpoint');
+  }
+  let syncUrl;
+  if (runtimeKey) {
+    if (!/^np_runtime_[A-Za-z0-9_-]{43}$/.test(runtimeKey)) {
+      throw new Error('Invalid runtime control key');
+    }
+    const endpoint = new URL(runtimeEndpoint);
+    if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+      throw new Error('Runtime control endpoint must be an origin URL');
+    }
+    if (
+      endpoint.protocol !== 'https:' &&
+      !(
+        endpoint.protocol === 'http:' &&
+        ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)
+      )
+    ) {
+      throw new Error('Runtime control endpoint must use HTTPS');
+    }
+    syncUrl = new URL('/v1/runtime/sync', endpoint).toString();
+  }
+  const runtimePollMs = options.runtimePollMs ?? 15000;
+  if (!Number.isInteger(runtimePollMs) || runtimePollMs < 5000 || runtimePollMs > 15000) {
+    throw new Error('runtimePollMs must be between 5000 and 15000');
+  }
   const apiKey = options.apiKey || process.env.NULLPROTOCOL_API_KEY;
   if (!apiKey && !options.authenticate) {
     throw new Error('An API key or authenticate hook is required');
@@ -277,7 +306,16 @@ function serveAgents(options = {}) {
       agentId: id,
       trackHistory: false
     });
-    selected.set(id, { def, base, disabled: false, active: 0 });
+    selected.set(id, {
+      def,
+      base,
+      disabled: false,
+      controlPaused: !!runtimeKey,
+      controlBlocked: false,
+      controlRevision: 0,
+      controlStopEpoch: 0,
+      active: 0
+    });
   }
   if (!selected.size) throw new Error('No agents selected');
   const maxConcurrent = options.maxConcurrentTurns ?? 32;
@@ -296,6 +334,166 @@ function serveAgents(options = {}) {
   let active = 0;
   let draining = false;
   const runs = new Map();
+  const instanceId = crypto.randomUUID();
+  let lastSuccessfulSync = 0;
+  let controlTimer;
+  let controlRequest;
+  let syncing;
+  let retryTimer;
+  let retryFailures = 0;
+  let retryNotBefore = 0;
+  const failClosedIfStale = () => {
+    if (!syncUrl || Date.now() - lastSuccessfulSync < 45000) return;
+    for (const [id, agent] of selected) {
+      agent.controlPaused = true;
+      for (const run of runs.values()) if (run.agentId === id) cancelRun(run);
+    }
+  };
+  const syncControl = async () => {
+    if (!syncUrl || draining) return false;
+    if (syncing) return syncing;
+    if (Date.now() < retryNotBefore) {
+      failClosedIfStale();
+      return false;
+    }
+    retryNotBefore = 0;
+    let changed = false;
+    let retryable = true;
+    let retryAfterMs = 0;
+    syncing = (async () => {
+      const controller = new AbortController();
+      controlRequest = controller;
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      try {
+        const agents = [...selected].map(([id, item]) => {
+          const model =
+            item.def.callOptions?.model ||
+            item.base.config.models?.[item.base.config.defaultEngine];
+          return {
+            id,
+            mode: item.def.mode,
+            model:
+              typeof model === 'string' &&
+              model.length <= 120 &&
+              !/[\u0000-\u001f\u007f-\u009f]/.test(model)
+                ? model
+                : null,
+            operations: item.def.operations,
+            observedRevision: item.controlRevision,
+            observedStopEpoch: item.controlStopEpoch,
+            activeRuns: item.active
+          };
+        });
+        const response = await fetch(syncUrl, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${runtimeKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceId,
+            sdkVersion: require('../package.json').version,
+            agents
+          }),
+          redirect: 'error',
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          retryable = [408, 409, 425, 429].includes(response.status) || response.status >= 500;
+          if (response.status === 429) {
+            const retrySeconds = Number(response.headers.get('retry-after'));
+            if (Number.isFinite(retrySeconds) && retrySeconds > 0) {
+              retryAfterMs = Math.min(retrySeconds * 1000, 60000);
+            }
+          }
+          return false;
+        }
+        const result = await response.json();
+        if (!Array.isArray(result.agents) || result.agents.length !== selected.size) return false;
+        const desired = new Map(result.agents.map(item => [item.agent_id, item]));
+        if (desired.size !== selected.size) return false;
+        for (const [id, agent] of selected) {
+          const state = desired.get(id);
+          if (
+            !state ||
+            !Number.isInteger(state.revision) ||
+            state.revision < agent.controlRevision ||
+            !Number.isInteger(state.stop_epoch) ||
+            state.stop_epoch < agent.controlStopEpoch ||
+            typeof state.paused !== 'boolean' ||
+            (state.blocked !== undefined && typeof state.blocked !== 'boolean')
+          ) {
+            return false;
+          }
+        }
+        for (const [id, agent] of selected) {
+          const state = desired.get(id);
+          if (
+            state.revision !== agent.controlRevision ||
+            state.stop_epoch !== agent.controlStopEpoch ||
+            state.paused !== agent.controlPaused ||
+            !!state.blocked !== agent.controlBlocked
+          ) {
+            changed = true;
+          }
+          agent.controlPaused = state.paused || !!state.blocked;
+          if (
+            state.stop_epoch > agent.controlStopEpoch ||
+            (state.blocked && !agent.controlBlocked)
+          ) {
+            for (const run of runs.values()) if (run.agentId === id) cancelRun(run);
+          }
+          agent.controlBlocked = !!state.blocked;
+          agent.controlStopEpoch = state.stop_epoch;
+          agent.controlRevision = state.revision;
+        }
+        lastSuccessfulSync = Date.now();
+        return true;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timeout);
+        controlRequest = null;
+        failClosedIfStale();
+      }
+    })();
+    try {
+      const succeeded = await syncing;
+      if (succeeded) {
+        retryable = false;
+        retryFailures = 0;
+        retryNotBefore = 0;
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      return succeeded;
+    } finally {
+      syncing = null;
+      if (!retryable) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+        retryNotBefore = 0;
+      }
+      if (retryable && !draining && !retryTimer) {
+        retryFailures++;
+        const delay = Math.max(
+          retryAfterMs,
+          Math.min(1000 * 2 ** Math.min(retryFailures - 1, 3), 8000) +
+            Math.floor(Math.random() * 1000)
+        );
+        retryNotBefore = Date.now() + delay;
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          retryNotBefore = 0;
+          void syncControl();
+        }, delay);
+        retryTimer.unref();
+      }
+      if (changed && !draining) {
+        const ack = setTimeout(() => {
+          void syncControl();
+        }, 0);
+        ack.unref();
+      }
+    }
+  };
   const startRun = (agentId, principal, sessionId, res) => {
     const run = {
       runId: crypto.randomUUID(),
@@ -369,7 +567,7 @@ function serveAgents(options = {}) {
               id,
               mode: a.def.mode,
               description: a.def.description || '',
-              disabled: a.disabled
+              disabled: a.disabled || a.controlPaused
             }))
         });
       }
@@ -394,7 +592,11 @@ function serveAgents(options = {}) {
       }
       if (req.method === 'POST' && rest === 'enable') {
         agent.disabled = false;
-        return respond(res, 200, { disabled: false });
+        return respond(
+          res,
+          200,
+          agent.controlPaused ? { disabled: true, controlPaused: true } : { disabled: false }
+        );
       }
       if (req.method === 'POST' && rest === 'stop') {
         agent.disabled = true;
@@ -417,14 +619,14 @@ function serveAgents(options = {}) {
         if (run.phase !== 'running') return failure(res, 409, 'run_committing');
         return respond(res, 202, { cancelling: cancelRun(run), runId: run.runId });
       }
-      if (agent.disabled) return failure(res, 409, 'agent_disabled');
+      if (agent.disabled || agent.controlPaused) return failure(res, 409, 'agent_disabled');
       if (req.method === 'POST' && rest === 'invoke' && def.mode === 'stateless') {
         const input = await readBody(req, maxBody);
         if (draining) return shuttingDown(res);
         if (res.destroyed) return;
         const operation = input?.operation || 'chat';
         if (!def.operations.includes(operation)) return failure(res, 403, 'operation_forbidden');
-        if (agent.disabled) return failure(res, 409, 'agent_disabled');
+        if (agent.disabled || agent.controlPaused) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
@@ -505,7 +707,7 @@ function serveAgents(options = {}) {
         ) {
           return failure(res, 400, 'invalid_input');
         }
-        if (agent.disabled) return failure(res, 409, 'agent_disabled');
+        if (agent.disabled || agent.controlPaused) return failure(res, 409, 'agent_disabled');
         if (active >= maxConcurrent) return failure(res, 503, 'overloaded');
         active++;
         agent.active++;
@@ -522,7 +724,7 @@ function serveAgents(options = {}) {
               acquired.status === 'busy' ? 'session_busy' : 'not_found'
             );
           }
-          if (draining || agent.disabled) {
+          if (draining || agent.disabled || agent.controlPaused) {
             await store.release(ref, acquired.lease);
             return draining ? shuttingDown(res) : failure(res, 409, 'agent_disabled');
           }
@@ -616,12 +818,25 @@ function serveAgents(options = {}) {
   server.headersTimeout = 10000;
   server.maxConnections = maxConnections;
   server.agents = selected;
+  server.syncControl = syncControl;
+  if (syncUrl) {
+    controlTimer = setInterval(() => {
+      void syncControl();
+    }, runtimePollMs);
+    controlTimer.unref();
+    void syncControl();
+  }
   const sockets = new Set();
   server.on('connection', socket => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
   });
   server.once('close', () => clearInterval(cleanup));
+  server.once('close', () => {
+    clearInterval(controlTimer);
+    clearTimeout(retryTimer);
+    controlRequest?.abort();
+  });
   let shutdownPromise;
   const settledWithin = async (promise, ms) => {
     let timer;
@@ -647,6 +862,8 @@ function serveAgents(options = {}) {
       return Promise.reject(new Error('Shutdown timeouts must be nonnegative integers'));
     }
     draining = true;
+    clearInterval(controlTimer);
+    controlRequest?.abort();
     shutdownPromise = (async () => {
       const closed = new Promise(resolve => server.close(resolve));
       server.closeIdleConnections?.();

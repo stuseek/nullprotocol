@@ -498,6 +498,12 @@ export declare class PostgresSessionStore implements SessionStore {
 export interface AgentServerOptions {
   agents: AgentDefinition[] | Record<string, Omit<AgentDefinition, 'id'>>;
   apiKey?: string;
+  /** Optional Space-scoped key for polling desired pause/stop state. Separate from telemetry. */
+  runtimeKey?: string;
+  /** HTTPS NullProtocol API origin; loopback HTTP is allowed for local tests. */
+  runtimeEndpoint?: string;
+  /** Poll once per process, not per agent. Defaults to 15 seconds. */
+  runtimePollMs?: number;
   authenticate?: (request: import('http').IncomingMessage) => Promise<{ principal: string; agents?: string[]; canManage?: boolean } | null>;
   store?: SessionStore;
   only?: string[];
@@ -510,7 +516,8 @@ export interface AgentServerOptions {
 }
 
 export interface AgentServer extends Server {
-  agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; active: number }>;
+  agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; controlPaused: boolean; controlBlocked: boolean; controlRevision: number; controlStopEpoch: number; active: number }>;
+  syncControl(): Promise<boolean>;
   shutdown(options?: { drainTimeoutMs?: number; cancelTimeoutMs?: number }): Promise<void>;
 }
 
