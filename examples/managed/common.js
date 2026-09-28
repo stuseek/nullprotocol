@@ -16,7 +16,7 @@ async function runExample({
   conversation,
   context
 }) {
-  const endpoint = required('NULLPROTOCOL_API_URL');
+  const endpoint = process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai';
   const modelName = required('MODEL_NAME');
   const eventId = process.env.EVENT_ID || randomUUID();
   const modelBaseURL = required('MODEL_BASE_URL');

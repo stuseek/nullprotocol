@@ -16,11 +16,11 @@ npm install git+https://github.com/stuseek/nullprotocol.git 'openai@^4.104.0'
 
 Node.js 18 or newer is required. The command pins an OpenAI SDK version that works on Node 18; Node 22 users can install the current OpenAI SDK. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
 
-### Connected managed Agents (development branch)
+### Connected managed Agents (allowlisted beta)
 
-The new `NullProtocolClient` and `ManagedExecutor` are under development alongside the API. They are not published to npm or deployed in the production API. A Template and its Agents are stored in a Space; one outbound executor process can serve several Agents, processing one run at a time. Model credentials stay with the executor. Use an app-server Space key for management, runs and content, plus a separate executor key for runtime access.
+`NullProtocolClient` and `ManagedExecutor` are included in the GitHub source and work with the production API for allowlisted teams. They are not published to npm. A Template and its Agents are stored in a Space; one outbound executor process can serve several Agents, processing one run at a time. Model credentials stay with the executor. Use an app-server Space key for management, runs and content, plus a separate executor key for runtime access.
 
-For a local beta experiment, install this branch explicitly with `npm install 'git+https://github.com/stuseek/nullprotocol.git#managed-agents-sdk'` and point `NULLPROTOCOL_API_URL` to a development API running the matching `managed-agents-runs` branch. The production API does not serve these routes yet.
+Install from the GitHub `main` branch using the command above. Set `NULLPROTOCOL_API_URL` only to target a non-default API; the default is `https://api.nullprotocol.ai`. Access to managed routes requires an allowlisted team and a scoped Space key.
 
 ```js
 const { NullProtocolClient, ManagedExecutor, defineAction } = require('nullprotocol');
@@ -35,7 +35,7 @@ const getOrder = defineAction({
   handler: async ({ id }) => orders.get(id) || { status: 'unknown' }
 });
 
-const endpoint = process.env.NULLPROTOCOL_API_URL; // Local development API.
+const endpoint = process.env.NULLPROTOCOL_API_URL; // Optional API override.
 const app = new NullProtocolClient({
   spaceKey: process.env.NULLPROTOCOL_APP_KEY,
   endpoint
