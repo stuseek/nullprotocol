@@ -14,6 +14,20 @@ function versionId(value) {
   return String(value);
 }
 
+function actionName(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value)) {
+    throw new Error('actionName is invalid');
+  }
+  return value;
+}
+
+function stepOrdinal(value) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 255) {
+    throw new Error('step ordinal must be an integer from 0 to 255');
+  }
+  return value;
+}
+
 function idempotencyHeaders(key) {
   if (key === undefined) return {};
   if (typeof key !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(key)) {
@@ -118,6 +132,17 @@ class NullProtocolClient {
         this._request('GET', `managed-agents/${resourceId(id, 'agentId')}`, options),
       update: async (id, body, options = {}) =>
         this._request('PATCH', `managed-agents/${resourceId(id, 'agentId')}`, { ...options, body }),
+      setAction: async (id, name, body, options = {}) =>
+        this._request(
+          'PATCH',
+          `managed-agents/${resourceId(id, 'agentId')}/actions/${actionName(name)}`,
+          { ...options, body }
+        ),
+      stop: async (id, body, options = {}) =>
+        this._request('POST', `managed-agents/${resourceId(id, 'agentId')}/stop`, {
+          ...options,
+          body
+        }),
       delete: async (id, options = {}) =>
         this._request('DELETE', `managed-agents/${resourceId(id, 'agentId')}`, options),
       run: (id, input, options = {}) => this.agent(id).run(input, options)
@@ -151,6 +176,8 @@ class NullProtocolClient {
       get: options => this._request('GET', `managed-agents/${encoded}`, options),
       update: (body, options = {}) =>
         this._request('PATCH', `managed-agents/${encoded}`, { ...options, body }),
+      setAction: (name, body, options = {}) => this.agents.setAction(encoded, name, body, options),
+      stop: (body, options = {}) => this.agents.stop(encoded, body, options),
       delete: options => this._request('DELETE', `managed-agents/${encoded}`, options),
       startRun: async (input, options = {}) => {
         const response = await this._request('POST', runPath, {
@@ -173,6 +200,14 @@ class NullProtocolClient {
       },
       listRuns: async (query = {}, options = {}) =>
         this._request('GET', queryPath(runPath, query), options),
+      listSteps: async (runId, options = {}) =>
+        this._request('GET', `${runPath}/${resourceId(runId, 'runId')}/steps`, options),
+      reconcileStep: async (runId, ordinal, body, options = {}) =>
+        this._request(
+          'POST',
+          `${runPath}/${resourceId(runId, 'runId')}/steps/${stepOrdinal(ordinal)}/reconcile`,
+          { ...options, body }
+        ),
       cancelRun: async (runId, options = {}) => {
         const result = await this._request(
           'POST',

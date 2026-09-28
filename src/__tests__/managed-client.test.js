@@ -113,6 +113,38 @@ test('returns the asynchronous managed-Agent deletion state', async () => {
   });
 });
 
+test('action controls and reconciliation use the managed Agent routes', async () => {
+  const runId = '33333333-3333-4333-8333-333333333333';
+  const requests = [];
+  const fetchImpl = jest.fn(async (url, options) => {
+    if (url.endsWith('/v1/space')) {
+      return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+    }
+    requests.push({ path: new URL(url).pathname, method: options.method, body: options.body });
+    return new globalThis.Response(JSON.stringify({ ok: true }));
+  });
+  const client = new NullProtocolClient({ spaceKey: SPACE_KEY, fetchImpl });
+  const agent = client.agent(AGENT_ID);
+  await agent.setAction('refund', { disabled: true, ifRevision: 1 });
+  await agent.stop({ ifRevision: 2 });
+  await agent.listSteps(runId);
+  await agent.reconcileStep(runId, 3, { outcome: 'failed', note: 'No refund in ledger' });
+  expect(requests.map(request => [request.method, request.path])).toEqual([
+    ['PATCH', `/v1/spaces/demo/managed-agents/${AGENT_ID}/actions/refund`],
+    ['POST', `/v1/spaces/demo/managed-agents/${AGENT_ID}/stop`],
+    ['GET', `/v1/spaces/demo/managed-agents/${AGENT_ID}/runs/${runId}/steps`],
+    ['POST', `/v1/spaces/demo/managed-agents/${AGENT_ID}/runs/${runId}/steps/3/reconcile`]
+  ]);
+  expect(JSON.parse(requests[3].body)).toEqual({
+    outcome: 'failed',
+    note: 'No refund in ledger'
+  });
+  await expect(agent.setAction('../refund', { disabled: true, ifRevision: 1 })).rejects.toThrow(
+    'actionName'
+  );
+  await expect(agent.reconcileStep(runId, 256, { outcome: 'failed' })).rejects.toThrow('ordinal');
+});
+
 test('an abort signal cancels Space discovery before resource creation', async () => {
   const controller = new AbortController();
   const fetchImpl = jest.fn(

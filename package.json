@@ -88,6 +88,7 @@
     "src/managed-client.js",
     "src/managed-http.js",
     "src/managed-canonical.js",
+    "src/managed-actions.js",
     "src/managed-model.js",
     "src/managed-executor.js",
     "src/executor.js",

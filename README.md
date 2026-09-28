@@ -43,7 +43,28 @@ const run = await np.agent(process.env.NULLPROTOCOL_AGENT_ID).run('Hello', {
 console.log(run.status, run.output?.text);
 ```
 
-The executor key needs `runtime:connect` and `runs:execute`; the caller key needs `runs:create` and `runs:read`. `agent.run()` creates a run through `api.nullprotocol.ai` and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. This development slice supports one text model turn through an OpenAI-compatible endpoint, including a local one. Template actions, managed memory compaction, dashboard inspection, and hosted deployment are later slices. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
+The executor key needs `runtime:connect` and `runs:execute`; the caller key needs `runs:create` and `runs:read`. `agent.run()` creates a run through `api.nullprotocol.ai` and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. Model calls use an OpenAI-compatible endpoint, including a local one. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
+
+The development branches also support Template actions. Publish an action contract in the Template config, then register a matching handler with the executor:
+
+```js
+const getOrder = {
+  name: 'getOrder',
+  description: 'Read one order',
+  effect: 'read',
+  input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  output: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }
+};
+
+const executor = new ManagedExecutor({
+  executorKey: process.env.NULLPROTOCOL_EXECUTOR_KEY,
+  agentIds: [process.env.NULLPROTOCOL_AGENT_ID],
+  credentials: { localModel: { provider: 'local', baseURL: 'http://127.0.0.1:11434/v1' } },
+  actions: [{ ...getOrder, handler: async ({ id }) => orderStore.get(id) }]
+});
+```
+
+The registered contract must exactly match a published Template version. The SDK validates model arguments and handler output against its JSON Schemas. A `write` handler receives `idempotencyKey`, `runId`, `callId`, trusted context fields and an abort signal. Use the idempotency key in the system that performs the write. Confirmed write outcomes are recorded in conversation history, even if a later step fails and the run ends failed or cancelled. If a started write cannot be confirmed, the trace records `unknown`; inspect it and reconcile with `agent.reconcileStep(runId, ordinal, { outcome, note })` after the run finishes. Until reconciliation, that conversation cannot invoke another write with the same action name. An optional guard has a five-second limit and must return `true` before execution. `agent.setAction(name, { disabled: true, ifRevision })` disables an action without changing the Template. Managed memory compaction, cabinet inspection, and hosted execution remain later slices.
 
 ### Managed model gateway (staging)
 

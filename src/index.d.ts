@@ -571,16 +571,22 @@ export declare class NullProtocolClient {
     list(query?: { limit?: number; cursor?: string; templateId?: string }, options?: { signal?: AbortSignal }): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
     get(id: string, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    setAction(id: string, name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    stop(id: string, body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
     delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
     run(id: string, input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
   };
   agent(id: string): {
     get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    setAction(name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    stop(body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
     delete(options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
     startRun(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
     getRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
     listRuns(query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ runs: ManagedRun[]; nextCursor: string | null }>;
+    listSteps(runId: string, options?: { signal?: AbortSignal }): Promise<{ steps: Record<string, unknown>[] }>;
+    reconcileStep(runId: string, ordinal: number, body: { outcome: 'succeeded' | 'failed'; note?: string }, options?: { signal?: AbortSignal }): Promise<{ step: Record<string, unknown> }>;
     cancelRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
     run(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
   };
@@ -593,6 +599,31 @@ export declare class PlatformError extends Error {
   readonly retryAfter: number | null;
 }
 
+export interface ManagedActionDefinition {
+  name: string;
+  description: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  effect: 'read' | 'write';
+  timeoutMs?: number;
+  maxResultBytes?: number;
+  handler: (args: Record<string, unknown>, context: ManagedActionContext) => unknown | Promise<unknown>;
+  guard?: (args: Record<string, unknown>, context: ManagedActionContext) => boolean | Promise<boolean>;
+}
+
+export interface ManagedActionContext {
+  runId: string;
+  agentId: string;
+  conversation: string | null;
+  subject: Record<string, string> | null;
+  runContext: Record<string, unknown> | null;
+  spaceContext: Array<{ namespace: string; key: string; value: unknown; version: number }>;
+  pendingOutcomes: Array<Record<string, unknown>>;
+  callId: string;
+  idempotencyKey: string;
+  signal: AbortSignal;
+}
+
 /** Connected outbound executor. One process can serve many managed Agents. */
 export declare class ManagedExecutor {
   constructor(options: {
@@ -600,6 +631,7 @@ export declare class ManagedExecutor {
     endpoint?: string;
     agentIds: string[];
     credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean }>;
+    actions?: ManagedActionDefinition[];
     instanceId?: string;
     fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
     modelFetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;

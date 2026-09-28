@@ -70,6 +70,7 @@ function tokenCount(value) {
 async function runTextTurn({
   model,
   messages,
+  tools,
   credential,
   signal,
   fetchImpl = globalThis.fetch,
@@ -82,13 +83,20 @@ async function runTextTurn({
     throw new ManagedModelError('invalid_model_request');
   }
   if (
-    messages.some(
-      message =>
-        !message ||
-        !['system', 'user', 'assistant'].includes(message.role) ||
-        typeof message.content !== 'string'
-    )
+    messages.some(message => {
+      if (!message || !['system', 'user', 'assistant', 'tool'].includes(message.role)) return true;
+      if (message.role === 'tool') {
+        return typeof message.content !== 'string' || typeof message.tool_call_id !== 'string';
+      }
+      if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+        return message.content !== null && typeof message.content !== 'string';
+      }
+      return typeof message.content !== 'string';
+    })
   ) {
+    throw new ManagedModelError('invalid_model_request');
+  }
+  if (tools !== undefined && (!Array.isArray(tools) || tools.length > 64)) {
     throw new ManagedModelError('invalid_model_request');
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 180000) {
@@ -96,7 +104,12 @@ async function runTextTurn({
   }
   if (signal?.aborted) throw new ManagedModelError('run_cancelled');
   const url = completionUrl(credential.baseURL, credential.allowInsecureHttp === true);
-  const body = JSON.stringify({ model, messages, max_tokens: 1024 });
+  const body = JSON.stringify({
+    model,
+    messages,
+    max_tokens: 1024,
+    ...(tools?.length ? { tools } : {})
+  });
   if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
     throw new ManagedModelError('model_context_too_large');
   }
@@ -128,15 +141,64 @@ async function runTextTurn({
     } catch {
       throw new ManagedModelError('invalid_model_response');
     }
-    const text = data?.choices?.[0]?.message?.content;
-    if (typeof text !== 'string' || !text.trim()) {
+    const message = data?.choices?.[0]?.message;
+    const text = message?.content;
+    const rawCalls = message?.tool_calls;
+    if (rawCalls !== undefined && !Array.isArray(rawCalls)) {
       throw new ManagedModelError('invalid_model_response');
+    }
+    const providerCalls = rawCalls?.length ? rawCalls : undefined;
+    if (!providerCalls && (typeof text !== 'string' || !text.trim())) {
+      throw new ManagedModelError('invalid_model_response');
+    }
+    let toolCalls;
+    if (providerCalls) {
+      if (!tools?.length || providerCalls.length > 4) {
+        throw new ManagedModelError('invalid_model_response');
+      }
+      const ids = new Set();
+      toolCalls = providerCalls.map(call => {
+        if (
+          call?.type !== 'function' ||
+          typeof call.id !== 'string' ||
+          !call.id ||
+          call.id.length > 128 ||
+          ids.has(call.id) ||
+          typeof call.function?.name !== 'string' ||
+          !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(call.function.name) ||
+          typeof call.function.arguments !== 'string' ||
+          Buffer.byteLength(call.function.arguments) > 32768
+        ) {
+          throw new ManagedModelError('invalid_model_response');
+        }
+        ids.add(call.id);
+        let args;
+        try {
+          args = JSON.parse(call.function.arguments);
+        } catch {
+          throw new ManagedModelError('invalid_model_response');
+        }
+        if (!args || typeof args !== 'object' || Array.isArray(args)) {
+          throw new ManagedModelError('invalid_model_response');
+        }
+        return { providerCallId: call.id, name: call.function.name, args };
+      });
     }
     const inputTokens = tokenCount(data?.usage?.prompt_tokens);
     const outputTokens = tokenCount(data?.usage?.completion_tokens);
     return {
-      text,
-      usage: inputTokens === null && outputTokens === null ? null : { inputTokens, outputTokens }
+      text: typeof text === 'string' ? text : null,
+      usage: inputTokens === null && outputTokens === null ? null : { inputTokens, outputTokens },
+      ...(toolCalls
+        ? {
+            toolCalls,
+            assistantMessage: {
+              role: 'assistant',
+              content: typeof text === 'string' ? text : null,
+              tool_calls: providerCalls
+            }
+          }
+        : {})
     };
   } catch (error) {
     if (error instanceof ManagedModelError) throw error;

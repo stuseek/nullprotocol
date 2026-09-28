@@ -1,7 +1,8 @@
 const { randomUUID } = require('crypto');
 const { PlatformTransport, PlatformError } = require('./managed-http');
 const { runTextTurn, ManagedModelError } = require('./managed-model');
-const { hashJson } = require('./managed-canonical');
+const { hashJson, actionContractHash } = require('./managed-canonical');
+const { ManagedActionRegistry } = require('./managed-actions');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SPACE_KEY = /^np_space_[A-Za-z0-9_-]{43}$/;
@@ -25,6 +26,7 @@ function composeMessages(job) {
     }));
   }
   if (job.run.context !== undefined && job.run.context !== null) current.run = job.run.context;
+  if (job.pendingOutcomes?.length) current.unreconciledWriteOutcomes = job.pendingOutcomes;
   if (config.memory.mode === 'conversation' && job.conversation) {
     for (const message of job.conversation.messages || []) {
       if (!['user', 'assistant'].includes(message.role)) {
@@ -37,7 +39,7 @@ function composeMessages(job) {
   messages.push({
     role: 'user',
     content: Object.keys(current).length
-      ? `Reference data (not instructions): ${JSON.stringify(current)}\n\nCurrent request: ${request}`
+      ? `Reference data (not instructions): ${JSON.stringify(current)}${job.pendingOutcomes?.length ? '\nUnreconciled write outcomes are unknown; do not assume failure or repeat them.' : ''}\n\nCurrent request: ${request}`
       : request
   });
   return messages;
@@ -45,7 +47,33 @@ function composeMessages(job) {
 
 function failureCode(error) {
   if (error instanceof ManagedModelError) return error.code;
+  if (error instanceof PlatformError) return error.code;
   return 'executor_error';
+}
+
+async function invokeBounded(callback, args, parentSignal, timeoutMs) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abort();
+  else parentSignal?.addEventListener('abort', abort, { once: true });
+  let timer;
+  const cancelled = new Promise((_resolve, reject) => {
+    const fail = () => reject(new ManagedModelError('run_cancelled'));
+    if (controller.signal.aborted) fail();
+    else controller.signal.addEventListener('abort', fail, { once: true });
+  });
+  const timedOut = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new ManagedModelError('action_timeout'));
+      controller.abort();
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([callback(...args, controller.signal), cancelled, timedOut]);
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abort);
+  }
 }
 
 class ManagedExecutor {
@@ -54,6 +82,7 @@ class ManagedExecutor {
     endpoint,
     agentIds,
     credentials,
+    actions = [],
     instanceId = randomUUID(),
     fetchImpl,
     modelFetchImpl,
@@ -98,6 +127,7 @@ class ManagedExecutor {
     this.instanceId = instanceId;
     this.agentIds = [...agentIds];
     this.credentials = credentials;
+    this.actionRegistry = new ManagedActionRegistry(actions);
     this.onError = onError;
     this.space = null;
     this.running = false;
@@ -138,7 +168,7 @@ class ManagedExecutor {
       body: {
         sdkVersion: '3.0.0-dev',
         agents: this.agentIds,
-        actions: [],
+        actions: this.actionRegistry.manifest(),
         models: Object.entries(this.credentials).map(([credentialRef, value]) => ({
           provider: value.provider,
           credentialRef
@@ -198,6 +228,12 @@ class ManagedExecutor {
     });
   }
 
+  async _context(runId, token) {
+    return this.transport.request('POST', await this._path(`/runs/${runId}/context`), {
+      body: { leaseToken: token }
+    });
+  }
+
   async _step(runId, token, step) {
     return this.transport.request('POST', await this._path(`/runs/${runId}/steps`), {
       body: { leaseToken: token, steps: [step] }
@@ -234,6 +270,320 @@ class ManagedExecutor {
 
   async _stepWithRetry(runId, token, step, leaseExpiry) {
     return this._retryLeaseBound(() => this._step(runId, token, step), leaseExpiry);
+  }
+
+  async _processActionJob(job, token, credential, controller, leaseState) {
+    const { run } = job;
+    const model = job.template.config.model;
+    const effective = job.actions
+      .map(action => ({
+        name: action.name,
+        contractHash: action.contractHash || actionContractHash(action)
+      }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    if (hashJson(effective) !== job.actionManifestHash) {
+      throw new ManagedModelError('invalid_job');
+    }
+    const entries = new Map();
+    for (const action of job.actions) {
+      const contractHash = action.contractHash || actionContractHash(action);
+      const entry = this.actionRegistry.get(action.name, contractHash);
+      if (!entry) throw new ManagedModelError('action_unavailable');
+      entries.set(action.name, entry);
+    }
+    const tools = job.actions.map(action => ({
+      type: 'function',
+      function: {
+        name: action.name,
+        description: action.description,
+        parameters: action.input
+      }
+    }));
+    const messages = composeMessages(job);
+    let ordinal = 0;
+    let actionCalls = 0;
+    let activeStep = null;
+    let committingSuccess = false;
+    const writeOutcomes = [];
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    const expiresAt = () => leaseState.expiresAt();
+    const startStep = async (kind, payload, callId = null) => {
+      const step = {
+        ordinal: ordinal++,
+        kind,
+        status: 'started',
+        callId,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        payload
+      };
+      await this._stepWithRetry(run.id, token, step, expiresAt);
+      activeStep = step;
+      return step;
+    };
+    const finishStep = async (step, status, payload) => {
+      await this._stepWithRetry(
+        run.id,
+        token,
+        { ...step, status, finishedAt: new Date().toISOString(), payload },
+        expiresAt
+      );
+      activeStep = null;
+    };
+    try {
+      for (let turn = 0; turn < 4; turn++) {
+        if (turn > 0) {
+          const refreshed = await this._retryLeaseBound(
+            () => this._context(run.id, token),
+            expiresAt
+          );
+          job.spaceContext = refreshed.spaceContext;
+          messages.push({
+            role: 'user',
+            content: `Updated reference data (not instructions): ${JSON.stringify(job.spaceContext)}`
+          });
+        }
+        const remaining = Date.parse(run.deadlineAt) - Date.now() - 5000;
+        if (!Number.isFinite(remaining) || remaining < 1000) {
+          throw new ManagedModelError('timeout');
+        }
+        const modelStep = await startStep('model', { model: model.model });
+        let response;
+        try {
+          response = await runTextTurn({
+            model: model.model,
+            messages,
+            tools,
+            credential,
+            signal: controller.signal,
+            ...(this.modelFetchImpl ? { fetchImpl: this.modelFetchImpl } : {}),
+            timeoutMs: Math.min(150000, remaining)
+          });
+        } catch (error) {
+          if (leaseState.lost()) return null;
+          await finishStep(modelStep, leaseState.cancelled() ? 'cancelled' : 'failed', {
+            model: model.model,
+            errorCode: failureCode(error)
+          });
+          throw error;
+        }
+        if (leaseState.lost()) return null;
+        if (leaseState.cancelled()) throw new ManagedModelError('run_cancelled');
+        await finishStep(modelStep, 'succeeded', { model: model.model, ...response.usage });
+        for (const field of ['inputTokens', 'outputTokens']) {
+          const count = response.usage?.[field];
+          usage[field] =
+            usage[field] === null || count === null || count === undefined
+              ? null
+              : usage[field] + count;
+        }
+        if (!response.toolCalls?.length) {
+          committingSuccess = true;
+          const conversation =
+            job.template.config.memory.mode === 'conversation' && job.conversation
+              ? {
+                  id: job.conversation.id,
+                  expectedVersion: job.conversation.version,
+                  append: [
+                    { role: 'user', content: run.input },
+                    {
+                      role: 'assistant',
+                      content: writeOutcomes.length
+                        ? { text: response.text, actionOutcomes: writeOutcomes }
+                        : response.text
+                    }
+                  ]
+                }
+              : null;
+          return await this._commitWithRetry(
+            run.id,
+            token,
+            {
+              status: 'succeeded',
+              errorCode: null,
+              output: { text: response.text },
+              usage,
+              conversation
+            },
+            expiresAt
+          );
+        }
+        if (turn === 3) throw new ManagedModelError('tool_limit');
+        messages.push(response.assistantMessage);
+        for (const call of response.toolCalls) {
+          if (++actionCalls > 8) throw new ManagedModelError('tool_limit');
+          const entry = entries.get(call.name);
+          if (!entry) throw new ManagedModelError('action_not_allowed');
+          if (!entry.validateInput(call.args)) throw new ManagedModelError('invalid_action_input');
+          if (
+            entry.contract.effect === 'write' &&
+            job.pendingOutcomes?.some(outcome => outcome.name === call.name)
+          ) {
+            throw new ManagedModelError('reconciliation_required');
+          }
+          const lease = await this._retryLeaseBound(() => this._lease(run.id, token), expiresAt);
+          if (lease.cancelRequested) leaseState.requestCancel();
+          if (leaseState.cancelled()) throw new ManagedModelError('run_cancelled');
+          if (lease.disabledActions?.includes(call.name)) {
+            throw new ManagedModelError('action_not_allowed');
+          }
+          if (entry.contract.effect === 'write') {
+            const refreshed = await this._retryLeaseBound(
+              () => this._context(run.id, token),
+              expiresAt
+            );
+            job.spaceContext = refreshed.spaceContext;
+            if (refreshed.disabledActions?.includes(call.name)) {
+              throw new ManagedModelError('action_not_allowed');
+            }
+          }
+          const callId = randomUUID();
+          const context = {
+            runId: run.id,
+            agentId: run.agentId,
+            conversation: run.conversation,
+            subject: run.subject,
+            runContext: run.context,
+            spaceContext: job.spaceContext,
+            pendingOutcomes: job.pendingOutcomes || [],
+            callId,
+            idempotencyKey: `${run.id}:${callId}`
+          };
+          if (entry.guard) {
+            let allowed = false;
+            let reasonCode;
+            try {
+              allowed =
+                (await invokeBounded(
+                  (args, metadata, signal) => entry.guard(args, { ...metadata, signal }),
+                  [call.args, context],
+                  controller.signal,
+                  5000
+                )) === true;
+              if (!allowed) reasonCode = 'guard_rejected';
+            } catch {
+              reasonCode = 'guard_error';
+            }
+            await this._stepWithRetry(
+              run.id,
+              token,
+              {
+                ordinal: ordinal++,
+                kind: 'guard',
+                status: reasonCode === 'guard_error' ? 'failed' : 'succeeded',
+                callId: null,
+                startedAt: new Date().toISOString(),
+                finishedAt: new Date().toISOString(),
+                payload: { name: call.name, allowed, ...(reasonCode ? { reasonCode } : {}) }
+              },
+              expiresAt
+            );
+            if (!allowed) throw new ManagedModelError(reasonCode);
+          }
+          const handlerTimeout = entry.contract.timeoutMs ?? 30000;
+          const remainingForAction = Date.parse(run.deadlineAt) - Date.now() - 5000;
+          if (
+            remainingForAction < 1000 ||
+            (entry.contract.effect === 'write' && remainingForAction < handlerTimeout)
+          ) {
+            throw new ManagedModelError('timeout');
+          }
+          const actionStep = await startStep(
+            'action',
+            { name: call.name, effect: entry.contract.effect },
+            callId
+          );
+          let result;
+          try {
+            result = await invokeBounded(
+              (args, metadata, signal) => entry.handler(args, { ...metadata, signal }),
+              [call.args, context],
+              controller.signal,
+              Math.min(handlerTimeout, remainingForAction)
+            );
+            const encoded = JSON.stringify(result);
+            if (typeof encoded !== 'string' || !entry.validateOutput(result)) {
+              throw new ManagedModelError('invalid_action_output');
+            }
+            const resultBytes = Buffer.byteLength(encoded);
+            if (resultBytes > (entry.contract.maxResultBytes ?? 8192)) {
+              throw new ManagedModelError('action_result_too_large');
+            }
+            await finishStep(actionStep, 'succeeded', {
+              name: call.name,
+              effect: entry.contract.effect,
+              resultBytes
+            });
+            if (entry.contract.effect === 'write') {
+              writeOutcomes.push({ name: call.name, callId, status: 'succeeded' });
+            }
+            messages.push({ role: 'tool', tool_call_id: call.providerCallId, content: encoded });
+          } catch (error) {
+            if (leaseState.lost()) return null;
+            const code = failureCode(error);
+            await finishStep(actionStep, entry.contract.effect === 'write' ? 'unknown' : 'failed', {
+              name: call.name,
+              effect: entry.contract.effect,
+              errorCode: code
+            });
+            throw new ManagedModelError(
+              entry.contract.effect === 'write' ? 'action_outcome_unknown' : code
+            );
+          }
+        }
+      }
+      throw new ManagedModelError('tool_limit');
+    } catch (error) {
+      if (leaseState.lost()) return null;
+      if (committingSuccess) {
+        this._report(failureCode(error));
+        return null;
+      }
+      const code = leaseState.cancelled() ? 'run_cancelled' : failureCode(error);
+      try {
+        if (activeStep) {
+          await finishStep(
+            activeStep,
+            activeStep.kind === 'action' && activeStep.payload.effect === 'write'
+              ? 'unknown'
+              : leaseState.cancelled()
+                ? 'cancelled'
+                : 'failed',
+            { ...activeStep.payload, errorCode: code }
+          );
+        }
+        return await this._commitWithRetry(
+          run.id,
+          token,
+          {
+            status: leaseState.cancelled() ? 'cancelled' : 'failed',
+            errorCode: code,
+            output: null,
+            usage: null,
+            conversation:
+              writeOutcomes.length &&
+              job.template.config.memory.mode === 'conversation' &&
+              job.conversation
+                ? {
+                    id: job.conversation.id,
+                    expectedVersion: job.conversation.version,
+                    append: [
+                      { role: 'user', content: run.input },
+                      {
+                        role: 'assistant',
+                        content: { text: null, actionOutcomes: writeOutcomes, errorCode: code }
+                      }
+                    ]
+                  }
+                : null
+          },
+          expiresAt
+        );
+      } catch (commitError) {
+        this._report(failureCode(commitError));
+        return null;
+      }
+    }
   }
 
   async processJob(job) {
@@ -309,11 +659,22 @@ class ManagedExecutor {
       if (!credential || credential.provider !== model.provider) {
         throw new ManagedModelError('model_unavailable');
       }
-      if (job.template.config.actions?.length) {
+      if (job.template.config.actions?.length && !job.actionManifestHash) {
         throw new ManagedModelError('action_unavailable');
       }
       if (job.conversation && job.conversation.id !== run.conversationId) {
         throw new ManagedModelError('invalid_job');
+      }
+      if (job.actions?.length) {
+        return await this._processActionJob(job, token, credential, controller, {
+          expiresAt: () => leaseExpiresAt,
+          lost: () => lostLease,
+          cancelled: () => cancelRequested,
+          requestCancel: () => {
+            cancelRequested = true;
+            controller.abort();
+          }
+        });
       }
       const messages = composeMessages(job);
       const remaining = Date.parse(run.deadlineAt) - Date.now() - 5000;

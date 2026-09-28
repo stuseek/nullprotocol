@@ -77,3 +77,44 @@ test('an abort signal stops the provider request', async () => {
   controller.abort();
   await expect(request).rejects.toMatchObject({ code: 'run_cancelled' });
 });
+
+test('parses a bounded function call without trusting its id as a platform call id', async () => {
+  const tools = [
+    {
+      type: 'function',
+      function: { name: 'getOrder', description: 'Read an order', parameters: { type: 'object' } }
+    }
+  ];
+  const fetchImpl = jest.fn(
+    async () =>
+      new globalThis.Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'provider-call-1',
+                    type: 'function',
+                    function: { name: 'getOrder', arguments: '{"id":"123"}' }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+  );
+  const result = await runTextTurn({
+    model: 'local',
+    messages,
+    tools,
+    credential: { baseURL: 'http://localhost:11434/v1' },
+    fetchImpl
+  });
+  expect(result.toolCalls).toEqual([
+    { providerCallId: 'provider-call-1', name: 'getOrder', args: { id: '123' } }
+  ]);
+  expect(JSON.parse(fetchImpl.mock.calls[0][1].body).tools).toEqual(tools);
+});
