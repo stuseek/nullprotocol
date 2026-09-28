@@ -1,4 +1,5 @@
 const { PlatformTransport, PlatformError } = require('./managed-http');
+const { ManagedActionRegistry } = require('./managed-actions');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SPACE_KEY = /^np_space_[A-Za-z0-9_-]{43}$/;
 
@@ -28,6 +29,29 @@ function stepOrdinal(value) {
   return value;
 }
 
+function contextKey(value) {
+  if (typeof value !== 'string' || !/^[a-z][a-z0-9._-]{0,63}$/.test(value)) {
+    throw new Error('contextKey is invalid');
+  }
+  return value;
+}
+
+function conversationKey(value) {
+  if (typeof value !== 'string') throw new Error('conversationKey must be a string');
+  const normalized = value.normalize('NFC');
+  if (!normalized || Buffer.byteLength(normalized, 'utf8') > 256 || /[\p{Cc}]/u.test(normalized)) {
+    throw new Error('conversationKey is invalid');
+  }
+  return encodeURIComponent(normalized);
+}
+
+function messageSequence(value) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error('message sequence must be a positive integer');
+  }
+  return value;
+}
+
 function idempotencyHeaders(key) {
   if (key === undefined) return {};
   if (typeof key !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(key)) {
@@ -52,6 +76,23 @@ function runBody(input, options) {
     ...(options.conversation === undefined ? {} : { conversation: options.conversation }),
     ...(options.context === undefined ? {} : { context: options.context }),
     ...(options.subject === undefined ? {} : { subject: options.subject })
+  };
+}
+
+function templateBody(body) {
+  if (!body?.config || !Array.isArray(body.config.actions)) return body;
+  if (!body.config.actions.some(action => typeof action?.handler === 'function')) return body;
+  new ManagedActionRegistry(
+    body.config.actions.filter(action => typeof action?.handler === 'function')
+  );
+  return {
+    ...body,
+    config: {
+      ...body.config,
+      actions: body.config.actions.map(
+        ({ handler: _handler, guard: _guard, ...contract }) => contract
+      )
+    }
   };
 }
 
@@ -89,7 +130,7 @@ class NullProtocolClient {
     this.templates = {
       create: async (body, options = {}) =>
         this._request('POST', 'templates', {
-          body,
+          body: templateBody(body),
           headers: idempotencyHeaders(options.idempotencyKey),
           signal: options.signal
         }),
@@ -102,7 +143,7 @@ class NullProtocolClient {
       publishVersion: async (id, body, options = {}) =>
         this._request('POST', `templates/${resourceId(id, 'templateId')}/versions`, {
           ...options,
-          body
+          body: templateBody(body)
         }),
       listVersions: async (id, query = {}, options = {}) =>
         this._request(
@@ -171,8 +212,49 @@ class NullProtocolClient {
 
   agent(id) {
     const encoded = resourceId(id, 'agentId');
+    const agentPath = `managed-agents/${encoded}`;
     const runPath = `managed-agents/${encoded}/runs`;
     return {
+      context: {
+        list: (options = {}) => this._request('GET', `${agentPath}/context`, options),
+        get: (key, options = {}) =>
+          this._request('GET', `${agentPath}/context/${contextKey(key)}`, options),
+        put: (key, body, options = {}) =>
+          this._request('PUT', `${agentPath}/context/${contextKey(key)}`, { ...options, body }),
+        delete: (key, body, options = {}) =>
+          this._request('DELETE', `${agentPath}/context/${contextKey(key)}`, { ...options, body })
+      },
+      memory: {
+        add: (body, options = {}) =>
+          this._request('POST', `${agentPath}/memory`, { ...options, body }),
+        list: (options = {}) => this._request('GET', `${agentPath}/memory`, options),
+        delete: (entryId, options = {}) =>
+          this._request('DELETE', `${agentPath}/memory/${resourceId(entryId, 'entryId')}`, options)
+      },
+      conversations: {
+        list: (query = {}, options = {}) =>
+          this._request('GET', queryPath(`${agentPath}/conversations`, query), options),
+        get: (key, query = {}, options = {}) =>
+          this._request(
+            'GET',
+            queryPath(`${agentPath}/conversations/${conversationKey(key)}`, query),
+            options
+          ),
+        delete: (key, options = {}) =>
+          this._request('DELETE', `${agentPath}/conversations/${conversationKey(key)}`, options),
+        deleteMessage: (key, seq, options = {}) =>
+          this._request(
+            'DELETE',
+            `${agentPath}/conversations/${conversationKey(key)}/messages/${messageSequence(seq)}`,
+            options
+          ),
+        deleteFact: (key, factId, options = {}) =>
+          this._request(
+            'DELETE',
+            `${agentPath}/conversations/${conversationKey(key)}/facts/${resourceId(factId, 'factId')}`,
+            options
+          )
+      },
       get: options => this._request('GET', `managed-agents/${encoded}`, options),
       update: (body, options = {}) =>
         this._request('PATCH', `managed-agents/${encoded}`, { ...options, body }),

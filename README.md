@@ -18,14 +18,44 @@ Node.js 18 or newer is required. The command pins an OpenAI SDK version that wor
 
 ### Connected managed Agents (development branch)
 
-The new `NullProtocolClient` and `ManagedExecutor` are under development alongside the API. They are not published to npm or deployed in the production API. A Template and its Agents are stored in a Space; one outbound executor process can serve several Agents, processing one run at a time in this first slice. The application uses a separate caller key to create runs. Model credentials stay with the executor.
+The new `NullProtocolClient` and `ManagedExecutor` are under development alongside the API. They are not published to npm or deployed in the production API. A Template and its Agents are stored in a Space; one outbound executor process can serve several Agents, processing one run at a time. Model credentials stay with the executor. Use an app-server Space key for management, runs and content, plus a separate executor key for runtime access.
 
 ```js
-const { NullProtocolClient, ManagedExecutor } = require('nullprotocol');
+const { NullProtocolClient, ManagedExecutor, defineAction } = require('nullprotocol');
+const orders = new Map([['42', { status: 'shipped' }]]);
+
+const getOrder = defineAction({
+  name: 'getOrder',
+  description: 'Read one order',
+  effect: 'read',
+  input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  output: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] },
+  handler: async ({ id }) => orders.get(id) || { status: 'unknown' }
+});
+
+const endpoint = process.env.NULLPROTOCOL_API_URL; // Local development API.
+const app = new NullProtocolClient({
+  spaceKey: process.env.NULLPROTOCOL_APP_KEY,
+  endpoint
+});
+const { template } = await app.templates.create({
+  name: 'Support',
+  config: {
+    instructions: 'Help the customer with their order.',
+    model: { provider: 'local', model: 'your-model', credentialRef: 'localModel' },
+    actions: [getOrder]
+  }
+}, { idempotencyKey: 'support-template-v1' });
+const { agent } = await app.agents.create(
+  { templateId: template.id },
+  { idempotencyKey: 'support-agent-v1' }
+);
 
 const executor = new ManagedExecutor({
   executorKey: process.env.NULLPROTOCOL_EXECUTOR_KEY,
-  agentIds: [process.env.NULLPROTOCOL_AGENT_ID],
+  endpoint,
+  agentIds: [agent.id],
+  actions: [getOrder],
   credentials: {
     localModel: {
       provider: 'local',
@@ -35,36 +65,20 @@ const executor = new ManagedExecutor({
 });
 await executor.start();
 
-const np = new NullProtocolClient({ spaceKey: process.env.NULLPROTOCOL_CALLER_KEY });
-const run = await np.agent(process.env.NULLPROTOCOL_AGENT_ID).run('Hello', {
+const run = await app.agent(agent.id).run('Where is order 42?', {
   conversation: 'ticket:opaque-id',
   idempotencyKey: 'message:opaque-id'
 });
 console.log(run.status, run.output?.text);
 ```
 
-The executor key needs `runtime:connect` and `runs:execute`; the caller key needs `runs:create` and `runs:read`. `agent.run()` creates a run through `api.nullprotocol.ai` and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. Model calls use an OpenAI-compatible endpoint, including a local one. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
+The app key needs `templates:write`, `agents:write`, `agents:read`, `runs:create` and `runs:read`; add `context:read`, `context:write`, `conversations:read` and `conversations:delete` when using the memory APIs below. The executor key needs only `runtime:connect` and `runs:execute`. `defineAction` snapshots one contract for publishing and runtime registration; handler code remains local. `agent.run()` creates a run through the API and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. Model calls use an OpenAI-compatible endpoint, including a local one. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
 
-The development branches also support Template actions. Publish an action contract in the Template config, then register a matching handler with the executor:
+The registered contract must exactly match a published Template version. The SDK validates model arguments and handler output against its JSON Schemas. A `write` handler receives `idempotencyKey`, `runId`, `callId`, trusted context fields and an abort signal. Use the idempotency key in the system that performs the write. Confirmed write outcomes are recorded in conversation history, even if a later step fails and the run ends failed or cancelled. If a started write cannot be confirmed, the trace records `unknown`; inspect it and reconcile with `agent.reconcileStep(runId, ordinal, { outcome, note })` after the run finishes. Until reconciliation, that conversation cannot invoke another write with the same action name. An optional guard has a five-second limit and must return `true` before execution. `agent.setAction(name, { disabled: true, ifRevision })` disables an action without changing the Template.
 
-```js
-const getOrder = {
-  name: 'getOrder',
-  description: 'Read one order',
-  effect: 'read',
-  input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-  output: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] }
-};
+On the development branches, `agent.context.put('region', { value: 'EU', ifVersion: null })` sets versioned current data for one Agent, while `agent.memory.add({ text: 'Prefers brief replies.' })` stores explicit long-term memory. Both are included in a managed run and refreshed before later model turns and write actions. `agent.conversations.get(key, { afterSeq, limit })` reads a page of conversation history, facts, summary and `memoryState` (`capacityExceeded`, `backlog`, `uncompactedMessages`, `factLimit`); content access requires a scoped key. The executor compacts older conversation messages in bounded source batches with a time budget that leaves room for the answer. Action outcomes remain in the run trace and a bounded recent list, separate from semantic facts. If capacity, invalid model output or the per-run limit leaves a gap in older history, the compaction step fails visibly in the trace, partial compaction is saved, and the Agent can still answer with an incomplete-memory warning. Write actions are unavailable for that run. If `memoryState.capacityExceeded` persists, remove unneeded facts or source messages through the conversation API, or delete the conversation to start a new history. Cabinet inspection and hosted execution remain later slices.
 
-const executor = new ManagedExecutor({
-  executorKey: process.env.NULLPROTOCOL_EXECUTOR_KEY,
-  agentIds: [process.env.NULLPROTOCOL_AGENT_ID],
-  credentials: { localModel: { provider: 'local', baseURL: 'http://127.0.0.1:11434/v1' } },
-  actions: [{ ...getOrder, handler: async ({ id }) => orderStore.get(id) }]
-});
-```
-
-The registered contract must exactly match a published Template version. The SDK validates model arguments and handler output against its JSON Schemas. A `write` handler receives `idempotencyKey`, `runId`, `callId`, trusted context fields and an abort signal. Use the idempotency key in the system that performs the write. Confirmed write outcomes are recorded in conversation history, even if a later step fails and the run ends failed or cancelled. If a started write cannot be confirmed, the trace records `unknown`; inspect it and reconcile with `agent.reconcileStep(runId, ordinal, { outcome, note })` after the run finishes. Until reconciliation, that conversation cannot invoke another write with the same action name. An optional guard has a five-second limit and must return `true` before execution. `agent.setAction(name, { disabled: true, ifRevision })` disables an action without changing the Template. Managed memory compaction, cabinet inspection, and hosted execution remain later slices.
+With the sibling API repository and its separate `TEST_DATABASE_URL`, run `npm run test:managed-integration` to check the SDK and API together. The script creates and deletes isolated test resources and refuses to run if the test URL equals `DATABASE_URL`.
 
 ### Managed model gateway (staging)
 

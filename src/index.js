@@ -1906,6 +1906,7 @@ module.exports.PostgresSessionStore = require('./session-store').PostgresSession
 module.exports.NullProtocolClient = require('./managed-client').NullProtocolClient;
 module.exports.PlatformError = require('./managed-http').PlatformError;
 module.exports.ManagedExecutor = require('./managed-executor').ManagedExecutor;
+module.exports.defineAction = require('./managed-actions').defineAction;
 
 // Default export
 module.exports.default = AIToolkit;

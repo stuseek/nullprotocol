@@ -1,4 +1,4 @@
-const { NullProtocolClient, NullProtocol } = require('../index');
+const { NullProtocolClient, NullProtocol, defineAction } = require('../index');
 const SPACE_KEY = `np_space_${'A'.repeat(43)}`;
 const TEMPLATE_ID = '11111111-1111-4111-8111-111111111111';
 const AGENT_ID = '22222222-2222-4222-8222-222222222222';
@@ -48,6 +48,31 @@ test('discovers the Space once and sends management requests to managed routes',
   expect(
     api.calls.every(call => call.options.headers.get('Authorization') === `Bearer ${SPACE_KEY}`)
   ).toBe(true);
+});
+
+test('one action definition publishes the contract and registers the handler', async () => {
+  const action = defineAction({
+    name: 'getOrder',
+    description: 'Read one order',
+    input: { type: 'object' },
+    output: { type: 'object' },
+    effect: 'read',
+    handler: async () => ({})
+  });
+  const api = fakeApi();
+  const client = new NullProtocolClient({ spaceKey: SPACE_KEY, fetchImpl: api.fetchImpl });
+  await client.templates.create({ name: 'Support', config: { actions: [action] } });
+  expect(JSON.parse(api.calls[1].options.body).config.actions).toEqual([
+    {
+      name: 'getOrder',
+      description: 'Read one order',
+      input: { type: 'object' },
+      output: { type: 'object' },
+      effect: 'read'
+    }
+  ]);
+  expect(action.handler).toEqual(expect.any(Function));
+  expect(Object.isFrozen(action.input)).toBe(true);
 });
 
 test('rejects an invalid idempotency key before creating a resource', async () => {
@@ -143,6 +168,31 @@ test('action controls and reconciliation use the managed Agent routes', async ()
     'actionName'
   );
   await expect(agent.reconcileStep(runId, 256, { outcome: 'failed' })).rejects.toThrow('ordinal');
+});
+
+test('managed context and conversation content use scoped Agent routes', async () => {
+  const requests = [];
+  const fetchImpl = jest.fn(async (url, options) => {
+    if (url.endsWith('/v1/space')) {
+      return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+    }
+    requests.push({ path: new URL(url).pathname, method: options.method });
+    return new globalThis.Response(JSON.stringify({ ok: true }));
+  });
+  const client = new NullProtocolClient({ spaceKey: SPACE_KEY, fetchImpl });
+  const agent = client.agent(AGENT_ID);
+  await agent.context.put('profile', { value: { locale: 'en' }, ifVersion: null });
+  await agent.memory.add({ text: 'Preferred locale is en' });
+  await agent.conversations.get('cafe\u0301/42');
+  await agent.conversations.deleteMessage('café/42', 2);
+  expect(requests.map(request => [request.method, request.path])).toEqual([
+    ['PUT', `/v1/spaces/demo/managed-agents/${AGENT_ID}/context/profile`],
+    ['POST', `/v1/spaces/demo/managed-agents/${AGENT_ID}/memory`],
+    ['GET', `/v1/spaces/demo/managed-agents/${AGENT_ID}/conversations/caf%C3%A9%2F42`],
+    ['DELETE', `/v1/spaces/demo/managed-agents/${AGENT_ID}/conversations/caf%C3%A9%2F42/messages/2`]
+  ]);
+  expect(() => agent.context.get('../profile')).toThrow('contextKey');
+  expect(() => agent.conversations.deleteMessage('ticket', 0)).toThrow('sequence');
 });
 
 test('an abort signal cancels Space discovery before resource creation', async () => {

@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "test": "jest",
+    "test:managed-integration": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-managed-integration.mjs",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
@@ -89,6 +90,7 @@
     "src/managed-http.js",
     "src/managed-canonical.js",
     "src/managed-actions.js",
+    "src/managed-compaction.js",
     "src/managed-model.js",
     "src/managed-executor.js",
     "src/executor.js",

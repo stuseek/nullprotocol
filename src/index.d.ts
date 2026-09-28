@@ -577,6 +577,24 @@ export declare class NullProtocolClient {
     run(id: string, input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
   };
   agent(id: string): {
+    context: {
+      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
+      get(key: string, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      put(key: string, body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      delete(key: string, body: { ifVersion: string }, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
+    };
+    memory: {
+      add(body: { text: string; source?: string }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
+      delete(entryId: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
+    };
+    conversations: {
+      list(query?: { cursor?: string; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversations: Array<Record<string, unknown>>; nextCursor: string | null }>;
+      get(key: string, query?: { afterSeq?: number; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversation: Record<string, unknown>; messages: Array<Record<string, unknown>>; facts: Array<Record<string, unknown>>; summary: Record<string, unknown> | null; nextAfterSeq: number | null }>;
+      delete(key: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { conversationId: string; status: 'completed' | 'pending' } }>;
+      deleteMessage(key: string, seq: number, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
+      deleteFact(key: string, factId: string, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
+    };
     get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     setAction(name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
@@ -611,13 +629,17 @@ export interface ManagedActionDefinition {
   guard?: (args: Record<string, unknown>, context: ManagedActionContext) => boolean | Promise<boolean>;
 }
 
+export declare function defineAction(definition: ManagedActionDefinition): ManagedActionDefinition;
+
 export interface ManagedActionContext {
   runId: string;
   agentId: string;
   conversation: string | null;
   subject: Record<string, string> | null;
   runContext: Record<string, unknown> | null;
-  spaceContext: Array<{ namespace: string; key: string; value: unknown; version: number }>;
+  spaceContext: Array<{ namespace: string; key: string; value: unknown; version: string }>;
+  agentContext: Array<{ key: string; value: unknown; version: string }>;
+  agentMemory: Array<{ id: string; text: string }>;
   pendingOutcomes: Array<Record<string, unknown>>;
   callId: string;
   idempotencyKey: string;

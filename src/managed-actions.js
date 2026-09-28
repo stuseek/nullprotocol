@@ -101,4 +101,19 @@ class ManagedActionRegistry {
   }
 }
 
-module.exports = { ManagedActionRegistry };
+function defineAction(definition) {
+  new ManagedActionRegistry([definition]);
+  const { handler, guard, ...contract } = definition;
+  const snapshot = JSON.parse(JSON.stringify(contract));
+  const freeze = value => {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      Object.values(value).forEach(freeze);
+      Object.freeze(value);
+    }
+    return value;
+  };
+  freeze(snapshot);
+  return Object.freeze({ ...snapshot, handler, ...(guard ? { guard } : {}) });
+}
+
+module.exports = { ManagedActionRegistry, defineAction };
