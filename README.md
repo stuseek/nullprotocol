@@ -16,6 +16,35 @@ npm install git+https://github.com/stuseek/nullprotocol.git 'openai@^4.104.0'
 
 Node.js 18 or newer is required. The command pins an OpenAI SDK version that works on Node 18; Node 22 users can install the current OpenAI SDK. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic.
 
+### Connected managed Agents (development branch)
+
+The new `NullProtocolClient` and `ManagedExecutor` are under development alongside the API. They are not published to npm or deployed in the production API. A Template and its Agents are stored in a Space; one outbound executor process can serve several Agents, processing one run at a time in this first slice. The application uses a separate caller key to create runs. Model credentials stay with the executor.
+
+```js
+const { NullProtocolClient, ManagedExecutor } = require('nullprotocol');
+
+const executor = new ManagedExecutor({
+  executorKey: process.env.NULLPROTOCOL_EXECUTOR_KEY,
+  agentIds: [process.env.NULLPROTOCOL_AGENT_ID],
+  credentials: {
+    localModel: {
+      provider: 'local',
+      baseURL: 'http://127.0.0.1:11434/v1'
+    }
+  }
+});
+await executor.start();
+
+const np = new NullProtocolClient({ spaceKey: process.env.NULLPROTOCOL_CALLER_KEY });
+const run = await np.agent(process.env.NULLPROTOCOL_AGENT_ID).run('Hello', {
+  conversation: 'ticket:opaque-id',
+  idempotencyKey: 'message:opaque-id'
+});
+console.log(run.status, run.output?.text);
+```
+
+The executor key needs `runtime:connect` and `runs:execute`; the caller key needs `runs:create` and `runs:read`. `agent.run()` creates a run through `api.nullprotocol.ai` and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. This development slice supports one text model turn through an OpenAI-compatible endpoint, including a local one. Template actions, managed memory compaction, dashboard inspection, and hosted deployment are later slices. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
+
 ### Managed model gateway (staging)
 
 The separate API has a disabled-by-default managed inference route. Once a team is provisioned with model credit and an `np_inf_` key, the SDK can use it through the OpenAI client:

@@ -1903,6 +1903,9 @@ module.exports.serveAgents = function (options) {
 };
 module.exports.MemorySessionStore = require('./session-store').MemorySessionStore;
 module.exports.PostgresSessionStore = require('./session-store').PostgresSessionStore;
+module.exports.NullProtocolClient = require('./managed-client').NullProtocolClient;
+module.exports.PlatformError = require('./managed-http').PlatformError;
+module.exports.ManagedExecutor = require('./managed-executor').ManagedExecutor;
 
 // Default export
 module.exports.default = AIToolkit;

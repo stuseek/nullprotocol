@@ -525,4 +525,90 @@ export function defineAgent(options: AgentDefinition): AgentDefinition;
 export function serveAgents(options: AgentServerOptions): AgentServer;
 export function serve(options: AgentServerOptions): AgentServer;
 
+/** Connected Space client under development; the legacy NullProtocol constructor is unchanged in 2.x. */
+export interface ManagedRun {
+  id: string;
+  agentId: string;
+  conversationId: string | null;
+  conversation: string | null;
+  templateVersion: number;
+  status: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+  errorCode: string | null;
+  output: { text: string } | null;
+  usage: { inputTokens: number | null; outputTokens: number | null } | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  deadlineAt: string;
+}
+
+export interface ManagedRunOptions {
+  conversation?: string;
+  context?: Record<string, unknown>;
+  subject?: Record<string, string>;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  wait?: boolean;
+  pollIntervalMs?: number;
+  waitTimeoutMs?: number;
+}
+
+export declare class NullProtocolClient {
+  constructor(options: { spaceKey: string; endpoint?: string; fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>; timeoutMs?: number });
+  space(options?: { signal?: AbortSignal }): Promise<{ id: string; slug: string; name: string }>;
+  templates: {
+    create(body: { name: string; config: Record<string, unknown> }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    list(query?: { limit?: number; cursor?: string; archived?: boolean | 'all' }, options?: { signal?: AbortSignal }): Promise<{ templates: Record<string, unknown>[]; nextCursor: string | null }>;
+    get(id: string, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    update(id: string, body: { name?: string; archived?: boolean }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown> }>;
+    publishVersion(id: string, body: { config: Record<string, unknown>; ifVersion: number }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    listVersions(id: string, query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ versions: Record<string, unknown>[]; nextCursor: string | null }>;
+    getVersion(id: string, version: number, options?: { signal?: AbortSignal }): Promise<{ version: Record<string, unknown> }>;
+    delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
+  };
+  agents: {
+    create(body: { templateId: string; version?: number; name?: string }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    list(query?: { limit?: number; cursor?: string; templateId?: string }, options?: { signal?: AbortSignal }): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
+    get(id: string, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
+    run(id: string, input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
+  };
+  agent(id: string): {
+    get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    delete(options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
+    startRun(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
+    getRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
+    listRuns(query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ runs: ManagedRun[]; nextCursor: string | null }>;
+    cancelRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
+    run(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
+  };
+}
+
+export declare class PlatformError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly details: { latestVersion?: number; revision?: number; limit?: number; runId?: string; unknownAgents?: string[] };
+  readonly retryAfter: number | null;
+}
+
+/** Connected outbound executor. One process can serve many managed Agents. */
+export declare class ManagedExecutor {
+  constructor(options: {
+    executorKey: string;
+    endpoint?: string;
+    agentIds: string[];
+    credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean }>;
+    instanceId?: string;
+    fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
+    modelFetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
+    onError?: (code: string) => void;
+  });
+  register(): Promise<{ instanceId: string; heartbeatSeconds: number; offlineAfterSeconds: number }>;
+  pollOnce(waitSeconds?: number): Promise<unknown>;
+  start(): Promise<this>;
+  stop(): Promise<void>;
+}
+
 export default AIToolkit;
