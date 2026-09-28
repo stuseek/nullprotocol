@@ -212,4 +212,4 @@ async function runTextTurn({
   }
 }
 
-module.exports = { runTextTurn, ManagedModelError };
+module.exports = { runTextTurn, ManagedModelError, MAX_REQUEST_BYTES };

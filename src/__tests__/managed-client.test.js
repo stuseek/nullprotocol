@@ -50,6 +50,31 @@ test('discovers the Space once and sends management requests to managed routes',
   ).toBe(true);
 });
 
+test('usage reads the Space quota and reported token totals', async () => {
+  const requests = [];
+  const fetchImpl = jest.fn(async url => {
+    requests.push(new URL(url).pathname);
+    if (url.endsWith('/v1/space')) {
+      return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+    }
+    return new globalThis.Response(
+      JSON.stringify({
+        plan: 'free',
+        day: '2026-09-28',
+        limits: { activeRuns: 10 },
+        usage: { activeRuns: 1 },
+        tokens: { today: { input: 0, output: 0, runsWithoutUsage: 1 } }
+      })
+    );
+  });
+  const client = new NullProtocolClient({ spaceKey: SPACE_KEY, fetchImpl });
+  await expect(client.usage()).resolves.toMatchObject({
+    plan: 'free',
+    tokens: { today: { input: 0, output: 0, runsWithoutUsage: 1 } }
+  });
+  expect(requests).toEqual(['/v1/space', '/v1/spaces/demo/managed-usage']);
+});
+
 test('one action definition publishes the contract and registers the handler', async () => {
   const action = defineAction({
     name: 'getOrder',

@@ -307,6 +307,11 @@ try {
   assert.equal(memoryState.backlog, true);
   assert.equal(memoryState.capacityExceeded, false);
   assert.ok(memoryState.uncompactedMessages > 50);
+  const spaceUsage = await app.usage();
+  assert.equal(spaceUsage.plan, 'free');
+  assert.equal(spaceUsage.usage.managedAgents, 1);
+  assert.ok(spaceUsage.usage.runsToday >= 6);
+  assert.ok(Number.isSafeInteger(spaceUsage.tokens.today.runsWithoutUsage));
   console.log('Managed SDK/API integration passed');
 } finally {
   if (server.listening) await new Promise(resolve => server.close(resolve));

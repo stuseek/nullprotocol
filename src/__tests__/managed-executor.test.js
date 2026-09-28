@@ -512,7 +512,9 @@ test('a rejected memory commit keeps the run result and write history', async ()
   });
   executor._commitWithRetry = jest
     .fn()
-    .mockRejectedValueOnce(new PlatformError('quota_exceeded', 409))
+    .mockRejectedValueOnce(
+      new PlatformError('quota_exceeded', 409, { resource: 'conversationFacts' })
+    )
     .mockResolvedValueOnce({ run: { status: 'succeeded' } });
   const body = {
     status: 'succeeded',
@@ -532,6 +534,49 @@ test('a rejected memory commit keeps the run result and write history', async ()
   expect(fallback.conversation.memory).toBeUndefined();
   expect(fallback.conversation.append).toEqual(body.conversation.append);
   expect(errors).toEqual(['compaction_not_saved']);
+});
+
+test('storage quota failure terminates the run instead of silently dropping its history', async () => {
+  const errors = [];
+  const executor = new ManagedExecutor({
+    executorKey,
+    agentIds: [agentId],
+    credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+    onError: code => errors.push(code)
+  });
+  executor._commitWithRetry = jest
+    .fn()
+    .mockRejectedValueOnce(new PlatformError('quota_exceeded', 409, { resource: 'storageBytes' }))
+    .mockRejectedValueOnce(new PlatformError('quota_exceeded', 409, { resource: 'storageBytes' }))
+    .mockResolvedValueOnce({ run: { status: 'failed', errorCode: 'quota_exceeded' } });
+  const result = await executor._commitWithMemoryFallback(
+    runId,
+    'lease',
+    {
+      status: 'succeeded',
+      errorCode: null,
+      output: { text: 'Refunded' },
+      usage: { inputTokens: 10, outputTokens: 2 },
+      conversation: {
+        id: conversationId,
+        expectedVersion: 4,
+        append: [{ role: 'assistant', content: { actionOutcomes: [{ name: 'refund' }] } }],
+        memory: { factsAdd: [], summary: { content: 'Summary', coversToSeq: 2 } }
+      }
+    },
+    () => Date.now() + 30000
+  );
+  expect(result.run).toEqual({ status: 'failed', errorCode: 'quota_exceeded' });
+  expect(executor._commitWithRetry).toHaveBeenCalledTimes(3);
+  expect(executor._commitWithRetry.mock.calls[1][2].conversation.memory).toBeUndefined();
+  expect(executor._commitWithRetry.mock.calls[2][2]).toEqual({
+    status: 'failed',
+    errorCode: 'quota_exceeded',
+    output: null,
+    usage: { inputTokens: 10, outputTokens: 2 },
+    conversation: null
+  });
+  expect(errors).toEqual(['quota_exceeded']);
 });
 
 test('memory capacity is traced while the agent still answers from its current window', async () => {
@@ -619,6 +664,7 @@ test('memory capacity is traced while the agent still answers from its current w
     })
   );
   expect(requests.at(-1).messages.at(-1).content).toContain('memoryIncomplete');
+  expect(requests).toHaveLength(1);
   expect(errors).toEqual(['memory_capacity']);
 });
 
@@ -774,3 +820,181 @@ test('compaction stops at its time budget and leaves time for the answer', async
     now.mockRestore();
   }
 });
+
+test('an oversized fact set is bounded, traced, and cannot authorize a write', async () => {
+  const action = {
+    name: 'refund',
+    description: 'Refund an order',
+    effect: 'write',
+    input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    output: { type: 'object', properties: { receipt: { type: 'string' } }, required: ['receipt'] }
+  };
+  const contractHash = actionContractHash(action);
+  const actionConfig = { ...config, actions: [action] };
+  const handler = jest.fn(async () => ({ receipt: 'R-1' }));
+  const requests = [];
+  const steps = [];
+  const executor = new ManagedExecutor({
+    executorKey,
+    agentIds: [agentId],
+    credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+    actions: [{ ...action, handler }],
+    modelFetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return new globalThis.Response(
+        JSON.stringify({ choices: [{ message: { content: 'I need more history first.' } }] })
+      );
+    }
+  });
+  executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+  executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => ({ run: body }));
+  const job = {
+    run: {
+      id: runId,
+      agentId,
+      input: 'Refund the order',
+      deadlineAt: new Date(Date.now() + 180000).toISOString()
+    },
+    template: { config: actionConfig },
+    actions: [{ ...action, contractHash }],
+    actionManifestHash: hashJson([{ name: action.name, contractHash }]),
+    spaceContext: [],
+    conversation: {
+      id: conversationId,
+      version: 1,
+      messages: [],
+      facts: Array.from({ length: 100 }, (_, index) => ({
+        id: `fact-${index}`,
+        value: { index, text: 'x'.repeat(1900) },
+        sourceSeqs: [index + 1]
+      }))
+    }
+  };
+  const result = await executor._processActionJob(
+    job,
+    `np_lease_${'B'.repeat(43)}`,
+    executor.credentials.localModel,
+    new AbortController(),
+    { expiresAt: () => Date.now() + 30000, lost: () => false, cancelled: () => false }
+  );
+  expect(result.run.status).toBe('succeeded');
+  expect(handler).not.toHaveBeenCalled();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].tools).toBeUndefined();
+  const prompt = requests[0].messages.at(-1).content;
+  expect(prompt).toContain('"index":99');
+  expect(prompt).not.toContain('"index":0');
+  expect(prompt).toContain('memoryIncomplete');
+  expect(steps).toContainEqual(
+    expect.objectContaining({
+      kind: 'context',
+      status: 'succeeded',
+      payload: expect.objectContaining({
+        truncated: expect.objectContaining({
+          facts: expect.any(Number),
+          actions: ['refund']
+        })
+      })
+    })
+  );
+  expect(job.memoryIncomplete).toBe(true);
+});
+
+test.each(['read', 'write'])(
+  'large %s results do not overflow a later model turn',
+  async effect => {
+    const action = {
+      name: 'searchOrders',
+      description: 'Search orders',
+      effect,
+      input: { type: 'object', properties: {}, additionalProperties: false },
+      output: { type: 'object', properties: { data: { type: 'string' } }, required: ['data'] },
+      maxResultBytes: 65536
+    };
+    const contractHash = actionContractHash(action);
+    const actionConfig = { ...config, actions: [action] };
+    const requests = [];
+    const steps = [];
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      actions: [{ ...action, handler: async () => ({ data: 'x'.repeat(60000) }) }],
+      modelFetchImpl: async (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        return new globalThis.Response(
+          JSON.stringify({
+            choices: [
+              {
+                message:
+                  requests.length === 1
+                    ? {
+                        content: null,
+                        tool_calls: [
+                          {
+                            id: 'call-1',
+                            type: 'function',
+                            function: { name: 'searchOrders', arguments: '{}' }
+                          }
+                        ]
+                      }
+                    : { content: 'Done.' }
+              }
+            ]
+          })
+        );
+      }
+    });
+    executor._lease = jest.fn(async () => ({ expiresAt: new Date(Date.now() + 30000) }));
+    executor._context = jest.fn(async () => ({
+      spaceContext: [],
+      agentContext: [],
+      agentMemory: [],
+      disabledActions: []
+    }));
+    executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+    executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => ({ run: body }));
+    const result = await executor._processActionJob(
+      {
+        run: {
+          id: runId,
+          agentId,
+          input: 'Search orders',
+          deadlineAt: new Date(Date.now() + 180000).toISOString()
+        },
+        template: { config: actionConfig },
+        actions: [{ ...action, contractHash }],
+        actionManifestHash: hashJson([{ name: action.name, contractHash }]),
+        spaceContext: [],
+        conversation: {
+          id: conversationId,
+          version: 1,
+          messages: [],
+          facts: Array.from({ length: 70 }, (_, index) => ({
+            id: `fact-${index}`,
+            value: { data: 'f'.repeat(1300) },
+            sourceSeqs: [index + 1]
+          }))
+        }
+      },
+      `np_lease_${'B'.repeat(43)}`,
+      executor.credentials.localModel,
+      new AbortController(),
+      { expiresAt: () => Date.now() + 30000, lost: () => false, cancelled: () => false }
+    );
+    expect(result.run.status).toBe('succeeded');
+    expect(requests).toHaveLength(2);
+    const toolMessage = requests[1].messages.find(message => message.role === 'tool').content;
+    expect(toolMessage).toContain(
+      effect === 'write' ? '"status":"succeeded"' : 'result_too_large_for_context'
+    );
+    expect(steps).toContainEqual(
+      expect.objectContaining({
+        kind: 'context',
+        payload: expect.objectContaining({
+          truncated: expect.objectContaining({ toolResults: 1 })
+        })
+      })
+    );
+  }
+);

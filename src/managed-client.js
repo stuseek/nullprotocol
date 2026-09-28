@@ -210,6 +210,10 @@ class NullProtocolClient {
     return this.spacePromise;
   }
 
+  usage(options = {}) {
+    return this._request('GET', 'managed-usage', options);
+  }
+
   agent(id) {
     const encoded = resourceId(id, 'agentId');
     const agentPath = `managed-agents/${encoded}`;

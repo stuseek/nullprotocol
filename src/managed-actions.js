@@ -55,7 +55,7 @@ class ManagedActionRegistry {
         throw new Error('Invalid action contract');
       }
       positiveLimit(rawContract.timeoutMs, 600000, 'timeoutMs');
-      positiveLimit(rawContract.maxResultBytes, 1048576, 'maxResultBytes');
+      positiveLimit(rawContract.maxResultBytes, 65536, 'maxResultBytes');
       const contract = {
         name: rawContract.name,
         description: rawContract.description.trim(),

@@ -128,8 +128,16 @@ class PlatformTransport {
         const safeCode =
           typeof code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : 'platform_error';
         const details = {};
-        for (const field of ['latestVersion', 'revision', 'limit']) {
+        for (const field of ['latestVersion', 'revision', 'limit', 'used']) {
           if (Number.isSafeInteger(data?.[field]) && data[field] >= 0) details[field] = data[field];
+        }
+        if (
+          typeof data?.resource === 'string' &&
+          /^(activeRuns|runsPerDay|conversations|storageBytes|templates|managedAgents|conversationFacts|agentContextEntries|agentContextBytes|agentMemoryEntries|agentMemoryBytes)$/.test(
+            data.resource
+          )
+        ) {
+          details.resource = data.resource;
         }
         if (Array.isArray(data?.unknownAgents)) {
           const ids = data.unknownAgents;

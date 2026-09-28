@@ -553,9 +553,18 @@ export interface ManagedRunOptions {
   waitTimeoutMs?: number;
 }
 
+export interface ManagedSpaceUsage {
+  plan: string;
+  day: string;
+  limits: { activeRuns: number; runsPerDay: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
+  usage: { activeRuns: number; runsToday: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
+  tokens: { today: { input: number; output: number; runsWithoutUsage: number } };
+}
+
 export declare class NullProtocolClient {
   constructor(options: { spaceKey: string; endpoint?: string; fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>; timeoutMs?: number });
   space(options?: { signal?: AbortSignal }): Promise<{ id: string; slug: string; name: string }>;
+  usage(options?: { signal?: AbortSignal }): Promise<ManagedSpaceUsage>;
   templates: {
     create(body: { name: string; config: Record<string, unknown> }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
     list(query?: { limit?: number; cursor?: string; archived?: boolean | 'all' }, options?: { signal?: AbortSignal }): Promise<{ templates: Record<string, unknown>[]; nextCursor: string | null }>;
@@ -624,6 +633,7 @@ export interface ManagedActionDefinition {
   output: Record<string, unknown>;
   effect: 'read' | 'write';
   timeoutMs?: number;
+  /** Maximum serialized result size in bytes, up to 65536. Defaults to 8192. */
   maxResultBytes?: number;
   handler: (args: Record<string, unknown>, context: ManagedActionContext) => unknown | Promise<unknown>;
   guard?: (args: Record<string, unknown>, context: ManagedActionContext) => boolean | Promise<boolean>;

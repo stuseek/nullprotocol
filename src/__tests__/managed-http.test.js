@@ -121,6 +121,29 @@ test('preserves whitelisted conflict details and retry delay', async () => {
   });
 });
 
+test('preserves typed quota details while discarding unrelated response fields', async () => {
+  const transport = new PlatformTransport({
+    key: 'np_space_test',
+    fetchImpl: async () =>
+      new globalThis.Response(
+        JSON.stringify({
+          error: 'quota_exceeded',
+          resource: 'storageBytes',
+          limit: 1024,
+          used: 1000,
+          private: 'not copied'
+        }),
+        { status: 409 }
+      )
+  });
+  await expect(
+    transport.request('POST', '/v1/spaces/demo/managed-agents/a/runs')
+  ).rejects.toMatchObject({
+    code: 'quota_exceeded',
+    details: { resource: 'storageBytes', limit: 1024, used: 1000 }
+  });
+});
+
 test('reports a platform timeout without retrying the request', async () => {
   const fetchImpl = jest.fn(
     (_url, options) =>
