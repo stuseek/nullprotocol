@@ -105,6 +105,8 @@
     "src/index.d.ts",
     "bench/README.md",
     "bench/run.js",
+    "bench/run-anthropic.js",
+    "bench/prompts.js",
     "bench/report.js",
     "bench/score.js",
     "bench/tasks.js",

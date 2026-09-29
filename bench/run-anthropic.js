@@ -226,14 +226,30 @@ function report(file) {
     throw new Error('Task definitions changed since this run');
   }
   git(['cat-file', '-e', `${manifest.sdkCommit}^{commit}`]);
-  if (rows.length !== manifest.models.length * tasks.length * ARMS.length) {
-    throw new Error('Incomplete run: expected one row per model, task and arm');
-  }
+  // Exactly one row per model, task and arm, each re-scored against the
+  // current gold answers; duplicates cannot stand in for missing tasks.
   const byId = new Map(tasks.map(task => [task.id, task]));
+  const seen = new Set();
   for (const row of rows) {
-    if (score(byId.get(row.taskId), row.payload, row.toolCalls, row.answer) !== row.correct) {
+    const task = byId.get(row.taskId);
+    const key = `${row.model}\0${row.taskId}\0${row.arm}`;
+    if (
+      !task ||
+      !manifest.models.includes(row.model) ||
+      !ARMS.includes(row.arm) ||
+      row.category !== task.category ||
+      seen.has(key)
+    ) {
+      throw new Error(`Unexpected row ${row.model} ${row.taskId} ${row.arm}`);
+    }
+    seen.add(key);
+    const correct = score(task, row.payload, row.toolCalls, row.answer);
+    if (correct !== row.correct || row.silentWrong !== (row.accepted && !correct)) {
       throw new Error(`Score mismatch for ${row.model} ${row.taskId} ${row.arm}`);
     }
+  }
+  if (seen.size !== manifest.models.length * tasks.length * ARMS.length) {
+    throw new Error('Incomplete run: expected one row per model, task and arm');
   }
   const categories = [...new Set(tasks.map(task => task.category))];
   console.log(`Source ${manifest.sdkCommit}, ${manifest.date}, max_tokens ${manifest.maxTokens}`);

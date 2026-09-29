@@ -36,7 +36,7 @@ The first [frozen run and interpretation](published/frozen-qwen-2026-09-24.md) a
 
 ## Frozen tasks on Claude
 
-`bench/run-anthropic.js` runs the same 48 tasks and prompts against Claude, with a direct Messages API arm (`JSON.parse` only) and the SDK arm. Both arms get the frozen call budgets (1 structured, 3 tool), no transport retries and a 120-second timeout; the direct-json arm is omitted because the Messages API has no schema-less JSON mode. Current Claude models accept no temperature and think before answering, so thinking and effort stay at the provider default and each call may use 4,096 output tokens instead of the local run's 280. That difference belongs in any interpretation, and a run is not a model-parity claim.
+`bench/run-anthropic.js` runs the same 48 tasks and prompts against Claude, with a direct Messages API arm (`JSON.parse` only) and the SDK arm. Both arms get the frozen call budgets (1 structured, 3 tool), no transport retries and a 120-second timeout; the direct-json arm is omitted because the Messages API has no schema-less JSON mode. The runner sends no sampling parameters; thinking and effort stay at each model's own default, and each call may use 4,096 output tokens instead of the local run's 280. That difference belongs in any interpretation, and a run is not a model-parity claim.
 
 Commit the source, set `ANTHROPIC_API_KEY`, and choose models explicitly:
 
@@ -45,4 +45,4 @@ NULLPROTOCOL_BENCH_MODELS=claude-opus-5 npm run bench:anthropic
 node bench/run-anthropic.js --report bench/results/frozen-anthropic-TIMESTAMP.jsonl
 ```
 
-The report checks the task hash, source commit and row count, re-scores every row, and prints correct answers per model, arm and category with the number of accepted but wrong answers.
+Run the report from a source checkout: it checks the task hash and that the source commit exists, requires exactly one row per model, task and arm, re-scores every row and its `silentWrong` flag, and prints correct answers per model, arm and category with the number of accepted but wrong answers.

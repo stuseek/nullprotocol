@@ -74,7 +74,7 @@ const run = await app.agent(agent.id).run('Where is order 42?', {
 console.log(run.status, run.output?.text);
 ```
 
-For a local model without native tool calling, add `toolCalls: false` to its credential. The executor then lists the Template's actions as data and reads the model's choice as a `decide`-style JSON object (`{"action", "parameters"}`, or `{"action": "reply", "text"}`); the chosen call goes through the same schema, guard, and handler checks as a native tool call.
+For a local model without native tool calling, add `toolCalls: false` to its credential. The executor then lists the Template's actions as data and reads the model's choice as a `decide`-style JSON object (`{"action", "parameters"}` to call an action, or `{"answer"}` for the final reply, so no action name is reserved); the chosen call goes through the same schema, guard, and handler checks as a native tool call.
 
 The app key needs `templates:write`, `agents:write`, `agents:read`, `runs:create` and `runs:read`; add `context:read`, `context:write`, `conversations:read` and `conversations:delete` when using the memory APIs below. The executor key needs only `runtime:connect` and `runs:execute`. `defineAction` snapshots one contract for publishing and runtime registration; handler code remains local. `agent.run()` creates a run through the API and polls it to completion. The HTTP API can create the same run directly. A compatible connected executor must already be online. Model calls use an OpenAI-compatible endpoint, including a local one. `agent.run()` does not cancel a server run when its local wait is interrupted; call `agent.cancelRun(runId)` explicitly when needed.
 
