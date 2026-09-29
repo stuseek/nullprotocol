@@ -118,3 +118,74 @@ test('parses a bounded function call without trusting its id as a platform call 
   ]);
   expect(JSON.parse(fetchImpl.mock.calls[0][1].body).tools).toEqual(tools);
 });
+
+describe('text protocol for models without tool calling', () => {
+  const tools = [
+    {
+      type: 'function',
+      function: { name: 'getOrder', description: 'Read one order', parameters: { type: 'object' } }
+    }
+  ];
+  const credential = { baseURL: 'http://127.0.0.1:11434/v1', toolCalls: false };
+  const reply = content =>
+    jest.fn(
+      async () =>
+        new globalThis.Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+          status: 200
+        })
+    );
+
+  test('turns a decide-style JSON reply into a tool call without sending tools', async () => {
+    const fetchImpl = reply('Sure.\n```json\n{"action":"getOrder","parameters":{"id":"42"}}\n```');
+    const history = [
+      ...messages,
+      { role: 'assistant', content: '{"action":"getOrder","parameters":{"id":"41"}}' },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"status":"shipped"}' }
+    ];
+    const result = await runTextTurn({
+      model: 'm',
+      messages: history,
+      tools,
+      credential,
+      fetchImpl
+    });
+    expect(result.toolCalls).toEqual([
+      { providerCallId: expect.any(String), name: 'getOrder', args: { id: '42' } }
+    ]);
+    const sent = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(sent.tools).toBeUndefined();
+    expect(sent.messages.at(-2)).toEqual({
+      role: 'user',
+      content: 'Action result: {"status":"shipped"}'
+    });
+    expect(sent.messages.at(-1).content).toContain('"action":"getOrder"');
+  });
+
+  test('returns replies and prose as text and rejects unknown actions', async () => {
+    const answer = await runTextTurn({
+      model: 'm',
+      messages,
+      tools,
+      credential,
+      fetchImpl: reply('{"action":"reply","text":"It shipped."}')
+    });
+    expect(answer.text).toBe('It shipped.');
+    const prose = await runTextTurn({
+      model: 'm',
+      messages,
+      tools,
+      credential,
+      fetchImpl: reply('It shipped yesterday.')
+    });
+    expect(prose.text).toBe('It shipped yesterday.');
+    await expect(
+      runTextTurn({
+        model: 'm',
+        messages,
+        tools,
+        credential,
+        fetchImpl: reply('{"action":"refund","parameters":{}}')
+      })
+    ).rejects.toMatchObject({ code: 'invalid_model_response' });
+  });
+});
