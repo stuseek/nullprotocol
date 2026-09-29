@@ -260,6 +260,7 @@ class NullProtocolClient {
           )
       },
       get: options => this._request('GET', `managed-agents/${encoded}`, options),
+      runtime: options => this._request('GET', `${agentPath}/runtime`, options),
       update: (body, options = {}) =>
         this._request('PATCH', `managed-agents/${encoded}`, { ...options, body }),
       setAction: (name, body, options = {}) => this.agents.setAction(encoded, name, body, options),

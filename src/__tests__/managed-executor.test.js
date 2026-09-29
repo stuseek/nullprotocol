@@ -260,6 +260,58 @@ test('a transient heartbeat failure keeps the worker alive for recovery', async 
   expect(errors).toEqual(['platform_unavailable']);
 });
 
+describe('executor lifetime', () => {
+  // Registration answers with `register`; a claim waits until it is aborted.
+  function lifetimeExecutor(register) {
+    return new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      fetchImpl: async (url, options) => {
+        if (url.endsWith('/v1/space')) {
+          return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+        }
+        if (url.endsWith('/claim')) {
+          return new Promise((resolve, reject) => {
+            if (options.signal.aborted) reject(options.signal.reason);
+            options.signal.addEventListener('abort', () => reject(options.signal.reason));
+          });
+        }
+        if (options.method === 'DELETE') return new globalThis.Response(null, { status: 204 });
+        const { status, body } = register();
+        return new globalThis.Response(JSON.stringify(body), { status });
+      }
+    });
+  }
+  const accepted = () => ({ status: 200, body: { executor: { instanceId: 'x' } } });
+
+  test('stop resolves closed after deregistering', async () => {
+    const executor = await lifetimeExecutor(accepted).start();
+    await executor.stop();
+    await expect(executor.closed).resolves.toEqual({ reason: 'stopped' });
+  });
+
+  test.each([
+    [401, 'unauthorized', 'unauthorized'],
+    [403, 'forbidden', 'forbidden'],
+    [404, 'not_found', 'platform_unavailable']
+  ])('a %s heartbeat closes the executor', async (status, error, reason) => {
+    let register = accepted;
+    const executor = await lifetimeExecutor(() => register()).start();
+    register = () => ({ status, body: { error } });
+    await executor._heartbeat();
+    await expect(executor.closed).resolves.toEqual({ reason });
+    expect(executor.running).toBe(false);
+    await executor.stop();
+  });
+
+  test('a failed first registration rejects start and leaves nothing to wait on', async () => {
+    const executor = lifetimeExecutor(() => ({ status: 401, body: { error: 'unauthorized' } }));
+    await expect(executor.start()).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(executor.closed).toBeNull();
+  });
+});
+
 test.each(['read', 'write', 'write-then-model-fails'])(
   'a declared %s action is schema checked, traced and returned to the model',
   async mode => {

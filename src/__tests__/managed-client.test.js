@@ -37,11 +37,13 @@ test('discovers the Space once and sends management requests to managed routes',
     client.agents.create({ templateId: TEMPLATE_ID }, { idempotencyKey: 'deploy-2' })
   ).resolves.toMatchObject({ agent: { id: AGENT_ID } });
   await client.agent(AGENT_ID).get();
+  await client.agent(AGENT_ID).runtime();
   expect(api.calls.map(call => new URL(call.url).pathname)).toEqual([
     '/v1/space',
     '/v1/spaces/demo/templates',
     '/v1/spaces/demo/managed-agents',
-    `/v1/spaces/demo/managed-agents/${AGENT_ID}`
+    `/v1/spaces/demo/managed-agents/${AGENT_ID}`,
+    `/v1/spaces/demo/managed-agents/${AGENT_ID}/runtime`
   ]);
   expect(api.calls[1].options.headers.get('Idempotency-Key')).toBe('deploy-1');
   expect(api.calls[2].options.headers.get('Idempotency-Key')).toBe('deploy-2');

@@ -6,6 +6,7 @@
   "scripts": {
     "test": "jest",
     "test:managed-integration": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-managed-integration.mjs",
+    "test:starter": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-starter.mjs",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
@@ -119,6 +120,10 @@
     "examples/managed/support.js",
     "examples/managed/game.js",
     "examples/managed/devops.js",
+    "examples/managed/starter/agent.js",
+    "examples/managed/starter/setup.js",
+    "examples/managed/starter/executor.js",
+    "examples/managed/starter/ask.js",
     "docs/upgrade-managed.md",
     "sql/session-store.sql",
     "assets/nullprotocol.png",

@@ -383,6 +383,8 @@ class ManagedExecutor {
     this.loopPromise = null;
     this.heartbeat = null;
     this.heartbeatBusy = false;
+    this.closed = null;
+    this._resolveClosed = null;
   }
 
   _report(code) {
@@ -446,18 +448,18 @@ class ManagedExecutor {
             this._report(retryError.code || 'platform_unavailable');
           }
         } else {
-          this.running = false;
-          clearInterval(this.heartbeat);
-          this.abortController.abort();
+          this._halt('agent_removed');
           return;
         }
       } else {
         this._report(error.code || 'platform_unavailable');
       }
+      // Rejected credentials or manifest cannot recover without a restart. A
+      // 404 on this known route means the API no longer serves the Space.
       if (currentError instanceof PlatformError && [400, 401, 403].includes(currentError.status)) {
-        this.running = false;
-        clearInterval(this.heartbeat);
-        this.abortController.abort();
+        this._halt(currentError.code);
+      } else if (currentError instanceof PlatformError && currentError.status === 404) {
+        this._halt('platform_unavailable');
       }
     } finally {
       this.heartbeatBusy = false;
@@ -1300,9 +1302,22 @@ class ManagedExecutor {
     return this.processJob(response.job);
   }
 
+  // Stops polling after an unrecoverable heartbeat error; `closed` resolves
+  // once the poll loop has exited.
+  _halt(reason) {
+    if (!this.running) return;
+    this.running = false;
+    clearInterval(this.heartbeat);
+    this.abortController.abort();
+    this.loopPromise.then(() => this._resolveClosed({ reason }));
+  }
+
   async start() {
     if (this.started) return this;
     await this.register();
+    this.closed = new Promise(resolve => {
+      this._resolveClosed = resolve;
+    });
     this.running = true;
     this.started = true;
     this.abortController = new AbortController();
@@ -1332,6 +1347,8 @@ class ManagedExecutor {
       await this.transport.request('DELETE', await this._path(''));
     } catch (error) {
       if (!(error instanceof PlatformError) || error.status !== 404) throw error;
+    } finally {
+      this._resolveClosed({ reason: 'stopped' });
     }
   }
 }

@@ -616,6 +616,15 @@ export declare class NullProtocolClient {
     reconcileStep(runId: string, ordinal: number, body: { outcome: 'succeeded' | 'failed'; note?: string }, options?: { signal?: AbortSignal }): Promise<{ step: Record<string, unknown> }>;
     cancelRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
     run(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
+    /**
+     * What online executors registered for this Agent's pinned version: at
+     * least one online, what the closest one lacks, and whether one declares
+     * every action and the model credential ref. Declared compatibility only;
+     * it does not check the model endpoint or its key.
+     */
+    runtime(options?: { signal?: AbortSignal }): Promise<{
+      runtime: { online: boolean; lastSeenAt: string | null; missingActions: string[]; modelCompatible: boolean };
+    }>;
   };
 }
 
@@ -673,6 +682,13 @@ export declare class ManagedExecutor {
   pollOnce(waitSeconds?: number): Promise<unknown>;
   start(): Promise<this>;
   stop(): Promise<void>;
+  /**
+   * Null until start() succeeds. Resolves once polling has ended: `stopped`
+   * after stop(), `agent_removed` when every Agent was deleted, the API error
+   * code after rejected credentials or manifest, or `platform_unavailable`
+   * when the API stopped serving this Space. Transient failures do not close it.
+   */
+  readonly closed: Promise<{ reason: string }> | null;
 }
 
 export default AIToolkit;
