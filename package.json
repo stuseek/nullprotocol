@@ -28,6 +28,7 @@
     "smoke:local": "node examples/local-smoke.js",
     "bench:local": "node bench/run.js",
     "bench:frozen": "node bench/run.js --suite=frozen",
+    "bench:anthropic": "node --env-file-if-exists=.env bench/run-anthropic.js",
     "bench:report": "node bench/report.js",
     "serve": "node bin/serve.js"
   },
@@ -53,6 +54,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
     "eslint": "^9.0.0",
     "jest": "^29.7.0",
     "pg": "^8.23.0",

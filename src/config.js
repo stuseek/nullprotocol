@@ -36,7 +36,7 @@ class ConfigLoader {
       engines: {},
       models: {
         openai: 'gpt-4',
-        anthropic: 'claude-sonnet-4-5-20250929'
+        anthropic: 'claude-opus-5'
       },
       temperature: 0.3,
       maxTokens: 1000,

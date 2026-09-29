@@ -18,6 +18,20 @@ let globalInstance = null;
 /**
  * Industry presets for common use cases
  */
+// Claude 4.7 and later reject sampling parameters; older models accept them.
+function acceptsTemperature(model) {
+  return /^claude-(3|haiku|sonnet-4|opus-4-[0-6])/.test(model);
+}
+
+// Replies can open with thinking blocks, so join the text blocks instead of
+// taking the first block.
+function anthropicText(message) {
+  return message.content
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('');
+}
+
 const PRESETS = {
   security: {
     basePrompt:
@@ -542,7 +556,7 @@ class AIToolkit {
    * Resolve model name — supports aliases (fast, balanced, powerful) and per-engine defaults
    */
   _resolveModel(model, engine) {
-    const defaults = { openai: 'gpt-4', anthropic: 'claude-sonnet-4-5-20250929' };
+    const defaults = { openai: 'gpt-4', anthropic: 'claude-opus-5' };
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
   }
 
@@ -714,8 +728,7 @@ class AIToolkit {
       } else {
         // Anthropic
         if (currentResponse.stop_reason !== 'tool_use') {
-          const textBlock = currentResponse.content.find(b => b.type === 'text');
-          return { text: textBlock?.text || '', toolCalls };
+          return { text: anthropicText(currentResponse), toolCalls };
         }
         const toolBlocks = currentResponse.content.filter(b => b.type === 'tool_use');
         pendingCalls = toolBlocks.map(b => ({
@@ -813,8 +826,7 @@ class AIToolkit {
         return { text: currentResponse.choices[0].message.content || '', toolCalls };
       }
     } else if (currentResponse.stop_reason !== 'tool_use') {
-      const textBlock = currentResponse.content.find(b => b.type === 'text');
-      return { text: textBlock?.text || '', toolCalls };
+      return { text: anthropicText(currentResponse), toolCalls };
     }
     throw new Error(`Tool-call limit of ${maxRounds} rounds reached`);
   }
@@ -881,9 +893,11 @@ class AIToolkit {
             model: resolvedModel,
             system,
             messages: msgArray,
-            max_tokens: options.maxTokens ?? this.config.maxTokens ?? 1000,
-            temperature: options.temperature ?? this.config.temperature ?? 0.3
+            max_tokens: options.maxTokens ?? this.config.maxTokens ?? 1000
           };
+          if (acceptsTemperature(resolvedModel)) {
+            params.temperature = options.temperature ?? this.config.temperature ?? 0.3;
+          }
 
           if (hasTools) {
             params.tools = this._formatToolsForProvider(options.tools, 'anthropic');
@@ -902,7 +916,8 @@ class AIToolkit {
             );
             return { text: result.text, toolCalls: result.toolCalls };
           }
-          return message.content[0].text;
+          if (message.stop_reason === 'refusal') throw new Error('Model refused the request');
+          return anthropicText(message);
         }
 
         default:
@@ -1032,16 +1047,19 @@ class AIToolkit {
           else msgArray.push({ role: 'user', content: user });
 
           options.onModelStart?.();
-          const stream = client.messages.stream(
-            {
-              model: resolvedModel,
-              system,
-              messages: msgArray,
-              max_tokens: options.maxTokens ?? this.config.maxTokens ?? 1000,
-              temperature: options.temperature ?? this.config.temperature ?? 0.3
-            },
-            { signal: controller.signal, maxRetries: 0 }
-          );
+          const params = {
+            model: resolvedModel,
+            system,
+            messages: msgArray,
+            max_tokens: options.maxTokens ?? this.config.maxTokens ?? 1000
+          };
+          if (acceptsTemperature(resolvedModel)) {
+            params.temperature = options.temperature ?? this.config.temperature ?? 0.3;
+          }
+          const stream = client.messages.stream(params, {
+            signal: controller.signal,
+            maxRetries: 0
+          });
 
           for await (const event of stream) {
             if (event.type === 'message_stop' && !timedOut) {

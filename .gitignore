@@ -49,3 +49,4 @@ combined.txt
 # eslint.config.js
 # .prettierrc
 # .editorconfig
+.playwright-mcp/

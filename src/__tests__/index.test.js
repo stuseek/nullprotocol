@@ -1278,3 +1278,32 @@ describe('_handleToolCalls Anthropic', () => {
     expect(result.toolCalls[0].result).toEqual({ error: 'tool broke' });
   });
 });
+
+describe('Anthropic requests', () => {
+  function withAnthropic(model) {
+    const ai = new AIToolkit({ engines: { anthropic: 'test-key' }, models: { anthropic: model } });
+    const create = jest.fn(async () => ({
+      stop_reason: 'end_turn',
+      content: [
+        { type: 'thinking', thinking: '' },
+        { type: 'text', text: 'hello' }
+      ],
+      usage: { input_tokens: 3, output_tokens: 1 }
+    }));
+    ai.clients.anthropic = { messages: { create } };
+    return { ai, create };
+  }
+
+  test('reads text after thinking blocks and omits temperature on Claude 4.7+', async () => {
+    const { ai, create } = withAnthropic('claude-opus-5');
+    const text = await ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'anthropic' });
+    expect(text).toBe('hello');
+    expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+  });
+
+  test('keeps temperature for models that accept it', async () => {
+    const { ai, create } = withAnthropic('claude-haiku-4-5');
+    await ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'anthropic' });
+    expect(create.mock.calls[0][0].temperature).toBe(0.3);
+  });
+});
