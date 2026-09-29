@@ -4,7 +4,8 @@
 //
 // By default the API runs in process on TEST_DATABASE_URL with a disposable
 // team. `--production KEYFILE` uses api.nullprotocol.ai with the app and
-// executor keys from a mode-0600 file of NAME=value lines; it creates a
+// executor keys from a mode-0600 JSON file
+// {"NULLPROTOCOL_APP_KEY": "...", "NULLPROTOCOL_EXECUTOR_KEY": "..."}; it creates a
 // uniquely named Template and Agent and deletes only those.
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
@@ -122,12 +123,7 @@ async function localSpace() {
 
 async function productionSpace(file) {
   assert.equal((await stat(file)).mode & 0o077, 0, `${file} must be readable by its owner only`);
-  const values = Object.fromEntries(
-    (await readFile(file, 'utf8'))
-      .split('\n')
-      .filter(line => line.includes('='))
-      .map(line => line.trim().split(/=(.*)/s, 2))
-  );
+  const values = JSON.parse(await readFile(file, 'utf8'));
   assert.ok(values.NULLPROTOCOL_APP_KEY && values.NULLPROTOCOL_EXECUTOR_KEY, 'keys file');
   return {
     endpoint: 'https://api.nullprotocol.ai',
