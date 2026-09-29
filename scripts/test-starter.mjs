@@ -24,7 +24,7 @@ let packDir;
 if (process.argv.includes('--packed')) {
   const run = promisify(execFile);
   packDir = await mkdtemp(path.join(tmpdir(), 'nullprotocol-pack-'));
-  const { stdout } = await run('npm', ['pack', '--pack-destination', dir], { cwd: root });
+  const { stdout } = await run('npm', ['pack', '--pack-destination', packDir], { cwd: root });
   await run('tar', ['-xzf', path.join(packDir, stdout.trim().split('\n').at(-1))], {
     cwd: packDir
   });
