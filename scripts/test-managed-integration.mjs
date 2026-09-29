@@ -21,6 +21,7 @@ const server = createApp({
   adminToken: admin,
   sessionSecret: randomBytes(32).toString('hex'),
   sessionVerifier: null,
+  managedAgentsEnabled: true,
   logger: { error() {} }
 });
 let teamId, userId, spaceId;
