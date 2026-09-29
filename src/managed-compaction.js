@@ -1,4 +1,6 @@
 const { ManagedModelError } = require('./managed-model');
+const { parseJSON } = require('./json');
+const { validateExtraction } = require('./schema');
 
 const CHUNK_BYTES = 10000;
 const CHUNK_MESSAGES = 16;
@@ -50,47 +52,62 @@ function compactionMessages(previousSummary, sources) {
   ];
 }
 
+const compactionSchema = {
+  type: 'object',
+  required: ['facts', 'summary'],
+  properties: {
+    facts: {
+      type: 'array',
+      maxItems: 5,
+      items: {
+        type: 'object',
+        required: ['value', 'sourceSeqs'],
+        properties: {
+          // Action outcomes come from run steps, never from compaction.
+          value: { type: 'object', not: { required: ['actionOutcome'] } },
+          sourceSeqs: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 16,
+            uniqueItems: true,
+            items: { type: 'integer' }
+          }
+        }
+      }
+    },
+    summary: { type: 'string' }
+  }
+};
+
+// Parses the compaction reply like extract does, then checks what a schema
+// cannot: facts must cite the supplied messages and fit the API byte limits.
 function parseCompaction(text, sources) {
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = parseJSON(text);
   } catch {
     throw new ManagedModelError('invalid_compaction');
   }
+  if (!validateExtraction(parsed, compactionSchema).isValid) {
+    throw new ManagedModelError('invalid_compaction');
+  }
+  const cited = new Set(sources.map(message => message.seq));
+  const summary = parsed.summary.trim();
   if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    !Array.isArray(parsed.facts) ||
-    parsed.facts.length > 5 ||
-    typeof parsed.summary !== 'string' ||
-    !parsed.summary.trim() ||
-    Buffer.byteLength(parsed.summary) > 4000
+    !summary ||
+    Buffer.byteLength(summary) > 4000 ||
+    parsed.facts.some(
+      fact =>
+        !fact.sourceSeqs.every(seq => cited.has(seq)) ||
+        Buffer.byteLength(JSON.stringify(fact.value)) > 2048
+    )
   ) {
     throw new ManagedModelError('invalid_compaction');
   }
-  const validSequences = new Set(sources.map(message => message.seq));
-  const facts = parsed.facts.map(fact => {
-    if (
-      !fact ||
-      typeof fact !== 'object' ||
-      Array.isArray(fact) ||
-      !fact.value ||
-      typeof fact.value !== 'object' ||
-      Array.isArray(fact.value) ||
-      Object.hasOwn(fact.value, 'actionOutcome') ||
-      !Array.isArray(fact.sourceSeqs) ||
-      fact.sourceSeqs.length < 1 ||
-      fact.sourceSeqs.length > 16 ||
-      new Set(fact.sourceSeqs).size !== fact.sourceSeqs.length ||
-      fact.sourceSeqs.some(seq => !Number.isSafeInteger(seq) || !validSequences.has(seq)) ||
-      Buffer.byteLength(JSON.stringify(fact.value)) > 2048
-    ) {
-      throw new ManagedModelError('invalid_compaction');
-    }
-    return { value: fact.value, sourceSeqs: fact.sourceSeqs };
-  });
-  return { facts, summary: parsed.summary.trim() };
+  return {
+    facts: parsed.facts.map(({ value, sourceSeqs }) => ({ value, sourceSeqs })),
+    summary
+  };
 }
 
 function factItems(fact) {

@@ -80,3 +80,16 @@ test('fact consolidation keeps exact source values and provenance when the cap i
     sourceSeqs: [1, 2]
   });
 });
+
+test('parseCompaction recovers fenced or prefixed JSON like extract', () => {
+  const sources = [{ seq: 3, role: 'user', content: 'order A-17' }];
+  const reply =
+    'Here is the result:\n```json\n{"facts":[{"value":{"order":"A-17"},"sourceSeqs":[3]}],"summary":"Asked about A-17."}\n```';
+  expect(parseCompaction(reply, sources)).toEqual({
+    facts: [{ value: { order: 'A-17' }, sourceSeqs: [3] }],
+    summary: 'Asked about A-17.'
+  });
+  expect(() =>
+    parseCompaction('{"facts":[{"value":{"x":1},"sourceSeqs":[9]}],"summary":"s"}', sources)
+  ).toThrow('invalid_compaction');
+});
