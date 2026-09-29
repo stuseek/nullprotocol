@@ -90,15 +90,19 @@ async function direct(task, model) {
       const response = await client.messages.create(params);
       if (response.stop_reason !== 'tool_use') {
         answer = text(response.content);
+        // The raw baseline may still parse an incomplete reply; keep it
+        // accepted but record why it stopped.
+        if (response.stop_reason === 'max_tokens') status = 'truncated';
+        if (response.stop_reason === 'refusal') status = 'refused';
         if (task.category === 'tool') {
           accepted = !!answer.trim();
-          if (!accepted) status = 'empty_response';
+          if (!accepted && status === 'ok') status = 'empty_response';
         } else {
           try {
             payload = JSON.parse(answer);
             accepted = true;
           } catch {
-            status = response.stop_reason === 'max_tokens' ? 'truncated' : 'parse_fail';
+            if (status === 'ok') status = 'parse_fail';
           }
         }
         break;
