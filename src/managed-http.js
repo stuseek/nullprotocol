@@ -68,7 +68,7 @@ async function readBoundedJson(response) {
 
 class PlatformTransport {
   constructor({
-    endpoint = 'https://api.nullprotocol.ai',
+    endpoint = process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai',
     key,
     fetchImpl = globalThis.fetch,
     timeoutMs = 30000

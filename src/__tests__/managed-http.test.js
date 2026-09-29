@@ -35,6 +35,26 @@ test('sends the Space key only to the configured HTTPS origin', async () => {
   expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 
+test('uses NULLPROTOCOL_API_URL when no endpoint is passed', () => {
+  const saved = process.env.NULLPROTOCOL_API_URL;
+  try {
+    delete process.env.NULLPROTOCOL_API_URL;
+    expect(new PlatformTransport({ key: 'np_space_test' }).origin).toBe(
+      'https://api.nullprotocol.ai'
+    );
+    process.env.NULLPROTOCOL_API_URL = 'https://staging.example.test';
+    expect(new PlatformTransport({ key: 'np_space_test' }).origin).toBe(
+      'https://staging.example.test'
+    );
+    expect(
+      new PlatformTransport({ key: 'np_space_test', endpoint: 'https://api.example.test' }).origin
+    ).toBe('https://api.example.test');
+  } finally {
+    if (saved === undefined) delete process.env.NULLPROTOCOL_API_URL;
+    else process.env.NULLPROTOCOL_API_URL = saved;
+  }
+});
+
 test('rejects insecure endpoint before any request', () => {
   expect(() => new PlatformTransport({ endpoint: 'http://api.example.test', key: 'test' })).toThrow(
     'HTTPS'
