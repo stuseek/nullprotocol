@@ -36,15 +36,7 @@ export interface AIToolkitOptions {
   };
   defaultEngine?: 'openai' | 'anthropic';
   basePrompt?: string;
-  preset?:
-    | 'security'
-    | 'devops'
-    | 'customer_support'
-    | 'financial'
-    | 'medical'
-    | 'legal'
-    | 'marketing'
-    | 'engineering';
+  preset?: 'security' | 'devops' | 'customer_support' | 'financial' | 'medical' | 'legal' | 'marketing' | 'engineering';
   temperature?: number;
   maxTokens?: number;
   validateOutputs?: boolean;
@@ -115,13 +107,7 @@ export interface DecideOptions extends BaseOptions {
   guard?: (
     decision: DecideResult,
     input: { context: any; actions: DecisionAction[] },
-    runtime: {
-      principal?: string;
-      agentId?: string;
-      sessionId?: string;
-      runId?: string;
-      signal: AbortSignal;
-    }
+    runtime: { principal?: string; agentId?: string; sessionId?: string; runId?: string; signal: AbortSignal }
   ) => boolean | Promise<boolean>;
   /** Guard timeout in milliseconds (default 30000, maximum 120000). */
   guardTimeoutMs?: number;
@@ -133,18 +119,7 @@ export interface ChatOptions extends BaseOptions {
   /** Tools available for the AI to call */
   tools?: ToolDefinition[];
   /** Callback invoked when the AI makes a tool call */
-  onToolCall?: (
-    name: string,
-    parameters: Record<string, any>,
-    context?: {
-      principal?: string;
-      agentId?: string;
-      sessionId?: string;
-      runId?: string;
-      callId?: string;
-      signal?: AbortSignal;
-    }
-  ) => any | Promise<any>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
   /** Enable streaming mode — returns async generator */
   stream?: boolean;
   /** When streaming, collect all chunks and return a ChatResult instead of a generator */
@@ -232,12 +207,7 @@ export declare class SpaceContextError extends Error {
 export declare class SpaceContextClient {
   constructor(options: { key: string; endpoint: string; fetchImpl?: typeof fetch });
   get<T = unknown>(namespace: string, key: string): Promise<SpaceContextDocument<T> | null>;
-  put<T = unknown>(
-    namespace: string,
-    key: string,
-    value: T,
-    options: { ifVersion: string | null; ttlSeconds?: number | null }
-  ): Promise<SpaceContextDocument<T>>;
+  put<T = unknown>(namespace: string, key: string, value: T, options: { ifVersion: string | null; ttlSeconds?: number | null }): Promise<SpaceContextDocument<T>>;
   delete(namespace: string, key: string, ifVersion: string): Promise<void>;
 }
 
@@ -307,7 +277,11 @@ export declare class AIToolkit {
   /**
    * Extract structured information from unstructured data
    */
-  extract(data: any, schema: Record<string, any>, options?: ExtractOptions): Promise<ExtractResult>;
+  extract(
+    data: any,
+    schema: Record<string, any>,
+    options?: ExtractOptions
+  ): Promise<ExtractResult>;
 
   /**
    * Validate data against criteria
@@ -322,12 +296,19 @@ export declare class AIToolkit {
   /**
    * Summarize content into key insights
    */
-  summarize(content: any, options?: SummarizeOptions): Promise<SummarizeResult>;
+  summarize(
+    content: any,
+    options?: SummarizeOptions
+  ): Promise<SummarizeResult>;
 
   /**
    * Make intelligent decision from available actions
    */
-  decide(context: any, actions: DecisionAction[], options?: DecideOptions): Promise<DecideResult>;
+  decide(
+    context: any,
+    actions: DecisionAction[],
+    options?: DecideOptions
+  ): Promise<DecideResult>;
 
   /**
    * Conversational AI interaction with optional tool use and streaming
@@ -348,12 +329,7 @@ export declare class AIToolkit {
   /**
    * Execute registered action
    */
-  execute(
-    decision: DecideResult,
-    options?: {
-      confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean>;
-    }
-  ): Promise<any>;
+  execute(decision: DecideResult, options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }): Promise<any>;
 
   /**
    * Register action for execution
@@ -393,7 +369,10 @@ export function validate(
   options?: ValidateOptions
 ): Promise<ValidateResult>;
 
-export function summarize(content?: any, options?: SummarizeOptions): Promise<SummarizeResult>;
+export function summarize(
+  content?: any,
+  options?: SummarizeOptions
+): Promise<SummarizeResult>;
 
 export function decide(
   context?: any,
@@ -408,9 +387,7 @@ export function chat(
 
 export function execute(
   decision: DecideResult,
-  options?: {
-    confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean>;
-  }
+  options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }
 ): Promise<any>;
 
 export function configure(options: AIToolkitOptions): AIToolkit;
@@ -463,21 +440,8 @@ export interface AgentDefinition extends AIToolkitOptions {
   description?: string;
   tools?: ToolDefinition[];
   schemas?: Record<string, Record<string, any>>;
-  onToolCall?: (
-    name: string,
-    parameters: Record<string, any>,
-    context?: {
-      principal?: string;
-      agentId?: string;
-      sessionId?: string;
-      runId?: string;
-      callId?: string;
-      signal?: AbortSignal;
-    }
-  ) => any | Promise<any>;
-  callOptions?: BaseOptions &
-    Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> &
-    Pick<ChatOptions, 'systemPrompt'>;
+  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
+  callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
   /** Defaults to 8,192 rough tokens in the named HTTP service. */
   maxHistoryTokens?: number;
   /** At least 2; history retains whole user/assistant exchanges within this cap. */
@@ -499,11 +463,7 @@ export interface SessionRef {
 
 export interface SessionStore {
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(
-    ref: SessionRef,
-    leaseMs?: number,
-    ttlMs?: number
-  ): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
@@ -515,11 +475,7 @@ export interface SessionStore {
 export declare class MemorySessionStore implements SessionStore {
   constructor(options?: { maxSessions?: number; maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(
-    ref: SessionRef,
-    leaseMs?: number,
-    ttlMs?: number
-  ): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
@@ -528,16 +484,9 @@ export declare class MemorySessionStore implements SessionStore {
 }
 
 export declare class PostgresSessionStore implements SessionStore {
-  constructor(
-    pool: { query(sql: string, values?: unknown[]): Promise<any>; connect(): Promise<any> },
-    options?: { maxSessionsPerPrincipal?: number }
-  );
+  constructor(pool: { query(sql: string, values?: unknown[]): Promise<any>; connect(): Promise<any> }, options?: { maxSessionsPerPrincipal?: number });
   create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(
-    ref: SessionRef,
-    leaseMs?: number,
-    ttlMs?: number
-  ): Promise<{ status: string; lease?: string; state?: SessionState }>;
+  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
   commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
   release(ref: SessionRef, lease: string): Promise<void>;
   renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
@@ -555,9 +504,7 @@ export interface AgentServerOptions {
   runtimeEndpoint?: string;
   /** Poll once per process, not per agent. Defaults to 15 seconds. */
   runtimePollMs?: number;
-  authenticate?: (
-    request: import('http').IncomingMessage
-  ) => Promise<{ principal: string; agents?: string[]; canManage?: boolean } | null>;
+  authenticate?: (request: import('http').IncomingMessage) => Promise<{ principal: string; agents?: string[]; canManage?: boolean } | null>;
   store?: SessionStore;
   only?: string[];
   port?: number;
@@ -569,19 +516,7 @@ export interface AgentServerOptions {
 }
 
 export interface AgentServer extends Server {
-  agents: Map<
-    string,
-    {
-      def: AgentDefinition;
-      base: AIToolkit;
-      disabled: boolean;
-      controlPaused: boolean;
-      controlBlocked: boolean;
-      controlRevision: number;
-      controlStopEpoch: number;
-      active: number;
-    }
-  >;
+  agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; controlPaused: boolean; controlBlocked: boolean; controlRevision: number; controlStopEpoch: number; active: number }>;
   syncControl(): Promise<boolean>;
   shutdown(options?: { drainTimeoutMs?: number; cancelTimeoutMs?: number }): Promise<void>;
 }
@@ -621,208 +556,64 @@ export interface ManagedRunOptions {
 export interface ManagedSpaceUsage {
   plan: string;
   day: string;
-  limits: {
-    activeRuns: number;
-    runsPerDay: number;
-    conversations: number;
-    storageBytes: number;
-    templates: number;
-    managedAgents: number;
-  };
-  usage: {
-    activeRuns: number;
-    runsToday: number;
-    conversations: number;
-    storageBytes: number;
-    templates: number;
-    managedAgents: number;
-  };
+  limits: { activeRuns: number; runsPerDay: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
+  usage: { activeRuns: number; runsToday: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
   tokens: { today: { input: number; output: number; runsWithoutUsage: number } };
 }
 
 export declare class NullProtocolClient {
-  constructor(options: {
-    spaceKey: string;
-    endpoint?: string;
-    fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
-    timeoutMs?: number;
-  });
+  constructor(options: { spaceKey: string; endpoint?: string; fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>; timeoutMs?: number });
   space(options?: { signal?: AbortSignal }): Promise<{ id: string; slug: string; name: string }>;
   usage(options?: { signal?: AbortSignal }): Promise<ManagedSpaceUsage>;
   templates: {
-    create(
-      body: { name: string; config: Record<string, unknown> },
-      options?: { idempotencyKey?: string; signal?: AbortSignal }
-    ): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    list(
-      query?: { limit?: number; cursor?: string; archived?: boolean | 'all' },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ templates: Record<string, unknown>[]; nextCursor: string | null }>;
-    get(
-      id: string,
-      options?: { signal?: AbortSignal }
-    ): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    update(
-      id: string,
-      body: { name?: string; archived?: boolean },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ template: Record<string, unknown> }>;
-    publishVersion(
-      id: string,
-      body: { config: Record<string, unknown>; ifVersion: number },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    listVersions(
-      id: string,
-      query?: { limit?: number; cursor?: string },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ versions: Record<string, unknown>[]; nextCursor: string | null }>;
-    getVersion(
-      id: string,
-      version: number,
-      options?: { signal?: AbortSignal }
-    ): Promise<{ version: Record<string, unknown> }>;
+    create(body: { name: string; config: Record<string, unknown> }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    list(query?: { limit?: number; cursor?: string; archived?: boolean | 'all' }, options?: { signal?: AbortSignal }): Promise<{ templates: Record<string, unknown>[]; nextCursor: string | null }>;
+    get(id: string, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    update(id: string, body: { name?: string; archived?: boolean }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown> }>;
+    publishVersion(id: string, body: { config: Record<string, unknown>; ifVersion: number }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
+    listVersions(id: string, query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ versions: Record<string, unknown>[]; nextCursor: string | null }>;
+    getVersion(id: string, version: number, options?: { signal?: AbortSignal }): Promise<{ version: Record<string, unknown> }>;
     delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
   };
   agents: {
-    create(
-      body: { templateId: string; version?: number; name?: string },
-      options?: { idempotencyKey?: string; signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    list(
-      query?: { limit?: number; cursor?: string; templateId?: string },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
-    get(
-      id: string,
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    update(
-      id: string,
-      body: {
-        ifRevision: number;
-        name?: string;
-        pinnedVersion?: number;
-        state?: 'active' | 'paused';
-      },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    setAction(
-      id: string,
-      name: string,
-      body: { disabled: boolean; ifRevision: number },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    stop(
-      id: string,
-      body: { ifRevision: number },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
-    delete(
-      id: string,
-      options?: { signal?: AbortSignal }
-    ): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
+    create(body: { templateId: string; version?: number; name?: string }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    list(query?: { limit?: number; cursor?: string; templateId?: string }, options?: { signal?: AbortSignal }): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
+    get(id: string, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    setAction(id: string, name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    stop(id: string, body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
+    delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
     run(id: string, input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
   };
   agent(id: string): {
     context: {
-      list(options?: {
-        signal?: AbortSignal;
-      }): Promise<{ entries: Array<Record<string, unknown>> }>;
-      get(
-        key: string,
-        options?: { signal?: AbortSignal }
-      ): Promise<{ entry: Record<string, unknown> }>;
-      put(
-        key: string,
-        body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null },
-        options?: { signal?: AbortSignal }
-      ): Promise<{ entry: Record<string, unknown> }>;
-      delete(
-        key: string,
-        body: { ifVersion: string },
-        options?: { signal?: AbortSignal }
-      ): Promise<{ deleted: boolean }>;
+      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
+      get(key: string, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      put(key: string, body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      delete(key: string, body: { ifVersion: string }, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
     };
     memory: {
-      add(
-        body: { text: string; source?: string },
-        options?: { signal?: AbortSignal }
-      ): Promise<{ entry: Record<string, unknown> }>;
-      list(options?: {
-        signal?: AbortSignal;
-      }): Promise<{ entries: Array<Record<string, unknown>> }>;
+      add(body: { text: string; source?: string }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
       delete(entryId: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
     };
     conversations: {
-      list(
-        query?: { cursor?: string; limit?: number },
-        options?: { signal?: AbortSignal }
-      ): Promise<{ conversations: Array<Record<string, unknown>>; nextCursor: string | null }>;
-      get(
-        key: string,
-        query?: { afterSeq?: number; limit?: number },
-        options?: { signal?: AbortSignal }
-      ): Promise<{
-        conversation: Record<string, unknown>;
-        messages: Array<Record<string, unknown>>;
-        facts: Array<Record<string, unknown>>;
-        summary: Record<string, unknown> | null;
-        nextAfterSeq: number | null;
-      }>;
-      delete(
-        key: string,
-        options?: { signal?: AbortSignal }
-      ): Promise<{ deletion: { conversationId: string; status: 'completed' | 'pending' } }>;
-      deleteMessage(
-        key: string,
-        seq: number,
-        options?: { signal?: AbortSignal }
-      ): Promise<Record<string, unknown>>;
-      deleteFact(
-        key: string,
-        factId: string,
-        options?: { signal?: AbortSignal }
-      ): Promise<Record<string, unknown>>;
+      list(query?: { cursor?: string; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversations: Array<Record<string, unknown>>; nextCursor: string | null }>;
+      get(key: string, query?: { afterSeq?: number; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversation: Record<string, unknown>; messages: Array<Record<string, unknown>>; facts: Array<Record<string, unknown>>; summary: Record<string, unknown> | null; nextAfterSeq: number | null }>;
+      delete(key: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { conversationId: string; status: 'completed' | 'pending' } }>;
+      deleteMessage(key: string, seq: number, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
+      deleteFact(key: string, factId: string, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
     };
     get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    update(
-      body: {
-        ifRevision: number;
-        name?: string;
-        pinnedVersion?: number;
-        state?: 'active' | 'paused';
-      },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    setAction(
-      name: string,
-      body: { disabled: boolean; ifRevision: number },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown> }>;
-    stop(
-      body: { ifRevision: number },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
-    delete(options?: {
-      signal?: AbortSignal;
-    }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
+    update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    setAction(name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    stop(body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
+    delete(options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
     startRun(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
     getRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
-    listRuns(
-      query?: { limit?: number; cursor?: string },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ runs: ManagedRun[]; nextCursor: string | null }>;
-    listSteps(
-      runId: string,
-      options?: { signal?: AbortSignal }
-    ): Promise<{ steps: Record<string, unknown>[] }>;
-    reconcileStep(
-      runId: string,
-      ordinal: number,
-      body: { outcome: 'succeeded' | 'failed'; note?: string },
-      options?: { signal?: AbortSignal }
-    ): Promise<{ step: Record<string, unknown> }>;
+    listRuns(query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ runs: ManagedRun[]; nextCursor: string | null }>;
+    listSteps(runId: string, options?: { signal?: AbortSignal }): Promise<{ steps: Record<string, unknown>[] }>;
+    reconcileStep(runId: string, ordinal: number, body: { outcome: 'succeeded' | 'failed'; note?: string }, options?: { signal?: AbortSignal }): Promise<{ step: Record<string, unknown> }>;
     cancelRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
     run(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
   };
@@ -831,13 +622,7 @@ export declare class NullProtocolClient {
 export declare class PlatformError extends Error {
   readonly code: string;
   readonly status: number;
-  readonly details: {
-    latestVersion?: number;
-    revision?: number;
-    limit?: number;
-    runId?: string;
-    unknownAgents?: string[];
-  };
+  readonly details: { latestVersion?: number; revision?: number; limit?: number; runId?: string; unknownAgents?: string[] };
   readonly retryAfter: number | null;
 }
 
@@ -850,14 +635,8 @@ export interface ManagedActionDefinition {
   timeoutMs?: number;
   /** Maximum serialized result size in bytes, up to 65536. Defaults to 8192. */
   maxResultBytes?: number;
-  handler: (
-    args: Record<string, unknown>,
-    context: ManagedActionContext
-  ) => unknown | Promise<unknown>;
-  guard?: (
-    args: Record<string, unknown>,
-    context: ManagedActionContext
-  ) => boolean | Promise<boolean>;
+  handler: (args: Record<string, unknown>, context: ManagedActionContext) => unknown | Promise<unknown>;
+  guard?: (args: Record<string, unknown>, context: ManagedActionContext) => boolean | Promise<boolean>;
 }
 
 export declare function defineAction(definition: ManagedActionDefinition): ManagedActionDefinition;
@@ -883,28 +662,14 @@ export declare class ManagedExecutor {
     executorKey: string;
     endpoint?: string;
     agentIds: string[];
-    credentials: Record<
-      string,
-      {
-        provider: string;
-        baseURL: string;
-        apiKey?: string;
-        allowInsecureHttp?: boolean;
-        /** false for models without native tool calling: actions are offered as JSON choices. */
-        toolCalls?: boolean;
-      }
-    >;
+    credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean; toolCalls?: boolean }>;
     actions?: ManagedActionDefinition[];
     instanceId?: string;
     fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
     modelFetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
     onError?: (code: string) => void;
   });
-  register(): Promise<{
-    instanceId: string;
-    heartbeatSeconds: number;
-    offlineAfterSeconds: number;
-  }>;
+  register(): Promise<{ instanceId: string; heartbeatSeconds: number; offlineAfterSeconds: number }>;
   pollOnce(waitSeconds?: number): Promise<unknown>;
   start(): Promise<this>;
   stop(): Promise<void>;

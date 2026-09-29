@@ -41,7 +41,12 @@ function fromDecision(text, tools) {
   } catch {
     return { text };
   }
-  if (decision?.action === 'reply') return { text: String(decision.text ?? '') };
+  if (decision?.action === 'reply') {
+    if (typeof decision.text !== 'string' || !decision.text.trim()) {
+      throw new ManagedModelError('invalid_model_response');
+    }
+    return { text: decision.text };
+  }
   if (!tools.some(tool => tool.function.name === decision?.action)) {
     throw new ManagedModelError('invalid_model_response');
   }
