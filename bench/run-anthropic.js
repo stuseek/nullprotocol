@@ -1,36 +1,40 @@
 #!/usr/bin/env node
 /* eslint-disable no-console -- This CLI prints progress and a summary table. */
-// Runs the frozen 48 tasks against Claude with the same prompts as the local
-// Qwen run: a direct Messages API call parsed with JSON.parse, and the SDK.
-// There is no schema-less JSON mode on the Messages API, so the direct-json
-// arm is omitted. Current Claude models reject temperature and think before
-// answering, so this run sends no temperature and allows 4096 output tokens.
+// Runs the frozen 48 tasks against Claude with the local run's prompts: a
+// direct Messages API call parsed with JSON.parse, and the SDK. Both arms get
+// the same logical call budget (1 structured, 3 tool), no transport retries
+// and the same timeout. There is no schema-less JSON mode on the Messages API,
+// so the direct-json arm is omitted. Current Claude models reject temperature
+// and think before answering, so no temperature is sent, thinking and effort
+// stay at the provider default, and each call may use 4096 output tokens
+// (the local run capped calls at 280).
+//
+//   npm run bench:anthropic [-- OUTPUT.jsonl]
+//   node bench/run-anthropic.js --report FILE.jsonl
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const Anthropic = require('@anthropic-ai/sdk').default;
-const { NullProtocol } = require('../src');
 const tasks = require('./frozen-tasks');
 const { score } = require('./score');
-const { prompt } = require('./run');
+const { prompt } = require('./prompts');
 
-const models = (process.env.NULLPROTOCOL_BENCH_MODELS || 'claude-opus-5').split(',');
+const KIND = 'anthropic-frozen-v1';
+const ARMS = ['direct', 'sdk'];
 const maxTokens = 4096;
-const output =
-  process.argv[2] ||
-  path.join(
-    __dirname,
-    'results',
-    `frozen-anthropic-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
-  );
+const timeout = 120_000;
+const budgetFor = task => (task.category === 'tool' ? 3 : 1);
+const taskSha256 = createHash('sha256').update(JSON.stringify(tasks)).digest('hex');
+const root = path.join(__dirname, '..');
+const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 
-function meter(client) {
+function meter(client, budget) {
   const stats = { calls: 0, inputTokens: 0, outputTokens: 0, rawResponses: [] };
   const create = client.messages.create.bind(client.messages);
   client.messages.create = async (params, options) => {
+    if (stats.calls >= budget) throw new Error('budget_exhausted');
     stats.calls++;
-    const response = await create(params, options);
+    const response = await create(params, { ...options, maxRetries: 0 });
     stats.inputTokens += response.usage.input_tokens;
     stats.outputTokens += response.usage.output_tokens;
     stats.rawResponses.push({ content: response.content, stopReason: response.stop_reason });
@@ -52,16 +56,22 @@ const toolCalls = rawResponses =>
       .map(block => ({ name: block.name, arguments: block.input }))
   );
 
+function toolResult(task, name) {
+  return name === task.tool.name ? task.toolResult : { error: 'not_allowed' };
+}
+
+function failure(error, stats) {
+  if (error.message === 'budget_exhausted') return 'budget_exhausted';
+  if (stats.rawResponses.at(-1)?.stopReason === 'max_tokens') return 'truncated';
+  return 'error';
+}
+
 async function direct(task, model) {
-  const client = new Anthropic({ maxRetries: 2 });
-  const stats = meter(client);
+  const Anthropic = require('@anthropic-ai/sdk').default;
+  const client = new Anthropic({ maxRetries: 0, timeout });
+  const stats = meter(client, budgetFor(task));
   const [system, user] = prompt(task);
-  const params = {
-    model,
-    system: system.content,
-    messages: [user],
-    max_tokens: maxTokens
-  };
+  const params = { model, system: system.content, messages: [user], max_tokens: maxTokens };
   if (task.category === 'tool') {
     params.tools = [
       {
@@ -71,140 +81,190 @@ async function direct(task, model) {
       }
     ];
   }
+  let status = 'ok';
+  let accepted = false;
   let payload = null;
   let answer = '';
-  for (let round = 0; round < 3; round++) {
-    const response = await client.messages.create(params);
-    if (response.stop_reason !== 'tool_use') {
-      answer = text(response.content);
-      if (task.category !== 'tool') {
-        try {
-          payload = JSON.parse(answer);
-        } catch {
-          payload = null;
+  try {
+    for (;;) {
+      const response = await client.messages.create(params);
+      if (response.stop_reason !== 'tool_use') {
+        answer = text(response.content);
+        if (task.category === 'tool') {
+          accepted = !!answer.trim();
+          if (!accepted) status = 'empty_response';
+        } else {
+          try {
+            payload = JSON.parse(answer);
+            accepted = true;
+          } catch {
+            status = response.stop_reason === 'max_tokens' ? 'truncated' : 'parse_fail';
+          }
         }
+        break;
       }
-      break;
+      params.messages.push({ role: 'assistant', content: response.content });
+      params.messages.push({
+        role: 'user',
+        content: response.content
+          .filter(block => block.type === 'tool_use')
+          .map(block => ({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: JSON.stringify(toolResult(task, block.name))
+          }))
+      });
     }
-    params.messages.push({ role: 'assistant', content: response.content });
-    params.messages.push({
-      role: 'user',
-      content: response.content
-        .filter(block => block.type === 'tool_use')
-        .map(block => ({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: JSON.stringify(
-            block.name === task.tool.name ? task.toolResult : { error: 'not_allowed' }
-          )
-        }))
-    });
+  } catch (error) {
+    status = failure(error, stats);
   }
-  return { payload, answer, toolCalls: toolCalls(stats.rawResponses), ...stats };
+  return { status, accepted, payload, answer, toolCalls: toolCalls(stats.rawResponses), ...stats };
 }
 
 async function sdk(task, model) {
+  const { NullProtocol } = require('../src');
   const ai = new NullProtocol({
     engines: { anthropic: process.env.ANTHROPIC_API_KEY },
     defaultEngine: 'anthropic',
     models: { anthropic: model },
     maxTokens,
+    timeout,
+    retry: { maxRetries: 0 },
     telemetry: false,
     configFile: path.join(__dirname, 'no-config-file.json')
   });
-  const stats = meter(ai.clients.anthropic);
+  const stats = meter(ai.clients.anthropic, budgetFor(task));
+  let status = 'ok';
+  let accepted = false;
   let payload = null;
   let answer = '';
-  if (task.category === 'decide') {
-    const result = await ai.decide(task.context, task.actions);
-    payload = result.success ? { action: result.action } : null;
-  } else if (task.category === 'tool') {
-    const result = await ai.chat(task.prompt, {
-      tools: [task.tool],
-      onToolCall: name => (name === task.tool.name ? task.toolResult : { error: 'not_allowed' })
-    });
-    answer = result.message || '';
-  } else {
-    const result = await ai.extract(task.data, task.schema);
-    payload = result.data;
+  try {
+    let result;
+    if (task.category === 'decide') {
+      result = await ai.decide(task.context, task.actions);
+      payload = result.success ? { action: result.action } : null;
+    } else if (task.category === 'tool') {
+      result = await ai.chat(task.prompt, {
+        tools: [task.tool],
+        onToolCall: name => toolResult(task, name)
+      });
+      answer = result.message || '';
+    } else {
+      result = await ai.extract(task.data, task.schema);
+      payload = result.data;
+    }
+    accepted = result.success;
+    if (!accepted) {
+      status = result.error?.includes('budget_exhausted')
+        ? 'budget_exhausted'
+        : stats.rawResponses.at(-1)?.stopReason === 'max_tokens'
+          ? 'truncated'
+          : 'rejected';
+    }
+  } catch (error) {
+    status = failure(error, stats);
   }
-  return { payload, answer, toolCalls: toolCalls(stats.rawResponses), ...stats };
+  return { status, accepted, payload, answer, toolCalls: toolCalls(stats.rawResponses), ...stats };
 }
 
-function sourceCommit() {
-  const root = path.join(__dirname, '..');
-  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+async function run(output, models) {
   if (git(['status', '--porcelain', '--', 'src', 'bench', 'package.json'])) {
     throw new Error('Commit the benchmark source before running it');
   }
-  return git(['rev-parse', 'HEAD']);
-}
-
-async function main() {
+  const sdkPath = path.dirname(require.resolve('@anthropic-ai/sdk'));
   const manifest = {
-    kind: 'anthropic-frozen-v1',
+    kind: KIND,
     date: new Date().toISOString(),
-    sdkCommit: sourceCommit(),
-    anthropicSdk: JSON.parse(
-      fs.readFileSync(
-        path.join(path.dirname(require.resolve('@anthropic-ai/sdk')), 'package.json'),
-        'utf8'
-      )
-    ).version,
+    sdkCommit: git(['rev-parse', 'HEAD']),
+    anthropicSdk: JSON.parse(fs.readFileSync(path.join(sdkPath, 'package.json'), 'utf8')).version,
+    node: process.version,
     models,
-    arms: ['direct', 'sdk'],
+    arms: ARMS,
     maxTokens,
+    timeoutMs: timeout,
+    transportRetries: 0,
     temperature: null,
-    taskSha256: createHash('sha256').update(JSON.stringify(tasks)).digest('hex'),
+    thinking: 'provider default',
+    effort: 'provider default',
+    budget: { structured: 1, tool: 3 },
+    taskSha256,
     tasks: tasks.length
   };
   fs.mkdirSync(path.dirname(output), { recursive: true });
-  const rows = [];
   fs.writeFileSync(output, `${JSON.stringify({ manifest })}\n`, { flag: 'wx' });
   for (const model of models) {
     for (const [index, task] of tasks.entries()) {
-      const arms = index % 2 ? ['sdk', 'direct'] : ['direct', 'sdk'];
-      for (const arm of arms) {
+      for (const arm of index % 2 ? [...ARMS].reverse() : ARMS) {
         const started = Date.now();
-        let result;
-        try {
-          result = await (arm === 'sdk' ? sdk(task, model) : direct(task, model));
-        } catch (error) {
-          result = { payload: null, answer: '', toolCalls: [], error: error.message };
-        }
+        const result = await (arm === 'sdk' ? sdk(task, model) : direct(task, model));
+        const correct = score(task, result.payload, result.toolCalls, result.answer);
         const row = {
           model,
           taskId: task.id,
           category: task.category,
           arm,
-          correct: score(task, result.payload, result.toolCalls, result.answer),
+          correct,
+          silentWrong: result.accepted && !correct,
           wallMs: Date.now() - started,
           ...result
         };
-        rows.push(row);
         fs.appendFileSync(output, `${JSON.stringify(row)}\n`);
-        console.log(
-          `${model} ${task.id} ${arm}: ${row.correct ? 'correct' : row.error || 'wrong'}`
-        );
+        console.log(`${model} ${task.id} ${arm}: ${correct ? 'correct' : result.status}`);
       }
     }
   }
-  const categories = [...new Set(tasks.map(task => task.category))];
-  for (const model of models) {
-    for (const arm of ['direct', 'sdk']) {
-      const cells = categories.map(category => {
-        const matching = rows.filter(
-          row => row.model === model && row.arm === arm && row.category === category
-        );
-        return `${category} ${matching.filter(row => row.correct).length}/${matching.length}`;
-      });
-      console.log(`${model} ${arm}: ${cells.join(', ')}`);
-    }
-  }
-  console.log(`Raw results: ${output}`);
+  report(output);
 }
 
-main().catch(error => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+// Verifies a result file against the current tasks and scorer, then prints
+// correct answers per model, arm and category.
+function report(file) {
+  const [header, ...rows] = fs.readFileSync(file, 'utf8').trim().split('\n').map(JSON.parse);
+  const { manifest } = header;
+  if (manifest?.kind !== KIND) throw new Error(`Not an ${KIND} result file`);
+  if (manifest.taskSha256 !== taskSha256) {
+    throw new Error('Task definitions changed since this run');
+  }
+  git(['cat-file', '-e', `${manifest.sdkCommit}^{commit}`]);
+  if (rows.length !== manifest.models.length * tasks.length * ARMS.length) {
+    throw new Error('Incomplete run: expected one row per model, task and arm');
+  }
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  for (const row of rows) {
+    if (score(byId.get(row.taskId), row.payload, row.toolCalls, row.answer) !== row.correct) {
+      throw new Error(`Score mismatch for ${row.model} ${row.taskId} ${row.arm}`);
+    }
+  }
+  const categories = [...new Set(tasks.map(task => task.category))];
+  console.log(`Source ${manifest.sdkCommit}, ${manifest.date}, max_tokens ${manifest.maxTokens}`);
+  for (const model of manifest.models) {
+    for (const arm of ARMS) {
+      const own = rows.filter(row => row.model === model && row.arm === arm);
+      const cells = categories.map(category => {
+        const matching = own.filter(row => row.category === category);
+        return `${category} ${matching.filter(row => row.correct).length}/${matching.length}`;
+      });
+      const silent = own.filter(row => row.silentWrong).length;
+      console.log(`${model} ${arm}: ${cells.join(', ')}; silently wrong ${silent}`);
+    }
+  }
+}
+
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  const models = (process.env.NULLPROTOCOL_BENCH_MODELS || 'claude-opus-5').split(',');
+  const output =
+    args[0] ||
+    path.join(
+      __dirname,
+      'results',
+      `frozen-anthropic-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
+    );
+  const work = async () => (args[0] === '--report' ? report(args[1]) : run(output, models));
+  work().catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { report };

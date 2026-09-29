@@ -1301,6 +1301,37 @@ describe('Anthropic requests', () => {
     expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
 
+  test('rejects refused or truncated replies in the tool loop and in streams', async () => {
+    const { ai } = withAnthropic('claude-opus-5');
+    await expect(
+      ai._handleToolCalls({ stop_reason: 'refusal', content: [] }, 'anthropic', {}, {}, {})
+    ).rejects.toThrow('refusal');
+    for (const stopReason of ['max_tokens', 'refusal']) {
+      ai.clients.anthropic.messages.stream = () =>
+        (async function* () {
+          yield { type: 'content_block_delta', delta: { text: 'partial' } };
+          yield { type: 'message_delta', delta: { stop_reason: stopReason } };
+          yield { type: 'message_stop' };
+        })();
+      const result = await ai.chat('q', { engine: 'anthropic', stream: true, collect: true });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(stopReason);
+    }
+  });
+
+  test('sends temperature only to released models that accept it', async () => {
+    for (const model of [
+      'claude-sonnet-5',
+      'claude-haiku-5',
+      'claude-opus-4-8',
+      'claude-fable-5-1'
+    ]) {
+      const { ai, create } = withAnthropic(model);
+      await ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'anthropic' });
+      expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+    }
+  });
+
   test('keeps temperature for models that accept it', async () => {
     const { ai, create } = withAnthropic('claude-haiku-4-5');
     await ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'anthropic' });

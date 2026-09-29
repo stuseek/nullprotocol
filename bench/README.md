@@ -33,3 +33,16 @@ For a publishable comparison, follow [the larger benchmark plan](https://github.
 `frozen-tasks.js` defines 12 tasks each for extraction, action choice, tool use, and retrieval from a noisy document. This set extends patterns explored in the pilot, so it is **not independent held-out data**. Freeze and review the tasks, runner, and scorer in a commit before running either model. Then use the same local setup as above and run `npm run bench:frozen`; the runner writes raw JSONL under ignored `bench/results/`. Use `npm run bench:report -- PATH` on the result. The report verifies the task hash, source commit, and expected rows. For structured tasks it compares direct JSON parsing, provider JSON mode, and the SDK; tool tasks use direct and SDK only. Publish the raw output and exact source commit with any task-specific results. One run per task is not a general model-quality estimate.
 
 The first [frozen run and interpretation](published/frozen-qwen-2026-09-24.md) are published with the [raw results](published/frozen-qwen-2026-09-24.jsonl). In this set, SDK parsing recovered three 3B decisions wrapped in single-element arrays; direct JSON mode matched SDK's strict score on every structured task. Wrong action choices still passed the SDK allowlist. The interpretation separates strict tool-output formatting from whether the correct tool and fact were used.
+
+## Frozen tasks on Claude
+
+`bench/run-anthropic.js` runs the same 48 tasks and prompts against Claude, with a direct Messages API arm (`JSON.parse` only) and the SDK arm. Both arms get the frozen call budgets (1 structured, 3 tool), no transport retries and a 120-second timeout; the direct-json arm is omitted because the Messages API has no schema-less JSON mode. Current Claude models accept no temperature and think before answering, so thinking and effort stay at the provider default and each call may use 4,096 output tokens instead of the local run's 280. That difference belongs in any interpretation, and a run is not a model-parity claim.
+
+Commit the source, set `ANTHROPIC_API_KEY`, and choose models explicitly:
+
+```sh
+NULLPROTOCOL_BENCH_MODELS=claude-opus-5 npm run bench:anthropic
+node bench/run-anthropic.js --report bench/results/frozen-anthropic-TIMESTAMP.jsonl
+```
+
+The report checks the task hash, source commit and row count, re-scores every row, and prints correct answers per model, arm and category with the number of accepted but wrong answers.

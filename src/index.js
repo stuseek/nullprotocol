@@ -19,9 +19,25 @@ let globalInstance = null;
 /**
  * Industry presets for common use cases
  */
-// Claude 4.7 and later reject sampling parameters; older models accept them.
+// Claude 4.7 and later reject sampling parameters. Only these released
+// families accept temperature; any other model gets none.
+const SAMPLING_MODELS = /^claude-(3-|haiku-4-5|sonnet-4-(5|6|20)|opus-4-(0|1|5|6|20))/;
 function acceptsTemperature(model) {
-  return /^claude-(3|haiku|sonnet-4|opus-4-[0-6])/.test(model);
+  return SAMPLING_MODELS.test(model);
+}
+
+// A refused, truncated or paused reply is not an answer; the primitives are
+// bounded single calls, so they reject it instead of returning partial text.
+const INCOMPLETE_STOPS = new Set([
+  'refusal',
+  'max_tokens',
+  'model_context_window_exceeded',
+  'pause_turn'
+]);
+function assertAnthropicComplete(stopReason) {
+  if (INCOMPLETE_STOPS.has(stopReason)) {
+    throw new Error(`Anthropic reply incomplete: ${stopReason}`);
+  }
 }
 
 // Replies can open with thinking blocks, so join the text blocks instead of
@@ -728,6 +744,7 @@ class AIToolkit {
         });
       } else {
         // Anthropic
+        assertAnthropicComplete(currentResponse.stop_reason);
         if (currentResponse.stop_reason !== 'tool_use') {
           return { text: anthropicText(currentResponse), toolCalls };
         }
@@ -827,6 +844,7 @@ class AIToolkit {
         return { text: currentResponse.choices[0].message.content || '', toolCalls };
       }
     } else if (currentResponse.stop_reason !== 'tool_use') {
+      assertAnthropicComplete(currentResponse.stop_reason);
       return { text: anthropicText(currentResponse), toolCalls };
     }
     throw new Error(`Tool-call limit of ${maxRounds} rounds reached`);
@@ -917,7 +935,7 @@ class AIToolkit {
             );
             return { text: result.text, toolCalls: result.toolCalls };
           }
-          if (message.stop_reason === 'refusal') throw new Error('Model refused the request');
+          assertAnthropicComplete(message.stop_reason);
           return anthropicText(message);
         }
 
@@ -1062,8 +1080,12 @@ class AIToolkit {
             maxRetries: 0
           });
 
+          let stopReason = null;
           for await (const event of stream) {
+            if (event.type === 'message_delta') stopReason = event.delta?.stop_reason ?? stopReason;
             if (event.type === 'message_stop' && !timedOut) {
+              // Validate before marking success: errors after finished are ignored.
+              assertAnthropicComplete(stopReason);
               finished = true;
             }
             const usage = event.message?.usage || event.usage;
