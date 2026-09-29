@@ -22,8 +22,14 @@ async function main() {
     onError: code => console.error(`executor: ${code}`)
   });
   await executor.start();
-  console.log(`executor ${executor.instanceId} connected`);
-  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => void executor.stop());
+  // Registration only: whether this executor can serve the Agent is reported
+  // by ask.js or client.agent(id).runtime().
+  console.log(`executor ${executor.instanceId} registered`);
+  // closed still resolves as stopped when deregistration fails; the API drops
+  // the registration once heartbeats stop.
+  const stop = () =>
+    executor.stop().catch(error => console.error(`executor: ${error.code || 'stop_failed'}`));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, stop);
   const { reason } = await executor.closed;
   console.log(`executor closed: ${reason}`);
   process.exitCode = reason === 'stopped' ? 0 : 1;

@@ -45,7 +45,7 @@ Four small scripts that run one order-support Agent with a local model:
    node examples/managed/starter/executor.js
    ```
 
-   It prints `connected`, logs transient problems such as an unreachable model or API, and keeps polling. Ctrl+C stops it with exit code 0. It exits with code 1 when the API rejects the key or its manifest, or when its Agent is deleted.
+   It prints `registered` once the API accepts it, logs transient problems such as an unreachable model or API, and keeps polling. Ctrl+C stops it with exit code 0. It exits with code 1 when the API rejects the key or its manifest, or when its Agent is deleted.
 
 5. Ask:
 

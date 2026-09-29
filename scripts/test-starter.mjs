@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,7 +17,22 @@ import { promisify } from 'node:util';
 const require = createRequire(import.meta.url);
 const { NullProtocolClient } = require('../src');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const starter = path.join(root, 'examples/managed/starter');
+// --packed runs the starter from the npm tarball, with production dependencies
+// only, so it cannot reach files outside the package.
+let starter = path.join(root, 'examples/managed/starter');
+let packDir;
+if (process.argv.includes('--packed')) {
+  const run = promisify(execFile);
+  packDir = await mkdtemp(path.join(tmpdir(), 'nullprotocol-pack-'));
+  const { stdout } = await run('npm', ['pack', '--pack-destination', dir], { cwd: root });
+  await run('tar', ['-xzf', path.join(packDir, stdout.trim().split('\n').at(-1))], {
+    cwd: packDir
+  });
+  await run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    cwd: path.join(packDir, 'package')
+  });
+  starter = path.join(packDir, 'package/examples/managed/starter');
+}
 const apiRepo = process.env.NULLPROTOCOL_API_REPO || path.resolve(root, '../nullprotocol-api');
 const { createPool } = await import(pathToFileURL(path.join(apiRepo, 'src/db.js')).href);
 const { createApp } = await import(pathToFileURL(path.join(apiRepo, 'src/app.js')).href);
@@ -94,7 +112,7 @@ try {
     let output = '';
     child.stderr.on('data', chunk => (output += chunk));
     const [line] = await once(child.stdout, 'data');
-    assert.match(String(line), /connected/, output);
+    assert.match(String(line), /registered/, output);
     child.lines = () => output;
     return child;
   };
@@ -110,6 +128,23 @@ try {
   assert.equal((await runtime()).online, false);
   const offline = await node('ask.js', ['Hello', 'customer-0']);
   assert.match(offline.stderr, /runtime_offline\nNo executor is connected/);
+  // SIGTERM exits 0 even when deregistration fails.
+  const stub = createServer((request, response) => {
+    if (request.url === '/v1/space') return response.end('{"space":{"slug":"stub"}}');
+    if (request.url.endsWith('/claim')) return; // wait until the executor aborts
+    response.statusCode = request.method === 'DELETE' ? 500 : 200;
+    response.end(request.method === 'DELETE' ? '{"error":"internal_error"}' : '{"executor":{}}');
+  });
+  await new Promise(resolve => stub.listen(0, '127.0.0.1', resolve));
+  const real = env.NULLPROTOCOL_API_URL;
+  env.NULLPROTOCOL_API_URL = `http://127.0.0.1:${stub.address().port}`;
+  const failing = await startExecutor();
+  assert.equal(await stopExecutor(failing), 0);
+  assert.match(failing.lines(), /executor: internal_error/);
+  env.NULLPROTOCOL_API_URL = real;
+  stub.closeAllConnections();
+  stub.close();
+
   let executor = await startExecutor();
   assert.deepEqual(
     { ...(await runtime()), lastSeenAt: null },
@@ -156,4 +191,5 @@ try {
   }
   if (teamId) await pool.query('DELETE FROM teams WHERE id=$1', [teamId]);
   await pool.end();
+  if (packDir) await rm(packDir, { recursive: true, force: true });
 }

@@ -291,6 +291,14 @@ describe('executor lifetime', () => {
     await expect(executor.closed).resolves.toEqual({ reason: 'stopped' });
   });
 
+  test('closed resolves as stopped even when deregistration fails', async () => {
+    const executor = await lifetimeExecutor(accepted).start();
+    executor.transport.fetchImpl = async () =>
+      new globalThis.Response(JSON.stringify({ error: 'internal_error' }), { status: 500 });
+    await expect(executor.stop()).rejects.toMatchObject({ status: 500 });
+    await expect(executor.closed).resolves.toEqual({ reason: 'stopped' });
+  });
+
   test.each([
     [401, 'unauthorized', 'unauthorized'],
     [403, 'forbidden', 'forbidden'],
