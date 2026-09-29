@@ -1,4 +1,4 @@
-const { runTextTurn } = require('../managed-model');
+const { runTextTurn, requestBody } = require('../managed-model');
 
 const messages = [
   { role: 'system', content: 'Answer briefly.' },
@@ -120,12 +120,11 @@ test('parses a bounded function call without trusting its id as a platform call 
 });
 
 describe('text protocol for models without tool calling', () => {
-  const tools = [
-    {
-      type: 'function',
-      function: { name: 'getOrder', description: 'Read one order', parameters: { type: 'object' } }
-    }
-  ];
+  const tool = (name, description = 'Read one order') => ({
+    type: 'function',
+    function: { name, description, parameters: { type: 'object' } }
+  });
+  const tools = [tool('getOrder')];
   const credential = { baseURL: 'http://127.0.0.1:11434/v1', toolCalls: false };
   const reply = content =>
     jest.fn(
@@ -134,42 +133,85 @@ describe('text protocol for models without tool calling', () => {
           status: 200
         })
     );
+  const sent = fetchImpl => JSON.parse(fetchImpl.mock.calls[0][1].body);
 
-  test('turns a decide-style JSON reply into a tool call without sending tools', async () => {
+  test('turns a decide-style reply into a native-shaped tool call without sending tools', async () => {
     const fetchImpl = reply('Sure.\n```json\n{"action":"getOrder","parameters":{"id":"42"}}\n```');
+    const result = await runTextTurn({ model: 'm', messages, tools, credential, fetchImpl });
+    const [call] = result.toolCalls;
+    expect(call).toEqual({
+      providerCallId: expect.any(String),
+      name: 'getOrder',
+      args: { id: '42' }
+    });
+    expect(result.assistantMessage.tool_calls).toEqual([
+      {
+        id: call.providerCallId,
+        type: 'function',
+        function: { name: 'getOrder', arguments: '{"id":"42"}' }
+      }
+    ]);
+    expect(sent(fetchImpl).tools).toBeUndefined();
+    expect(sent(fetchImpl).messages.at(-1).content).toContain('"action":"getOrder"');
+  });
+
+  test('keeps the protocol after every action is removed and never sends role tool', async () => {
     const history = [
       ...messages,
-      { role: 'assistant', content: '{"action":"getOrder","parameters":{"id":"41"}}' },
-      { role: 'tool', tool_call_id: 'call_1', content: '{"status":"shipped"}' }
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'refund', arguments: '{"id":"41"}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"status":"done"}' }
     ];
+    const fetchImpl = reply('{"answer":"The refund is done."}');
     const result = await runTextTurn({
       model: 'm',
       messages: history,
-      tools,
+      tools: [],
       credential,
       fetchImpl
     });
-    expect(result.toolCalls).toEqual([
-      { providerCallId: expect.any(String), name: 'getOrder', args: { id: '42' } }
+    expect(result.text).toBe('The refund is done.');
+    const wire = sent(fetchImpl).messages;
+    expect(wire.map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user',
+      'system'
     ]);
-    const sent = JSON.parse(fetchImpl.mock.calls[0][1].body);
-    expect(sent.tools).toBeUndefined();
-    expect(sent.messages.at(-2)).toEqual({
-      role: 'user',
-      content: 'Action result: {"status":"shipped"}'
-    });
-    expect(sent.messages.at(-1).content).toContain('"action":"getOrder"');
+    expect(wire[2].content).toBe('{"action":"refund","parameters":{"id":"41"}}');
+    expect(wire[3].content).toBe('Action result: {"status":"done"}');
+    expect(fetchImpl.mock.calls[0][1].body).toBe(
+      requestBody({ model: 'm', messages: history, tools: [], credential })
+    );
   });
 
-  test('returns replies and prose as text and rejects unknown actions', async () => {
-    const answer = await runTextTurn({
+  test('an action named reply is callable; the answer has its own envelope', async () => {
+    const withReply = [tool('reply', 'Send a reply to the customer')];
+    const called = await runTextTurn({
       model: 'm',
       messages,
-      tools,
+      tools: withReply,
       credential,
-      fetchImpl: reply('{"action":"reply","text":"It shipped."}')
+      fetchImpl: reply('{"action":"reply","parameters":{"body":"hi"}}')
     });
-    expect(answer.text).toBe('It shipped.');
+    expect(called.toolCalls[0]).toMatchObject({ name: 'reply', args: { body: 'hi' } });
+    const answered = await runTextTurn({
+      model: 'm',
+      messages,
+      tools: withReply,
+      credential,
+      fetchImpl: reply('{"answer":"Sent."}')
+    });
+    expect(answered.text).toBe('Sent.');
+  });
+
+  test('returns prose as text and rejects unknown actions and empty answers', async () => {
     const prose = await runTextTurn({
       model: 'm',
       messages,
@@ -178,14 +220,10 @@ describe('text protocol for models without tool calling', () => {
       fetchImpl: reply('It shipped yesterday.')
     });
     expect(prose.text).toBe('It shipped yesterday.');
-    await expect(
-      runTextTurn({
-        model: 'm',
-        messages,
-        tools,
-        credential,
-        fetchImpl: reply('{"action":"refund","parameters":{}}')
-      })
-    ).rejects.toMatchObject({ code: 'invalid_model_response' });
+    for (const content of ['{"action":"refund","parameters":{}}', '{"answer":"  "}']) {
+      await expect(
+        runTextTurn({ model: 'm', messages, tools, credential, fetchImpl: reply(content) })
+      ).rejects.toMatchObject({ code: 'invalid_model_response' });
+    }
   });
 });

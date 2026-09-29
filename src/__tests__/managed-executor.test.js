@@ -900,101 +900,119 @@ test('an oversized fact set is bounded, traced, and cannot authorize a write', a
   expect(job.memoryIncomplete).toBe(true);
 });
 
-test.each(['read', 'write'])(
-  'large %s results do not overflow a later model turn',
-  async effect => {
-    const action = {
-      name: 'searchOrders',
-      description: 'Search orders',
-      effect,
-      input: { type: 'object', properties: {}, additionalProperties: false },
-      output: { type: 'object', properties: { data: { type: 'string' } }, required: ['data'] },
-      maxResultBytes: 65536
-    };
-    const contractHash = actionContractHash(action);
-    const actionConfig = { ...config, actions: [action] };
-    const requests = [];
-    const steps = [];
-    const executor = new ManagedExecutor({
-      executorKey,
-      agentIds: [agentId],
-      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
-      actions: [{ ...action, handler: async () => ({ data: 'x'.repeat(60000) }) }],
-      modelFetchImpl: async (_url, options) => {
-        requests.push(JSON.parse(options.body));
-        return new globalThis.Response(
-          JSON.stringify({
-            choices: [
-              {
-                message:
-                  requests.length === 1
-                    ? {
-                        content: null,
-                        tool_calls: [
-                          {
-                            id: 'call-1',
-                            type: 'function',
-                            function: { name: 'searchOrders', arguments: '{}' }
-                          }
-                        ]
-                      }
-                    : { content: 'Done.' }
-              }
-            ]
-          })
-        );
+test.each([
+  ['read', 'native'],
+  ['write', 'native'],
+  ['read', 'text'],
+  ['write', 'text']
+])('large %s results do not overflow a later %s-protocol model turn', async (effect, protocol) => {
+  const text = protocol === 'text';
+  const action = {
+    name: 'searchOrders',
+    description: 'Search orders',
+    effect,
+    input: { type: 'object', properties: {}, additionalProperties: false },
+    output: { type: 'object', properties: { data: { type: 'string' } }, required: ['data'] },
+    maxResultBytes: 65536
+  };
+  const contractHash = actionContractHash(action);
+  const actionConfig = { ...config, actions: [action] };
+  const requests = [];
+  const steps = [];
+  const executor = new ManagedExecutor({
+    executorKey,
+    agentIds: [agentId],
+    credentials: {
+      localModel: {
+        provider: 'local',
+        baseURL: 'http://localhost:11434/v1',
+        ...(text ? { toolCalls: false } : {})
       }
-    });
-    executor._lease = jest.fn(async () => ({ expiresAt: new Date(Date.now() + 30000) }));
-    executor._context = jest.fn(async () => ({
-      spaceContext: [],
-      agentContext: [],
-      agentMemory: [],
-      disabledActions: []
-    }));
-    executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
-    executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => ({ run: body }));
-    const result = await executor._processActionJob(
-      {
-        run: {
-          id: runId,
-          agentId,
-          input: 'Search orders',
-          deadlineAt: new Date(Date.now() + 180000).toISOString()
-        },
-        template: { config: actionConfig },
-        actions: [{ ...action, contractHash }],
-        actionManifestHash: hashJson([{ name: action.name, contractHash }]),
-        spaceContext: [],
-        conversation: {
-          id: conversationId,
-          version: 1,
-          messages: [],
-          facts: Array.from({ length: 70 }, (_, index) => ({
-            id: `fact-${index}`,
-            value: { data: 'f'.repeat(1300) },
-            sourceSeqs: [index + 1]
-          }))
-        }
-      },
-      `np_lease_${'B'.repeat(43)}`,
-      executor.credentials.localModel,
-      new AbortController(),
-      { expiresAt: () => Date.now() + 30000, lost: () => false, cancelled: () => false }
-    );
-    expect(result.run.status).toBe('succeeded');
-    expect(requests).toHaveLength(2);
-    const toolMessage = requests[1].messages.find(message => message.role === 'tool').content;
-    expect(toolMessage).toContain(
-      effect === 'write' ? '"status":"succeeded"' : 'result_too_large_for_context'
-    );
-    expect(steps).toContainEqual(
-      expect.objectContaining({
-        kind: 'context',
-        payload: expect.objectContaining({
-          truncated: expect.objectContaining({ toolResults: 1 })
+    },
+    actions: [{ ...action, handler: async () => ({ data: 'x'.repeat(60000) }) }],
+    modelFetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return new globalThis.Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: text
+                ? {
+                    content:
+                      requests.length === 1
+                        ? '{"action":"searchOrders","parameters":{}}'
+                        : '{"answer":"Done."}'
+                  }
+                : requests.length === 1
+                  ? {
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: 'call-1',
+                          type: 'function',
+                          function: { name: 'searchOrders', arguments: '{}' }
+                        }
+                      ]
+                    }
+                  : { content: 'Done.' }
+            }
+          ]
         })
+      );
+    }
+  });
+  executor._lease = jest.fn(async () => ({ expiresAt: new Date(Date.now() + 30000) }));
+  executor._context = jest.fn(async () => ({
+    spaceContext: [],
+    agentContext: [],
+    agentMemory: [],
+    disabledActions: []
+  }));
+  executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+  executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => ({ run: body }));
+  const result = await executor._processActionJob(
+    {
+      run: {
+        id: runId,
+        agentId,
+        input: 'Search orders',
+        deadlineAt: new Date(Date.now() + 180000).toISOString()
+      },
+      template: { config: actionConfig },
+      actions: [{ ...action, contractHash }],
+      actionManifestHash: hashJson([{ name: action.name, contractHash }]),
+      spaceContext: [],
+      conversation: {
+        id: conversationId,
+        version: 1,
+        messages: [],
+        facts: Array.from({ length: 70 }, (_, index) => ({
+          id: `fact-${index}`,
+          value: { data: 'f'.repeat(1300) },
+          sourceSeqs: [index + 1]
+        }))
+      }
+    },
+    `np_lease_${'B'.repeat(43)}`,
+    executor.credentials.localModel,
+    new AbortController(),
+    { expiresAt: () => Date.now() + 30000, lost: () => false, cancelled: () => false }
+  );
+  expect(result.run.status).toBe('succeeded');
+  expect(requests).toHaveLength(2);
+  const resultMessage = text
+    ? requests[1].messages.find(message => message.content?.startsWith('Action result:'))
+    : requests[1].messages.find(message => message.role === 'tool');
+  const toolMessage = resultMessage.content;
+  expect(toolMessage).toContain(
+    effect === 'write' ? '"status":"succeeded"' : 'result_too_large_for_context'
+  );
+  expect(steps).toContainEqual(
+    expect.objectContaining({
+      kind: 'context',
+      payload: expect.objectContaining({
+        truncated: expect.objectContaining({ toolResults: 1 })
       })
-    );
-  }
-);
+    })
+  );
+});

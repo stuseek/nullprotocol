@@ -1,6 +1,11 @@
 const { randomUUID } = require('crypto');
 const { PlatformTransport, PlatformError } = require('./managed-http');
-const { runTextTurn, ManagedModelError, MAX_REQUEST_BYTES } = require('./managed-model');
+const {
+  runTextTurn,
+  requestBody,
+  ManagedModelError,
+  MAX_REQUEST_BYTES
+} = require('./managed-model');
 const { hashJson, actionContractHash } = require('./managed-canonical');
 const { ManagedActionRegistry } = require('./managed-actions');
 const {
@@ -104,7 +109,7 @@ function composeMessages(job) {
   return messages;
 }
 
-function fitPrompt(job, tools, model, entries) {
+function fitPrompt(job, tools, model, entries, credential) {
   const candidate = {
     ...job,
     agentContext: [...(job.agentContext || [])],
@@ -137,14 +142,7 @@ function fitPrompt(job, tools, model, entries) {
   };
   if (candidate.memoryIncomplete) readOnly();
   const bytes = messages =>
-    Buffer.byteLength(
-      JSON.stringify({
-        model,
-        messages,
-        max_tokens: 1024,
-        ...(selectedTools.length ? { tools: selectedTools } : {})
-      })
-    );
+    Buffer.byteLength(requestBody({ model, messages, tools: selectedTools, credential }));
   for (let attempt = 0; attempt < 400; attempt++) {
     const messages = composeMessages(candidate);
     const reserve = selectedTools.length ? 16384 : 1024;
@@ -185,10 +183,8 @@ function fitPrompt(job, tools, model, entries) {
   throw new ManagedModelError('model_context_too_large');
 }
 
-function requestBytes(model, messages, tools) {
-  return Buffer.byteLength(
-    JSON.stringify({ model, messages, max_tokens: 1024, ...(tools.length ? { tools } : {}) })
-  );
+function requestBytes(model, messages, tools, credential) {
+  return Buffer.byteLength(requestBody({ model, messages, tools, credential }));
 }
 
 function contextDelta(previous, current) {
@@ -214,10 +210,10 @@ function contextDelta(previous, current) {
   return delta;
 }
 
-function fitTurn(messages, tools, model, entries) {
+function fitTurn(messages, tools, model, entries, credential) {
   const selected = [...tools];
   const truncated = { toolResults: 0, contextUpdates: 0, priorModelOutputs: 0, actions: [] };
-  const fits = () => requestBytes(model, messages, selected) <= MAX_REQUEST_BYTES;
+  const fits = () => requestBytes(model, messages, selected, credential) <= MAX_REQUEST_BYTES;
   if (fits()) return { tools: selected, truncated };
 
   // Keep the call/result pairs intact. The step outcome remains in the trace,
@@ -800,7 +796,7 @@ class ManagedExecutor {
         }
       }
       const offeredTools = tools.filter(tool => !job.disabledActions?.includes(tool.function.name));
-      const fitted = fitPrompt(job, offeredTools, model.model, entries);
+      const fitted = fitPrompt(job, offeredTools, model.model, entries, credential);
       memoryIncomplete = job.memoryIncomplete === true;
       if (
         fitted.truncated.facts ||
@@ -862,7 +858,7 @@ class ManagedExecutor {
             !(memoryIncomplete && entries.get(name).contract.effect === 'write')
           );
         });
-        const turnFit = fitTurn(messages, allowedTools, model.model, entries);
+        const turnFit = fitTurn(messages, allowedTools, model.model, entries, credential);
         if (
           turnFit.truncated.toolResults ||
           turnFit.truncated.contextUpdates ||
