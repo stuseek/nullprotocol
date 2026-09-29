@@ -22,6 +22,8 @@ Node.js 18 or newer is required. The command pins an OpenAI SDK version that wor
 
 Install from the GitHub `main` branch using the command above. Set `NULLPROTOCOL_API_URL` only to target a non-default API; the default is `https://api.nullprotocol.ai`. Access to managed routes requires an allowlisted team and a scoped Space key.
 
+The shortest path is in the cabinet: create an Agent in Agent Center, create an executor key under Space keys, and copy the install command, `.env`, `executor.js` (and `actions.js` when the Template has actions) from the Agent's Connect tab; Connect then shows whether the running executor is registered and compatible. On 2026-09-30 this passed in production (cabinet 404f9a1 on Sites v33, API v58) in an owner's browser: an empty Space, keys and files copied from the UI, the generated executor on a local `qwen2.5:7b-instruct`, Ask from the cabinet, and the same conversation remembering the user's name after an executor restart. A member's view of the cabinet was not tested in a browser. [examples/managed/starter](examples/managed/starter/README.md) is the same path in code.
+
 ```js
 const { NullProtocolClient, ManagedExecutor, defineAction } = require('nullprotocol');
 const orders = new Map([['42', { status: 'shipped' }]]);
