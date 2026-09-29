@@ -24,7 +24,8 @@ const getOrder = defineAction({
   handler: async ({ id }) => orders.get(id) || { status: 'not_found' }
 });
 
-const name = 'Order support';
+// A different name creates a separate Template and Agent in setup.js.
+const name = process.env.NULLPROTOCOL_AGENT_NAME || 'Order support';
 const actions = [getOrder];
 
 function config(modelName) {

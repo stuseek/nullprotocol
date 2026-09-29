@@ -1,12 +1,16 @@
 // Runs examples/managed/starter as a new user would, as separate processes
-// against an in-process API on TEST_DATABASE_URL and a local OpenAI-compatible
-// model: setup, executor, ask, executor restart with memory, Agent Context,
-// pause and delete.
+// with a local OpenAI-compatible model: setup, executor, ask, executor restart
+// with memory, Agent Context, pause and delete.
+//
+// By default the API runs in process on TEST_DATABASE_URL with a disposable
+// team. `--production KEYFILE` uses api.nullprotocol.ai with the app and
+// executor keys from a mode-0600 file of NAME=value lines; it creates a
+// uniquely named Template and Agent and deletes only those.
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -33,64 +37,119 @@ if (process.argv.includes('--packed')) {
   });
   starter = path.join(packDir, 'package/examples/managed/starter');
 }
-const apiRepo = process.env.NULLPROTOCOL_API_REPO || path.resolve(root, '../nullprotocol-api');
-const { createPool } = await import(pathToFileURL(path.join(apiRepo, 'src/db.js')).href);
-const { createApp } = await import(pathToFileURL(path.join(apiRepo, 'src/app.js')).href);
-assert.ok(process.env.TEST_DATABASE_URL);
-assert.notEqual(process.env.TEST_DATABASE_URL, process.env.DATABASE_URL);
-const pool = createPool(process.env.TEST_DATABASE_URL);
 const tag = randomBytes(5).toString('hex');
-const admin = randomBytes(32).toString('hex');
-const server = createApp({
-  pool,
-  adminToken: admin,
-  sessionSecret: randomBytes(32).toString('hex'),
-  sessionVerifier: null,
-  managedAgentsEnabled: true,
-  logger: { error() {} }
-});
-const executors = new Set();
-let teamId, userId, spaceId;
-try {
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const endpoint = `http://127.0.0.1:${server.address().port}`;
-  const call = async (route, token, method = 'GET', body) => {
-    const response = await fetch(endpoint + route, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
-    });
-    const result = await response.json();
-    assert.ok(response.ok, `${method} ${route}: ${response.status} ${result?.error}`);
-    return result;
+const production = process.argv.indexOf('--production');
+
+async function localSpace() {
+  const apiRepo = process.env.NULLPROTOCOL_API_REPO || path.resolve(root, '../nullprotocol-api');
+  const { createPool } = await import(pathToFileURL(path.join(apiRepo, 'src/db.js')).href);
+  const { createApp } = await import(pathToFileURL(path.join(apiRepo, 'src/app.js')).href);
+  assert.ok(process.env.TEST_DATABASE_URL);
+  assert.notEqual(process.env.TEST_DATABASE_URL, process.env.DATABASE_URL);
+  const pool = createPool(process.env.TEST_DATABASE_URL);
+  const admin = randomBytes(32).toString('hex');
+  const server = createApp({
+    pool,
+    adminToken: admin,
+    sessionSecret: randomBytes(32).toString('hex'),
+    sessionVerifier: null,
+    managedAgentsEnabled: true,
+    logger: { error() {} }
+  });
+  let teamId, userId, spaceId;
+  const cleanup = async () => {
+    if (server.listening) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    if (spaceId) await pool.query('DELETE FROM spaces WHERE id=$1', [spaceId]);
+    if (teamId) await pool.query('DELETE FROM team_members WHERE team_id=$1', [teamId]);
+    if (userId) {
+      await pool.query('DELETE FROM user_tokens WHERE user_id=$1', [userId]);
+      await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+    }
+    if (teamId) await pool.query('DELETE FROM teams WHERE id=$1', [teamId]);
+    await pool.end();
   };
-  const team = `starter-team-${tag}`;
-  const slug = `starter-space-${tag}`;
-  teamId = (await call('/v1/admin/teams', admin, 'POST', { slug: team, name: 'Starter' })).team.id;
-  userId = (await call('/v1/admin/users', admin, 'POST', { email: `${tag}@example.test` })).user.id;
-  await call(`/v1/admin/teams/${team}/members`, admin, 'POST', { userId, role: 'owner' });
-  const owner = (await call(`/v1/admin/users/${userId}/tokens`, admin, 'POST', { label: 'S' }))
-    .token.token;
-  spaceId = (await call(`/v1/teams/${team}/spaces`, owner, 'POST', { slug, name: 'Starter' })).space
-    .id;
-  const key = async scopes =>
-    (await call(`/v1/spaces/${slug}/space-keys`, owner, 'POST', { label: 'Starter', scopes })).key
-      .spaceKey;
+  try {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    const call = async (route, token, method = 'GET', body) => {
+      const response = await fetch(endpoint + route, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+      });
+      const result = await response.json();
+      assert.ok(response.ok, `${method} ${route}: ${response.status} ${result?.error}`);
+      return result;
+    };
+    const team = `starter-team-${tag}`;
+    const slug = `starter-space-${tag}`;
+    teamId = (await call('/v1/admin/teams', admin, 'POST', { slug: team, name: 'Starter' })).team
+      .id;
+    userId = (await call('/v1/admin/users', admin, 'POST', { email: `${tag}@example.test` })).user
+      .id;
+    await call(`/v1/admin/teams/${team}/members`, admin, 'POST', { userId, role: 'owner' });
+    const owner = (await call(`/v1/admin/users/${userId}/tokens`, admin, 'POST', { label: 'S' }))
+      .token.token;
+    spaceId = (await call(`/v1/teams/${team}/spaces`, owner, 'POST', { slug, name: 'Starter' }))
+      .space.id;
+    const key = async scopes =>
+      (await call(`/v1/spaces/${slug}/space-keys`, owner, 'POST', { label: 'Starter', scopes })).key
+        .spaceKey;
+    return {
+      endpoint,
+      appKey: await key([
+        'templates:write',
+        'agents:write',
+        'agents:read',
+        'runs:create',
+        'runs:read',
+        'context:write'
+      ]),
+      executorKey: await key(['runtime:connect', 'runs:execute']),
+      cleanup
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+async function productionSpace(file) {
+  assert.equal((await stat(file)).mode & 0o077, 0, `${file} must be readable by its owner only`);
+  const values = Object.fromEntries(
+    (await readFile(file, 'utf8'))
+      .split('\n')
+      .filter(line => line.includes('='))
+      .map(line => line.trim().split(/=(.*)/s, 2))
+  );
+  assert.ok(values.NULLPROTOCOL_APP_KEY && values.NULLPROTOCOL_EXECUTOR_KEY, 'keys file');
+  return {
+    endpoint: 'https://api.nullprotocol.ai',
+    appKey: values.NULLPROTOCOL_APP_KEY,
+    executorKey: values.NULLPROTOCOL_EXECUTOR_KEY,
+    cleanup: async () => {}
+  };
+}
+
+const space =
+  production === -1 ? await localSpace() : await productionSpace(process.argv[production + 1]);
+const { endpoint } = space;
+const app = new NullProtocolClient({ spaceKey: space.appKey, endpoint });
+const executors = new Set();
+let agentId, templateId;
+try {
   const env = {
     ...process.env,
     NULLPROTOCOL_API_URL: endpoint,
-    NULLPROTOCOL_APP_KEY: await key([
-      'templates:write',
-      'agents:write',
-      'agents:read',
-      'runs:create',
-      'runs:read',
-      'context:write'
-    ]),
-    NULLPROTOCOL_EXECUTOR_KEY: await key(['runtime:connect', 'runs:execute']),
+    NULLPROTOCOL_APP_KEY: space.appKey,
+    NULLPROTOCOL_EXECUTOR_KEY: space.executorKey,
+    NULLPROTOCOL_AGENT_NAME: `Starter check ${tag}`,
     MODEL_BASE_URL: process.env.MODEL_BASE_URL || 'http://127.0.0.1:11434/v1',
     MODEL_NAME: process.env.MODEL_NAME || 'qwen2.5:7b-instruct'
   };
@@ -103,7 +162,8 @@ try {
   const setup = await node('setup.js');
   assert.match(setup, /^NULLPROTOCOL_AGENT_ID=[0-9a-f-]{36}$/);
   assert.equal(await node('setup.js'), setup, 'rerunning setup returns the same Agent');
-  env.NULLPROTOCOL_AGENT_ID = setup.split('=')[1];
+  env.NULLPROTOCOL_AGENT_ID = agentId = setup.split('=')[1];
+  templateId = (await app.agents.get(agentId)).agent.templateId;
 
   const startExecutor = async () => {
     const child = spawn(process.execPath, [path.join(starter, 'executor.js')], { env });
@@ -122,8 +182,6 @@ try {
     return (await exited)[0];
   };
 
-  const app = new NullProtocolClient({ spaceKey: env.NULLPROTOCOL_APP_KEY, endpoint });
-  const agentId = env.NULLPROTOCOL_AGENT_ID;
   const runtime = async () => (await app.agent(agentId).runtime()).runtime;
   assert.equal((await runtime()).online, false);
   const offline = await node('ask.js', ['Hello', 'customer-0']);
@@ -173,23 +231,16 @@ try {
   assert.match(paused.stderr, /agent_paused\nThe Agent is paused/);
 
   await app.agents.delete(agentId);
+  agentId = null;
   const code = await stopExecutor(executor, null);
   assert.equal(code, 1, 'the executor exits once its only Agent is deleted');
   assert.match(executor.lines(), /agent_removed/);
   console.log('Starter path passed');
 } finally {
   for (const child of executors) child.kill('SIGKILL');
-  if (server.listening) {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-  }
-  if (spaceId) await pool.query('DELETE FROM spaces WHERE id=$1', [spaceId]);
-  if (teamId) await pool.query('DELETE FROM team_members WHERE team_id=$1', [teamId]);
-  if (userId) {
-    await pool.query('DELETE FROM user_tokens WHERE user_id=$1', [userId]);
-    await pool.query('DELETE FROM users WHERE id=$1', [userId]);
-  }
-  if (teamId) await pool.query('DELETE FROM teams WHERE id=$1', [teamId]);
-  await pool.end();
+  // Only what this run created; keys stay for their owner to revoke.
+  if (agentId) await app.agents.delete(agentId).catch(error => console.error(error.code));
+  if (templateId) await app.templates.delete(templateId).catch(error => console.error(error.code));
+  await space.cleanup();
   if (packDir) await rm(packDir, { recursive: true, force: true });
 }
