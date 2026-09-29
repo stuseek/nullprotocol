@@ -46,3 +46,5 @@ node bench/run-anthropic.js --report bench/results/frozen-anthropic-TIMESTAMP.js
 ```
 
 Run the report from a source checkout: it checks the task hash and that the source commit exists, requires exactly one row per model, task and arm, re-scores every row and its `silentWrong` flag, and prints correct answers per model, arm and category with the number of accepted but wrong answers.
+
+The first [Claude Sonnet 5 run and interpretation](published/frozen-anthropic-sonnet5-2026-09-30.md) are published with the [raw results](published/frozen-anthropic-sonnet5-2026-09-30.jsonl). The SDK recovered 15 correct answers that the model returned inside Markdown fences; with the fences removed, the direct arm also scores 48/48, so this is output-format recovery rather than better reasoning. The same commit reproduced the published Qwen run exactly.
