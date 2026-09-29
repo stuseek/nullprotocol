@@ -14,7 +14,7 @@ The library is MIT licensed and runs without an account. Telemetry and shared Sp
 npm install git+https://github.com/stuseek/nullprotocol.git 'openai@^4.104.0'
 ```
 
-Node.js 18 or newer is required. The command pins an OpenAI SDK version that works on Node 18; Node 22 users can install the current OpenAI SDK. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic. The Anthropic engine defaults to `claude-opus-5`; set `models.anthropic` to choose another model. Claude 4.7 and later models accept no sampling parameters, so `temperature` is sent only to Claude 3, Haiku 4.5, Sonnet 4 to 4.6, and Opus 4 to 4.6, and is otherwise ignored. A refused, truncated (`max_tokens`), context-limited, or paused Anthropic reply is returned as a failure, never as partial text.
+Node.js 18 or newer is required. The command pins an OpenAI SDK version that works on Node 18; Node 22 users can install the current OpenAI SDK. Install `@anthropic-ai/sdk` instead of `openai` if you use Anthropic. The Anthropic engine defaults to `claude-sonnet-5`, the current Sonnet; set `models.anthropic` to choose another model. Claude 4.7 and later models accept no sampling parameters, so `temperature` is sent only to Claude 3, Haiku 4.5, Sonnet 4 to 4.6, and Opus 4 to 4.6, and is otherwise ignored. A refused, truncated (`max_tokens`), context-limited, or paused Anthropic reply, or one with no text, is returned as a failure, never as partial or empty text.
 
 ### Connected managed Agents (allowlisted beta)
 

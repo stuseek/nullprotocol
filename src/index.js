@@ -41,12 +41,14 @@ function assertAnthropicComplete(stopReason) {
 }
 
 // Replies can open with thinking blocks, so join the text blocks instead of
-// taking the first block.
+// taking the first block. A reply with no text (only thinking) is no answer.
 function anthropicText(message) {
-  return message.content
+  const text = message.content
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('');
+  if (!text.trim()) throw new Error('Anthropic reply has no text');
+  return text;
 }
 
 const PRESETS = {
@@ -573,7 +575,7 @@ class AIToolkit {
    * Resolve model name — supports aliases (fast, balanced, powerful) and per-engine defaults
    */
   _resolveModel(model, engine) {
-    const defaults = { openai: 'gpt-4', anthropic: 'claude-opus-5' };
+    const defaults = { openai: 'gpt-4', anthropic: 'claude-sonnet-5' };
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
   }
 
@@ -1081,16 +1083,19 @@ class AIToolkit {
           });
 
           let stopReason = null;
+          let answered = false;
           for await (const event of stream) {
             if (event.type === 'message_delta') stopReason = event.delta?.stop_reason ?? stopReason;
             if (event.type === 'message_stop' && !timedOut) {
               // Validate before marking success: errors after finished are ignored.
               assertAnthropicComplete(stopReason);
+              if (!answered) throw new Error('Anthropic reply has no text');
               finished = true;
             }
             const usage = event.message?.usage || event.usage;
             if (usage && typeof options.onUsage === 'function') options.onUsage(usage);
             if (event.type === 'content_block_delta' && event.delta?.text) {
+              answered = true;
               pauseTimer();
               yield event.delta.text;
               armTimer();

@@ -1319,6 +1319,25 @@ describe('Anthropic requests', () => {
     }
   });
 
+  test('a reply with only thinking blocks is a failure, not an empty answer', async () => {
+    const { ai, create } = withAnthropic('claude-opus-5');
+    create.mockResolvedValueOnce({
+      stop_reason: 'end_turn',
+      content: [{ type: 'thinking', thinking: '' }],
+      usage: { input_tokens: 3, output_tokens: 1 }
+    });
+    await expect(
+      ai.makeAIRequest({ system: 's', user: 'u' }, { engine: 'anthropic' })
+    ).rejects.toThrow('no text');
+    ai.clients.anthropic.messages.stream = () =>
+      (async function* () {
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        yield { type: 'message_stop' };
+      })();
+    const streamed = await ai.chat('q', { engine: 'anthropic', stream: true, collect: true });
+    expect(streamed.success).toBe(false);
+  });
+
   test('sends temperature only to released models that accept it', async () => {
     for (const model of [
       'claude-sonnet-5',
