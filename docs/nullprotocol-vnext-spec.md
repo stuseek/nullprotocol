@@ -548,7 +548,7 @@ These are information areas, not a mandate to create eleven top-level tabs. Give
 
 ### Shipped navigation (2026-09-30)
 
-The cabinet has one level of context: a Space selector at the top of the sidebar (with **All spaces**), then **Agents** as the main screen, a **Telemetry** disclosure for the SDK telemetry screens (Observed agents, Activity, Connections), and **Settings** at the bottom for the owner. The Agent's own sections (Overview, Connect, Ask, Runs, Conversations, Memory, Context, Actions) stay inside the Agent, not in the Space menu. API keys and shared context sit under **More** beside **Create agent**.
+The cabinet has one level of context: a Space selector at the top of the sidebar (with **All spaces**), then **Agents** as the main screen, a **Telemetry** disclosure for the SDK telemetry screens (Activity, filtered by reported agent ID and holding that ID's record actions and runtime controls, and Connections), and **Settings** at the bottom for the owner. The Agent's own sections (Overview, Connect, Ask, Runs, Conversations, Memory, Context, Actions) stay inside the Agent, not in the Space menu. API keys and shared context sit under **More** beside **Create agent**.
 
 ### Backlog: Run graph
 
