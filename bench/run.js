@@ -6,9 +6,12 @@ const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { OpenAI } = require('openai');
 const { NullProtocol } = require('../src');
+const { parseJSON } = require('../src/json');
+const { validateExtraction } = require('../src/schema');
 const args = require.main === module ? process.argv.slice(2) : [];
 const suiteArgs = args.filter(arg => arg.startsWith('--suite='));
 const providerArgs = args.filter(arg => arg.startsWith('--provider='));
+const armArgs = args.filter(arg => arg.startsWith('--arms='));
 const outputArgs = args.filter(
   arg => !arg.startsWith('--suite=') && !arg.startsWith('--provider=')
 );
@@ -18,8 +21,13 @@ if (
   outputArgs.length > 1 ||
   outputArgs.some(arg => arg.startsWith('--'))
 ) {
-  throw new Error('Usage: run.js [--suite=frozen] [--provider=mistral] [OUTPUT.jsonl]');
+  throw new Error(
+    'Usage: run.js [--suite=frozen] [--provider=mistral] [--arms=repair] [OUTPUT.jsonl]'
+  );
 }
+// --arms=repair compares the SDK's repair turn with an app that sends the
+// same feedback, both with two calls per structured task; tool tasks skip.
+const repairArms = armArgs[0] === '--arms=repair';
 // Local Ollama by default; --provider=mistral uses the Mistral API with
 // MISTRAL_API_KEY from the environment.
 const provider = providerArgs[0]?.slice('--provider='.length) || 'ollama';
@@ -129,7 +137,7 @@ function client() {
   return new OpenAI({ apiKey, baseURL: endpoint, maxRetries: 0, timeout: 120_000 });
 }
 
-async function sdk(task, model, budget) {
+async function sdk(task, model, budget, repairAttempts = 0) {
   const ai = new NullProtocol({
     engines: { openai: apiKey },
     defaultEngine: 'openai',
@@ -139,6 +147,7 @@ async function sdk(task, model, budget) {
     maxTokens,
     timeout: 120_000,
     retry: { maxRetries: 0 },
+    repairAttempts,
     telemetry: false,
     configFile: path.join(__dirname, 'no-config-file.json')
   });
@@ -262,6 +271,87 @@ async function direct(task, model, budget, jsonMode = false) {
   };
 }
 
+function actionName(action) {
+  return typeof action === 'string' ? action : action.action;
+}
+
+// What an app sends back when a reply is unusable: the same wording the SDK
+// uses, from the same parser and schema validator.
+function replyProblem(task, content) {
+  let value;
+  try {
+    value = parseJSON(content);
+  } catch {
+    return { problem: 'The reply was not valid JSON.' };
+  }
+  if (task.category === 'decide') {
+    const decision = Array.isArray(value) && value.length === 1 ? value[0] : value;
+    const allowed = task.actions.map(actionName);
+    if (!decision || typeof decision !== 'object' || Array.isArray(decision) || decision.error) {
+      return {
+        problem:
+          'The reply must be one JSON object with action, reasoning, confidence and parameters.'
+      };
+    }
+    if (typeof decision.action !== 'string' || !allowed.includes(decision.action)) {
+      return {
+        problem: `"${decision.action}" is not an available action. Choose exactly one of: ${allowed.join(', ')}.`
+      };
+    }
+    if (typeof decision.reasoning !== 'string') return { problem: 'reasoning must be a string.' };
+    return { payload: { action: decision.action } };
+  }
+  const checked = validateExtraction(value, task.schema);
+  return checked.isValid
+    ? { payload: value }
+    : { problem: `The JSON does not match the schema: ${checked.issues.join('; ')}.` };
+}
+
+async function appRepair(task, model, budget) {
+  const api = client();
+  const stats = meter(api, budget);
+  const start = Date.now();
+  let status = 'ok';
+  let errorMessage = null;
+  let payload = null;
+  try {
+    const messages = prompt(task);
+    for (let turn = 0; turn < budget; turn++) {
+      const response = await api.chat.completions.create({
+        model,
+        messages,
+        temperature: 0,
+        max_tokens: maxTokens
+      });
+      const content = response.choices[0].message.content || '';
+      const checked = replyProblem(task, content);
+      if (!checked.problem) {
+        payload = checked.payload;
+        break;
+      }
+      status = 'rejected';
+      messages.push(
+        { role: 'assistant', content },
+        { role: 'user', content: `${checked.problem} Answer again with only the corrected JSON.` }
+      );
+    }
+    if (payload) status = 'ok';
+  } catch (error) {
+    status = error.message === 'budget_exhausted' ? 'budget_exhausted' : 'error';
+    errorMessage = String(error.message).slice(0, 300);
+  }
+  return {
+    status,
+    accepted: payload !== null,
+    payload,
+    answer: '',
+    toolCalls: [],
+    ...(errorMessage ? { errorMessage } : {}),
+    wallMs: Date.now() - start,
+    ...stats
+  };
+}
+
 function manifest(models, digests) {
   const root = path.join(__dirname, '..');
   const command = (name, args) => {
@@ -312,7 +402,12 @@ function manifest(models, digests) {
     models: models.map(name => ({ name, digest: digests[name] || null })),
     taskSha256: createHash('sha256').update(JSON.stringify(tasks)).digest('hex'),
     tasks: tasks.length,
-    arms: suite === 'frozen' ? ['direct', 'direct-json', 'sdk'] : ['direct', 'sdk'],
+    arms: repairArms
+      ? ['sdk-repair', 'app-repair']
+      : suite === 'frozen'
+        ? ['direct', 'direct-json', 'sdk']
+        : ['direct', 'sdk'],
+    ...(repairArms ? { budget: { structured: 2 }, toolTasks: 'skipped' } : {}),
     endpoint: endpointUrl.origin,
     provider,
     ...(remote
@@ -406,9 +501,11 @@ async function run(digests, context) {
         });
       }
       for (const [index, task] of tasks.entries()) {
-        const budget = task.category === 'tool' ? 3 : 1;
-        const arms =
-          suite === 'frozen' && task.category !== 'tool'
+        if (repairArms && task.category === 'tool') continue;
+        const budget = repairArms ? 2 : task.category === 'tool' ? 3 : 1;
+        const arms = repairArms
+          ? ['sdk-repair', 'app-repair']
+          : suite === 'frozen' && task.category !== 'tool'
             ? ['direct', 'direct-json', 'sdk']
             : ['direct', 'sdk'];
         if (index % 2) {
@@ -418,7 +515,11 @@ async function run(digests, context) {
           const result =
             arm === 'sdk'
               ? await sdk(task, model, budget)
-              : await direct(task, model, budget, arm === 'direct-json');
+              : arm === 'sdk-repair'
+                ? await sdk(task, model, budget, 1)
+                : arm === 'app-repair'
+                  ? await appRepair(task, model, budget)
+                  : await direct(task, model, budget, arm === 'direct-json');
           const correct = score(task, result.payload, result.toolCalls, result.answer);
           write({
             model,
