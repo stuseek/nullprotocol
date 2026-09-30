@@ -13,11 +13,13 @@ const suiteArgs = args.filter(arg => arg.startsWith('--suite='));
 const providerArgs = args.filter(arg => arg.startsWith('--provider='));
 const armArgs = args.filter(arg => arg.startsWith('--arms='));
 const outputArgs = args.filter(
-  arg => !arg.startsWith('--suite=') && !arg.startsWith('--provider=')
+  arg => !['--suite=', '--provider=', '--arms='].some(prefix => arg.startsWith(prefix))
 );
 if (
   suiteArgs.length > 1 ||
   providerArgs.length > 1 ||
+  armArgs.length > 1 ||
+  (armArgs.length && armArgs[0] !== '--arms=repair') ||
   outputArgs.length > 1 ||
   outputArgs.some(arg => arg.startsWith('--'))
 ) {
