@@ -353,7 +353,15 @@ async function run(digests, context) {
         max_tokens: 32,
         response_format: { type: 'json_object' }
       });
-      if (JSON.parse(check.choices[0].message.content).ready !== true) {
+      // A capability check: JSON mode must return a JSON object; its exact
+      // shape is the model's choice.
+      let parsed = null;
+      try {
+        parsed = JSON.parse(check.choices[0].message.content);
+      } catch {
+        /* reported below */
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error(`${model} does not support the JSON-mode baseline`);
       }
     }
