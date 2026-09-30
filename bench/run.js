@@ -8,10 +8,25 @@ const { OpenAI } = require('openai');
 const { NullProtocol } = require('../src');
 const args = require.main === module ? process.argv.slice(2) : [];
 const suiteArgs = args.filter(arg => arg.startsWith('--suite='));
-const outputArgs = args.filter(arg => !arg.startsWith('--suite='));
-if (suiteArgs.length > 1 || outputArgs.length > 1 || outputArgs.some(arg => arg.startsWith('--'))) {
-  throw new Error('Usage: run.js [--suite=frozen] [OUTPUT.jsonl]');
+const providerArgs = args.filter(arg => arg.startsWith('--provider='));
+const outputArgs = args.filter(
+  arg => !arg.startsWith('--suite=') && !arg.startsWith('--provider=')
+);
+if (
+  suiteArgs.length > 1 ||
+  providerArgs.length > 1 ||
+  outputArgs.length > 1 ||
+  outputArgs.some(arg => arg.startsWith('--'))
+) {
+  throw new Error('Usage: run.js [--suite=frozen] [--provider=mistral] [OUTPUT.jsonl]');
 }
+// Local Ollama by default; --provider=mistral uses the Mistral API with
+// MISTRAL_API_KEY from the environment.
+const provider = providerArgs[0]?.slice('--provider='.length) || 'ollama';
+if (!['ollama', 'mistral'].includes(provider)) throw new Error('Unknown provider');
+const remote = provider === 'mistral';
+const apiKey = remote ? process.env.MISTRAL_API_KEY : 'local';
+if (!apiKey) throw new Error('Set MISTRAL_API_KEY');
 const suite = suiteArgs[0]?.slice('--suite='.length) || 'pilot';
 if (!['pilot', 'frozen'].includes(suite)) {
   throw new Error('Unknown benchmark suite');
@@ -21,15 +36,18 @@ const { score } = require('./score');
 const { prompt } = require('./prompts');
 const fetch = globalThis.fetch;
 
-const endpoint = process.env.NULLPROTOCOL_MODEL_URL || 'http://127.0.0.1:11434/v1';
+const endpoint = remote
+  ? 'https://api.mistral.ai/v1'
+  : process.env.NULLPROTOCOL_MODEL_URL || 'http://127.0.0.1:11434/v1';
 const endpointUrl = new URL(endpoint);
 if (
-  endpointUrl.protocol !== 'http:' ||
-  !['localhost', '127.0.0.1', '[::1]'].includes(endpointUrl.hostname) ||
-  endpointUrl.username ||
-  endpointUrl.password ||
-  endpointUrl.search ||
-  endpointUrl.hash
+  !remote &&
+  (endpointUrl.protocol !== 'http:' ||
+    !['localhost', '127.0.0.1', '[::1]'].includes(endpointUrl.hostname) ||
+    endpointUrl.username ||
+    endpointUrl.password ||
+    endpointUrl.search ||
+    endpointUrl.hash)
 ) {
   throw new Error('The benchmark requires a local Ollama endpoint without URL credentials');
 }
@@ -49,6 +67,16 @@ const output =
   );
 const maxTokens = 280;
 
+// The Mistral API rate-limits by requests per second. Every arm waits the same
+// minimum interval between calls instead of retrying on 429.
+const minIntervalMs = remote ? 1100 : 0;
+let lastCall = 0;
+async function pace() {
+  const wait = lastCall + minIntervalMs - Date.now();
+  if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+  lastCall = Date.now();
+}
+
 function meter(client, budget) {
   const stats = { calls: 0, promptTokens: 0, completionTokens: 0, rawResponses: [] };
   const completions = client.chat.completions;
@@ -58,6 +86,7 @@ function meter(client, budget) {
       throw new Error('budget_exhausted');
     }
     stats.calls++;
+    await pace();
     const result = await original(params, { ...options, maxRetries: 0 });
     stats.promptTokens += result.usage?.prompt_tokens ?? 0;
     stats.completionTokens += result.usage?.completion_tokens ?? 0;
@@ -85,12 +114,12 @@ function modelToolCalls(rawResponses) {
 }
 
 function client() {
-  return new OpenAI({ apiKey: 'local', baseURL: endpoint, maxRetries: 0, timeout: 120_000 });
+  return new OpenAI({ apiKey, baseURL: endpoint, maxRetries: 0, timeout: 120_000 });
 }
 
 async function sdk(task, model, budget) {
   const ai = new NullProtocol({
-    engines: { openai: 'local' },
+    engines: { openai: apiKey },
     defaultEngine: 'openai',
     openaiBaseURL: endpoint,
     models: { openai: model },
@@ -262,6 +291,8 @@ function manifest(models, digests) {
     tasks: tasks.length,
     arms: suite === 'frozen' ? ['direct', 'direct-json', 'sdk'] : ['direct', 'sdk'],
     endpoint: endpointUrl.origin,
+    provider,
+    ...(remote ? { pacingMs: minIntervalMs } : {}),
     temperature: 0,
     maxTokens,
     budget: { structured: 1, tool: 3 },
@@ -271,7 +302,20 @@ function manifest(models, digests) {
   };
 }
 
+async function remoteModels() {
+  const listed = await fetch(`${endpoint}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  }).then(r => r.json());
+  const ids = new Set((listed.data || []).map(item => item.id));
+  for (const name of modelNames) {
+    if (!ids.has(name)) throw new Error(`Mistral model not available: ${name}`);
+  }
+  // Hosted models have no local digest or num_ctx; record the ids as listed.
+  return Object.fromEntries(modelNames.map(name => [name, `mistral:${name}`]));
+}
+
 async function main() {
+  if (remote) return run(await remoteModels(), null);
   const tags = await fetch(new URL('/api/tags', endpoint)).then(r => r.json());
   const digests = Object.fromEntries((tags.models || []).map(item => [item.name, item.digest]));
   for (const name of modelNames) {
@@ -292,6 +336,10 @@ async function main() {
     }
     context[name] = Number(match[1]);
   }
+  return run(digests, context);
+}
+
+async function run(digests, context) {
   const runManifest = { ...manifest(modelNames, digests), context };
   if (suite === 'frozen' && (runManifest.sourceDirty || !runManifest.sdkCommit)) {
     throw new Error('Freeze the benchmark in a clean source commit before running');
