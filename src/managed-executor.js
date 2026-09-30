@@ -292,6 +292,17 @@ function fitTurn(messages, tools, model, entries, credential) {
   return { tools: selected, truncated };
 }
 
+const ACTION_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+// What the model is told when a call is refused; it must not claim the action ran.
+const REFUSALS = {
+  action_not_allowed: 'This action is not available here. It did not run.',
+  write_unavailable:
+    'Write actions are unavailable because earlier context is missing from this request. It did not run.',
+  invalid_action_input: 'The arguments do not match the action schema. It did not run.',
+  guard_rejected:
+    "The application's policy did not allow this call. It did not run; do not say it did."
+};
+
 function failureCode(error) {
   if (error instanceof ManagedModelError) return error.code;
   if (error instanceof PlatformError) return error.code;
@@ -943,16 +954,47 @@ class ManagedExecutor {
         }
         if (turn === 3) throw new ManagedModelError('tool_limit');
         messages.push(response.assistantMessage);
+        // A refused call is recorded and answered with an error instead of
+        // failing the run, so the model can still reply; the action never runs.
+        const refuse = async (call, reasonCode, recorded = false) => {
+          if (!recorded) {
+            const now = new Date().toISOString();
+            await this._stepWithRetry(
+              run.id,
+              token,
+              {
+                ordinal: ordinal++,
+                kind: 'validate',
+                status: 'failed',
+                callId: null,
+                startedAt: now,
+                finishedAt: now,
+                payload: { ...(ACTION_NAME.test(call.name) ? { name: call.name } : {}), reasonCode }
+              },
+              expiresAt
+            );
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.providerCallId,
+            content: JSON.stringify({ error: reasonCode, message: REFUSALS[reasonCode] })
+          });
+        };
         for (const call of response.toolCalls) {
           if (++actionCalls > 8) throw new ManagedModelError('tool_limit');
           const entry = entries.get(call.name);
           if (!entry || !offeredNames.has(call.name)) {
-            throw new ManagedModelError('action_not_allowed');
+            await refuse(call, 'action_not_allowed');
+            continue;
           }
           if (memoryIncomplete && entry.contract.effect === 'write') {
-            throw new ManagedModelError('action_not_allowed');
+            await refuse(call, 'write_unavailable');
+            continue;
           }
-          if (!entry.validateInput(call.args)) throw new ManagedModelError('invalid_action_input');
+          if (!entry.validateInput(call.args)) {
+            await refuse(call, 'invalid_action_input');
+            continue;
+          }
           if (
             entry.contract.effect === 'write' &&
             job.pendingOutcomes?.some(outcome => outcome.name === call.name)
@@ -963,7 +1005,8 @@ class ManagedExecutor {
           if (lease.cancelRequested) leaseState.requestCancel();
           if (leaseState.cancelled()) throw new ManagedModelError('run_cancelled');
           if (lease.disabledActions?.includes(call.name)) {
-            throw new ManagedModelError('action_not_allowed');
+            await refuse(call, 'action_not_allowed');
+            continue;
           }
           if (entry.contract.effect === 'write') {
             const refreshed = await this._retryLeaseBound(
@@ -975,7 +1018,8 @@ class ManagedExecutor {
             job.agentMemory = refreshed.agentMemory;
             job.disabledActions = refreshed.disabledActions || [];
             if (refreshed.disabledActions?.includes(call.name)) {
-              throw new ManagedModelError('action_not_allowed');
+              await refuse(call, 'action_not_allowed');
+              continue;
             }
           }
           const callId = randomUUID();
@@ -1021,7 +1065,11 @@ class ManagedExecutor {
               },
               expiresAt
             );
-            if (!allowed) throw new ManagedModelError(reasonCode);
+            if (reasonCode === 'guard_error') throw new ManagedModelError(reasonCode);
+            if (!allowed) {
+              await refuse(call, reasonCode, true);
+              continue;
+            }
           }
           const handlerTimeout = entry.contract.timeoutMs ?? 30000;
           const remainingForAction = Date.parse(run.deadlineAt) - Date.now() - 5000;

@@ -1076,3 +1076,135 @@ test.each([
     })
   );
 });
+
+test.each([
+  ['a policy guard', '{"orderId":"3307","amount":40}', 'guard', 'guard_rejected'],
+  ['the action schema', '{"orderId":3307}', 'validate', 'invalid_action_input']
+])(
+  'a call refused by %s is recorded and answered, and the run still replies',
+  async (_, args, kind, reasonCode) => {
+    const action = {
+      name: 'refund',
+      description: 'Refund an order',
+      input: {
+        type: 'object',
+        properties: { orderId: { type: 'string' }, amount: { type: 'number' } },
+        required: ['orderId', 'amount'],
+        additionalProperties: false
+      },
+      output: {
+        type: 'object',
+        properties: { refundId: { type: 'string' } },
+        required: ['refundId']
+      },
+      effect: 'write'
+    };
+    const contractHash = actionContractHash(action);
+    const actionConfig = { ...config, actions: [action] };
+    const steps = [];
+    const commits = [];
+    const fetchImpl = jest.fn(async (url, options) => {
+      if (url.endsWith('/v1/space')) {
+        return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+      }
+      if (url.endsWith('/lease')) {
+        return new globalThis.Response(
+          JSON.stringify({
+            expiresAt: new Date(Date.now() + 30000),
+            cancelRequested: false,
+            disabledActions: []
+          })
+        );
+      }
+      if (url.endsWith('/context')) {
+        return new globalThis.Response(
+          JSON.stringify({
+            spaceContext: [],
+            agentContext: [],
+            agentMemory: [],
+            disabledActions: []
+          })
+        );
+      }
+      if (url.endsWith('/steps')) {
+        steps.push(JSON.parse(options.body).steps[0]);
+        return new globalThis.Response(JSON.stringify({ accepted: 1 }));
+      }
+      if (url.endsWith('/commit')) {
+        commits.push(JSON.parse(options.body));
+        return new globalThis.Response(JSON.stringify({ run: { status: commits[0].status } }));
+      }
+      throw new Error('unexpected API request');
+    });
+    const modelRequests = [];
+    const modelFetchImpl = jest.fn(async (_url, options) => {
+      modelRequests.push(JSON.parse(options.body));
+      return new globalThis.Response(
+        JSON.stringify(
+          modelRequests.length === 1
+            ? {
+                choices: [
+                  {
+                    message: {
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: 'call-1',
+                          type: 'function',
+                          function: { name: 'refund', arguments: args }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            : { choices: [{ message: { content: 'I cannot refund that order.' } }] }
+        )
+      );
+    });
+    const handler = jest.fn(async () => ({ refundId: 'R-1' }));
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      actions: [{ ...action, guard: async () => false, handler }],
+      fetchImpl,
+      modelFetchImpl
+    });
+    const result = await executor.processJob({
+      run: {
+        id: runId,
+        agentId,
+        input: 'Please refund $40 for order 3307.',
+        conversationId,
+        deadlineAt: new Date(Date.now() + 180000).toISOString()
+      },
+      lease: {
+        token: `np_lease_${'B'.repeat(43)}`,
+        expiresAt: new Date(Date.now() + 30000).toISOString()
+      },
+      template: { contentHash: hashJson(actionConfig), config: actionConfig },
+      actions: [{ ...action, contractHash }],
+      actionManifestHash: hashJson([{ name: action.name, contractHash }]),
+      spaceContext: [],
+      conversation: { id: conversationId, version: 0, messages: [] },
+      agentContext: [],
+      agentMemory: [],
+      pendingOutcomes: []
+    });
+    expect(result.run.status).toBe('succeeded');
+    expect(commits[0]).toMatchObject({
+      status: 'succeeded',
+      output: { text: 'I cannot refund that order.' }
+    });
+    expect(handler).not.toHaveBeenCalled();
+    expect(steps.find(step => step.kind === kind).payload).toMatchObject({
+      name: 'refund',
+      reasonCode
+    });
+    expect(steps.some(step => step.kind === 'action')).toBe(false);
+    const toolResult = modelRequests[1].messages.find(message => message.role === 'tool');
+    expect(JSON.parse(toolResult.content)).toMatchObject({ error: reasonCode });
+    expect(toolResult.tool_call_id).toBe('call-1');
+  }
+);
