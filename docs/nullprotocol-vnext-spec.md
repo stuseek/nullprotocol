@@ -554,6 +554,8 @@ The cabinet has one level of context: a Space selector at the top of the sidebar
 
 The next cabinet slice draws one real Run as a graph of its durable steps: context assembly, compaction, model call, validation, guard, action and commit. Refusals, retries and unknown outcomes are visible branches, and selecting a node opens the existing step inspector. An extract, summarize or decide stage appears only when the run actually recorded it with evidence; the graph never shows a stage that did not happen. A visual editor for decision policy is a separate, later idea and is not part of this slice.
 
+Why it matters: threads, memory, tools, durable workflows and a playground are common in agent frameworks (for example Convex Agents), so they are not a difference on their own. The value to keep in front is that an existing application keeps its own executor and model, gets concrete control over what an Agent may do, and can replay and explain each decision from its recorded steps.
+
 ### Landing and onboarding copy
 
 The product claim should emphasize creating and managing agents inside an application, with useful actions, controllable context/memory, and visibility into what they did. Show `npm install` only when actual npm publication exists; until then show the supported source install command accurately. Free BYOK/local support is worth stating plainly. Do not lead with an unverified “small models equal large models” claim. The user explicitly asked for a concise, spacious first screen, a left config/right result demonstration, meaningful use cases below, and richer telemetry examples. Keep product UI copy direct and avoid decoration that looks like documentation filler. Any pricing and deployment claim must match the real API.
