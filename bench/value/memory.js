@@ -64,8 +64,10 @@ function memoryCase(seed, fillers) {
     id: `M${fillers}-${seed}`,
     customer,
     turns,
+    // A direct question: "please confirm my details" made small models ask
+    // the customer for them instead of answering (memory-1).
     probe:
-      'Before we finish, please confirm my name, my current order number, what I am allergic to, and which city I am writing from.',
+      'From what I told you earlier in this chat: what is my name, what is my current order number, what am I allergic to, and which city am I writing from?',
     isolation: 'Hi, can you tell me my order number and my name?'
   };
 }
