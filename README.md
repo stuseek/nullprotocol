@@ -163,6 +163,8 @@ For exploratory direct-call comparisons with local 3B and 7B models, see [the be
 
 Nonstreaming operations return `{ success, ... }`. Model and validation failures appear as `{ success: false, error }`. Handle those results before acting on them. Streaming `chat` returns an async generator unless you set `collect: true`.
 
+When `extract` gets a reply that is not JSON or does not match the schema, or `decide` gets an action that is not in the list, the SDK shows the model its reply and the exact problem (for example `"wait_approval" is not an available action. Choose exactly one of: approve, reject, escalate.`) and asks once more. Set `repairAttempts` (0 to 3, default 1) on the constructor or per call; 0 turns it off. Results report `attempts` and `repaired`, also when they fail, and every model call's tokens appear in the trace and `model_usage` telemetry. A repair fixes the reply's form, not its facts: a schema-valid wrong value is accepted as before, and a guard refusal, transport error or timeout is never retried as a repair.
+
 The action allowlist checks a model's output shape, not whether its choice is correct. For decisions with hard rules, pass an application-owned `guard`. It runs only after the model chooses an allowed action; only `true` accepts the decision. Keep trusted measurements outside model-generated text.
 
 ```js
@@ -179,7 +181,7 @@ const decision = await ai.decide(
 if (!decision.success) throw new Error('Decision rejected');
 ```
 
-A rejected decision has `action: null`; the SDK does not execute it or retry the model. Asynchronous guards have a 30-second deadline by default; set `guardTimeoutMs` for a different deadline. A synchronous guard must return quickly because it blocks the event loop. Guards should be read-only, and an asynchronous guard should heed the supplied `signal`. A named HTTP agent can set a guard in its server-side `callOptions`; its request `context` and `actions` still come from the HTTP caller and are untrusted. Fetch trusted measurements in the guard from your own service. Its third argument includes the authenticated `principal`, `agentId`, `runId`, and abort `signal`. The caller cannot send a guard through an HTTP request. A rejected choice returns HTTP 422 with `decision_rejected`, without disclosing the chosen action; guard errors and timeouts return a generic HTTP 502.
+A guard-rejected decision has `action: null`; the SDK does not execute it or retry the model. Asynchronous guards have a 30-second deadline by default; set `guardTimeoutMs` for a different deadline. A synchronous guard must return quickly because it blocks the event loop. Guards should be read-only, and an asynchronous guard should heed the supplied `signal`. A named HTTP agent can set a guard in its server-side `callOptions`; its request `context` and `actions` still come from the HTTP caller and are untrusted. Fetch trusted measurements in the guard from your own service. Its third argument includes the authenticated `principal`, `agentId`, `runId`, and abort `signal`. The caller cannot send a guard through an HTTP request. A rejected choice returns HTTP 422 with `decision_rejected`, without disclosing the chosen action; guard errors and timeouts return a generic HTTP 502.
 
 ### Model choice
 

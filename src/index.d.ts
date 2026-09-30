@@ -40,6 +40,13 @@ export interface AIToolkitOptions {
   temperature?: number;
   maxTokens?: number;
   validateOutputs?: boolean;
+  /**
+   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
+   * schema mismatch, or an action that is not offered. The model sees its
+   * reply and the exact problem. 0 to 3; default 1 (constructor option).
+   * A schema-valid but wrong value is not detected or repaired.
+   */
+  repairAttempts?: number;
   withExecutor?: boolean;
   /** Base URL for an OpenAI compatible API, including a local server. */
   openaiBaseURL?: string;
@@ -91,6 +98,13 @@ export interface ToolCallResult {
 
 export interface ExtractOptions extends BaseOptions {
   validate?: boolean;
+  /**
+   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
+   * schema mismatch, or an action that is not offered. The model sees its
+   * reply and the exact problem. 0 to 3; default 1 (constructor option).
+   * A schema-valid but wrong value is not detected or repaired.
+   */
+  repairAttempts?: number;
 }
 
 export interface ValidateOptions extends BaseOptions {}
@@ -111,6 +125,13 @@ export interface DecideOptions extends BaseOptions {
   ) => boolean | Promise<boolean>;
   /** Guard timeout in milliseconds (default 30000, maximum 120000). */
   guardTimeoutMs?: number;
+  /**
+   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
+   * schema mismatch, or an action that is not offered. The model sees its
+   * reply and the exact problem. 0 to 3; default 1 (constructor option).
+   * A schema-valid but wrong value is not detected or repaired.
+   */
+  repairAttempts?: number;
 }
 
 export interface ChatOptions extends BaseOptions {
@@ -133,6 +154,10 @@ export interface ExtractResult {
   data: any | null;
   confidence: number;
   validation?: any;
+  /** Model calls used, including repair turns; also set when the result failed. Each call's tokens are in the trace and model_usage telemetry. */
+  attempts?: number;
+  /** True when a repair turn turned an unusable reply into an accepted one. */
+  repaired?: boolean;
   error?: string;
 }
 
@@ -163,6 +188,10 @@ export interface DecideResult {
   rejectedAction?: string;
   /** Set when an application guard rejects or cannot finish checking a decision. */
   errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout';
+  /** Model calls used, including repair turns; also set when the result failed. Each call's tokens are in the trace and model_usage telemetry. */
+  attempts?: number;
+  /** True when a repair turn turned an unusable reply into an accepted one. */
+  repaired?: boolean;
   error?: string;
 }
 

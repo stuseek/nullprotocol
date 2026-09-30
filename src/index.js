@@ -112,6 +112,37 @@ const PRESETS = {
   }
 };
 
+// What is wrong with a decision reply, in words the model can act on, or null.
+function decisionProblem(decision, allowedActions) {
+  if (!decision || typeof decision !== 'object' || Array.isArray(decision) || decision.error) {
+    return 'The reply must be one JSON object with action, reasoning, confidence and parameters.';
+  }
+  if (typeof decision.action !== 'string' || !allowedActions.includes(decision.action)) {
+    return `"${decision.action}" is not an available action. Choose exactly one of: ${allowedActions.join(', ')}.`;
+  }
+  if (typeof decision.reasoning !== 'string') return 'reasoning must be a string.';
+  if (
+    decision.confidence !== undefined &&
+    !(
+      typeof decision.confidence === 'number' &&
+      decision.confidence >= 0 &&
+      decision.confidence <= 1
+    )
+  ) {
+    return 'confidence must be a number from 0 to 1.';
+  }
+  return null;
+}
+
+// How many extra turns a primitive may use to let the model fix an unusable
+// reply (invalid JSON, schema mismatch, an action that is not offered).
+function repairCount(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 3) {
+    throw new RangeError('repairAttempts must be an integer from 0 to 3');
+  }
+  return value;
+}
+
 class AIToolkit {
   constructor(options = {}) {
     // Apply preset if specified
@@ -171,6 +202,7 @@ class AIToolkit {
 
     this.executor = this.config.withExecutor ? new ActionExecutor() : null;
     this.validateOutputs = this.config.validateOutputs || false;
+    this.repairAttempts = repairCount(this.config.repairAttempts ?? 1);
 
     this.debug = this.config.debug;
 
@@ -507,6 +539,34 @@ class AIToolkit {
   /**
    * Build messages with base prompt
    */
+  // Asks, checks the reply, and when `check` reports a problem shows the model
+  // its reply and the exact problem so it can answer again. `check` returns
+  // { problem, ...values }, with problem null when the reply is usable.
+  async withRepair(messages, requestOptions, check, attempts) {
+    let response = await this.makeAIRequest(messages, requestOptions);
+    let checked = await check(response);
+    let used = 1;
+    // The engines accept `user` as a list of turns, so a repair is the
+    // original request, the model's reply and the problem, in order.
+    let turns = Array.isArray(messages.user)
+      ? messages.user
+      : [{ role: 'user', content: messages.user }];
+    while (checked.problem && used <= attempts) {
+      turns = [
+        ...turns,
+        {
+          role: 'assistant',
+          content: typeof response === 'string' ? response : JSON.stringify(response)
+        },
+        { role: 'user', content: `${checked.problem} Answer again with only the corrected JSON.` }
+      ];
+      response = await this.makeAIRequest({ ...messages, user: turns }, requestOptions);
+      checked = await check(response);
+      used++;
+    }
+    return { ...checked, attempts: used };
+  }
+
   buildMessages(systemPrompt, userPrompt, additionalContext = null) {
     let finalSystemPrompt = this.basePrompt
       ? `${this.basePrompt}\n\n${systemPrompt}`
@@ -1137,7 +1197,7 @@ class AIToolkit {
    */
   async extract(data, schema, options = {}) {
     const start = Date.now();
-    const { additionalContext, ...apiOptions } = options;
+    const { additionalContext, repairAttempts, ...apiOptions } = options;
 
     try {
       const systemPrompt =
@@ -1146,13 +1206,31 @@ class AIToolkit {
 
       const messages = this.buildMessages(systemPrompt, userPrompt, additionalContext);
 
-      const response = await this.makeAIRequest(messages, {
-        ...apiOptions,
-        operation: 'extract'
-      });
-
-      const extracted = this.parseJSON(response);
-      const checked = await this.validateExtraction(extracted, schema);
+      const { extracted, checked, attempts } = await this.withRepair(
+        messages,
+        { ...apiOptions, operation: 'extract' },
+        async response => {
+          let value;
+          try {
+            value = parseJSON(response);
+          } catch {
+            return {
+              extracted: null,
+              checked: { isValid: false, issues: ['Response is not valid JSON'] },
+              problem: 'The reply was not valid JSON.'
+            };
+          }
+          const result = await this.validateExtraction(value, schema);
+          return {
+            extracted: value,
+            checked: result,
+            problem: result.isValid
+              ? null
+              : `The JSON does not match the schema: ${result.issues.join('; ')}.`
+          };
+        },
+        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts)
+      );
       const validation = this.validateOutputs || options.validate ? checked : null;
 
       const result = {
@@ -1160,6 +1238,8 @@ class AIToolkit {
         data: checked.isValid ? extracted : null,
         confidence: checked.isValid ? this.calculateConfidence(extracted, schema) : 0,
         validation,
+        attempts,
+        repaired: checked.isValid && attempts > 1,
         ...(checked.isValid
           ? {}
           : { error: checked.issues.join('; ') || 'Invalid extraction result' })
@@ -1346,7 +1426,13 @@ class AIToolkit {
    */
   async decide(context, actions, options = {}) {
     const start = Date.now();
-    const { additionalContext, guard, guardTimeoutMs = 30000, ...apiOptions } = options;
+    const {
+      additionalContext,
+      guard,
+      guardTimeoutMs = 30000,
+      repairAttempts,
+      ...apiOptions
+    } = options;
 
     try {
       if (guard !== undefined && typeof guard !== 'function') {
@@ -1369,33 +1455,28 @@ class AIToolkit {
       const userPrompt = `Context: ${JSON.stringify(context)}\n\nAvailable actions: ${JSON.stringify(actions)}\n\nReturn one JSON object with action (an exact action name from the list), reasoning (string), confidence (number from 0 to 1), and parameters (object).`;
 
       const messages = this.buildMessages(systemPrompt, userPrompt, additionalContext);
-
-      const response = await this.makeAIRequest(messages, {
-        ...apiOptions,
-        operation: 'decide'
-      });
-
-      const parsedDecision = this.parseJSON(response);
-      // Some smaller models wrap one requested object in a JSON array.
-      // Accept only an unambiguous single candidate; all usual checks still run.
-      const decision =
-        Array.isArray(parsedDecision) && parsedDecision.length === 1
-          ? parsedDecision[0]
-          : parsedDecision;
-
       const allowedActions = Array.isArray(actions)
         ? actions.map(action => (typeof action === 'string' ? action : action?.action))
         : [];
-      const valid =
-        decision &&
-        !decision.error &&
-        typeof decision.action === 'string' &&
-        allowedActions.includes(decision.action) &&
-        typeof decision.reasoning === 'string' &&
-        (decision.confidence === undefined ||
-          (typeof decision.confidence === 'number' &&
-            decision.confidence >= 0 &&
-            decision.confidence <= 1));
+
+      const { decision, problem, attempts } = await this.withRepair(
+        messages,
+        { ...apiOptions, operation: 'decide' },
+        response => {
+          let parsed;
+          try {
+            parsed = parseJSON(response);
+          } catch {
+            return { decision: null, problem: 'The reply was not valid JSON.' };
+          }
+          // Some smaller models wrap one requested object in a JSON array.
+          // Accept only an unambiguous single candidate; all usual checks still run.
+          const candidate = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
+          return { decision: candidate, problem: decisionProblem(candidate, allowedActions) };
+        },
+        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts)
+      );
+      const valid = !problem;
       let guardFailure = null;
       if (valid && guard) {
         const guardStarted = Date.now();
@@ -1480,6 +1561,8 @@ class AIToolkit {
           accepted && decision.parameters && typeof decision.parameters === 'object'
             ? decision.parameters
             : {},
+        attempts,
+        repaired: valid && attempts > 1,
         ...(guardFailure ? { rejectedAction: decision.action } : {}),
         ...(guardFailure ? { errorCode: guardFailure } : {}),
         ...(accepted

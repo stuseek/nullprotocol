@@ -1357,3 +1357,75 @@ describe('Anthropic requests', () => {
     expect(create.mock.calls[0][0].temperature).toBe(0.3);
   });
 });
+
+// ─── Repair turns ───────────────────────────────────────────────
+
+describe('Repair of unusable replies', () => {
+  const workspaceSchema = {
+    type: 'object',
+    properties: { workspace: { type: 'string', pattern: '^w-\\d+$' } },
+    required: ['workspace']
+  };
+  const lastUserMessage = call => call[0].user.at(-1).content;
+
+  test('extract shows the model its schema mismatch and accepts the corrected reply', async () => {
+    const ai = createAI();
+    ai.makeAIRequest
+      .mockResolvedValueOnce('{"workspace":"Workspace w-12"}')
+      .mockResolvedValueOnce('{"workspace":"w-12"}');
+    const result = await ai.extract('Workspace w-12 is over quota.', workspaceSchema);
+    expect(result).toMatchObject({ success: true, data: { workspace: 'w-12' }, attempts: 2 });
+    const retry = ai.makeAIRequest.mock.calls[1];
+    expect(retry[0].user.at(-2)).toEqual({
+      role: 'assistant',
+      content: '{"workspace":"Workspace w-12"}'
+    });
+    expect(lastUserMessage(retry)).toMatch(/does not match the schema/);
+  });
+
+  test('extract recovers from a reply that is not JSON', async () => {
+    const ai = createAI();
+    ai.makeAIRequest
+      .mockResolvedValueOnce('The workspace is w-12.')
+      .mockResolvedValueOnce('{"workspace":"w-12"}');
+    const result = await ai.extract('Workspace w-12 is over quota.', workspaceSchema);
+    expect(result).toMatchObject({ success: true, attempts: 2 });
+    expect(lastUserMessage(ai.makeAIRequest.mock.calls[1])).toMatch(/not valid JSON/);
+  });
+
+  test('repair stops after the configured attempts and can be turned off', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue('{"workspace":"Workspace w-12"}');
+    const failed = await ai.extract('Workspace w-12', workspaceSchema);
+    expect(failed).toMatchObject({ success: false, attempts: 2 });
+    expect(ai.makeAIRequest).toHaveBeenCalledTimes(2);
+
+    ai.makeAIRequest.mockClear();
+    const once = await ai.extract('Workspace w-12', workspaceSchema, { repairAttempts: 0 });
+    expect(once).toMatchObject({ success: false, attempts: 1 });
+    expect(ai.makeAIRequest).toHaveBeenCalledTimes(1);
+    expect(() => createAI({ repairAttempts: 5 })).toThrow('repairAttempts');
+  });
+
+  test('decide names the offered actions when the model picks one that does not exist', async () => {
+    const ai = createAI();
+    ai.makeAIRequest
+      .mockResolvedValueOnce('{"action":"wait_approval","reasoning":"Needs sign-off"}')
+      .mockResolvedValueOnce('{"action":"escalate","reasoning":"Needs sign-off","confidence":0.8}');
+    const result = await ai.decide({ amount: 900 }, ['approve', 'reject', 'escalate']);
+    expect(result).toMatchObject({ success: true, action: 'escalate', attempts: 2 });
+    expect(lastUserMessage(ai.makeAIRequest.mock.calls[1])).toMatch(
+      /"wait_approval" is not an available action\. Choose exactly one of: approve, reject, escalate\./
+    );
+  });
+
+  test('a guard refusal is policy, not a format problem, and is not retried', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue('{"action":"approve","reasoning":"Looks fine"}');
+    const result = await ai.decide({ amount: 900 }, ['approve', 'escalate'], {
+      guard: () => false
+    });
+    expect(result).toMatchObject({ success: false, errorCode: 'guard_rejected', attempts: 1 });
+    expect(ai.makeAIRequest).toHaveBeenCalledTimes(1);
+  });
+});
