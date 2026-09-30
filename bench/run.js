@@ -86,8 +86,20 @@ function meter(client, budget) {
       throw new Error('budget_exhausted');
     }
     stats.calls++;
-    await pace();
-    const result = await original(params, { ...options, maxRetries: 0 });
+    let result;
+    // A hosted rate limit is infrastructure, not a model answer: wait and
+    // resend the same request, the same way in every arm, and count it apart.
+    for (let attempt = 0; ; attempt++) {
+      await pace();
+      try {
+        result = await original(params, { ...options, maxRetries: 0 });
+        break;
+      } catch (error) {
+        if (!remote || error.status !== 429 || attempt >= 6) throw error;
+        stats.rateLimitRetries = (stats.rateLimitRetries || 0) + 1;
+        await new Promise(resolve => setTimeout(resolve, 2000 * 2 ** attempt));
+      }
+    }
     stats.promptTokens += result.usage?.prompt_tokens ?? 0;
     stats.completionTokens += result.usage?.completion_tokens ?? 0;
     stats.rawResponses.push({
@@ -303,7 +315,9 @@ function manifest(models, digests) {
     arms: suite === 'frozen' ? ['direct', 'direct-json', 'sdk'] : ['direct', 'sdk'],
     endpoint: endpointUrl.origin,
     provider,
-    ...(remote ? { pacingMs: minIntervalMs } : {}),
+    ...(remote
+      ? { pacingMs: minIntervalMs, rateLimitRetries: 'up to 6, exponential from 2 s' }
+      : {}),
     temperature: 0,
     maxTokens,
     budget: { structured: 1, tool: 3 },
