@@ -162,6 +162,7 @@ for (const model of models) {
                   answered: Boolean(result.answer),
                   errorCode: result.errorCode,
                   usage: result.usage,
+                  latency: result.latency,
                   steps: result.steps.map(step => ({
                     kind: step.kind,
                     status: step.status,
