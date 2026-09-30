@@ -39,7 +39,9 @@ export async function chat(model, messages, tools) {
 
 // One Space per model with one Agent per entry in `agents`
 // ({ name, instructions, actions }); free Spaces allow three.
-export async function managedAgents(model, agents) {
+// `observe(record)` receives each compaction request and reply as sent and
+// received, with its duration; the request path itself is unchanged.
+export async function managedAgents(model, agents, { observe } = {}) {
   const space = await localSpace([
     'templates:write',
     'agents:write',
@@ -67,7 +69,22 @@ export async function managedAgents(model, agents) {
     endpoint: space.endpoint,
     agentIds: Object.values(ids),
     actions: agents.flatMap(agent => agent.actions || []),
-    credentials: { model: { provider: 'local', baseURL: modelURL } }
+    credentials: { model: { provider: 'local', baseURL: modelURL } },
+    ...(observe
+      ? {
+          modelFetchImpl: async (url, init) => {
+            const started = Date.now();
+            const response = await fetch(url, init);
+            const request = JSON.parse(init.body);
+            if (!String(request.messages?.[0]?.content).startsWith('Compact the supplied')) {
+              return response;
+            }
+            const text = await response.clone().text();
+            observe({ request, status: response.status, text, ms: Date.now() - started });
+            return response;
+          }
+        }
+      : {})
   });
   await executor.start();
   return {

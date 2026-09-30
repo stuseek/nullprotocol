@@ -40,7 +40,9 @@ const out = option(
   )
 );
 const review = out.replace(/\.jsonl$/, '.review.jsonl');
-const ARMS = ['raw', 'app-window', 'app-summary', 'np'];
+const ARMS = option('--arms', 'raw,app-window,app-summary,np').split(',');
+// --capture FILE records every managed compaction exchange for diagnosis.
+const capture = option('--capture', null);
 const CONTEXT = 8192;
 // Prompt tokens the model can see while leaving room for the answer.
 const BUDGET = CONTEXT - 1024 - 256;
@@ -141,7 +143,11 @@ appendFileSync(
 );
 
 for (const model of models) {
-  const np = await managedAgents(model, [{ name: 'memory', instructions }]);
+  const np = await managedAgents(model, [{ name: 'memory', instructions }], {
+    ...(capture
+      ? { observe: record => appendFileSync(capture, `${JSON.stringify({ model, ...record })}\n`) }
+      : {})
+  });
   try {
     for (let rep = 0; rep < reps; rep++) {
       for (const [index, fillers] of fillerCounts.entries()) {
