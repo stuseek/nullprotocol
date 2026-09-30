@@ -137,6 +137,7 @@ async function sdk(task, model, budget) {
   let answer = '';
   let accepted = false;
   let status = 'ok';
+  let errorMessage = null;
   try {
     if (task.category === 'decide') {
       result = await ai.decide(task.context, task.actions);
@@ -162,9 +163,11 @@ async function sdk(task, model, budget) {
           : stats.rawResponses.length
             ? 'rejected'
             : 'error';
+      if (status === 'error') errorMessage = String(result.error || '').slice(0, 300);
     }
   } catch (error) {
     status = error.message === 'budget_exhausted' ? 'budget_exhausted' : 'error';
+    errorMessage = String(error.message).slice(0, 300);
   }
   return {
     status,
@@ -172,6 +175,9 @@ async function sdk(task, model, budget) {
     payload,
     answer,
     toolCalls: modelToolCalls(stats.rawResponses),
+    // Provider or transport failure text, so infrastructure errors are not
+    // mistaken for model answers.
+    ...(errorMessage ? { errorMessage } : {}),
     wallMs: Date.now() - start,
     ...stats
   };
@@ -182,6 +188,7 @@ async function direct(task, model, budget, jsonMode = false) {
   const stats = meter(api, budget);
   const start = Date.now();
   let status = 'ok';
+  let errorMessage = null;
   let accepted = false;
   let payload = null;
   let answer = '';
@@ -227,6 +234,7 @@ async function direct(task, model, budget, jsonMode = false) {
     }
   } catch (error) {
     status = error.message === 'budget_exhausted' ? 'budget_exhausted' : 'error';
+    errorMessage = String(error.message).slice(0, 300);
   }
   return {
     status,
@@ -234,6 +242,9 @@ async function direct(task, model, budget, jsonMode = false) {
     payload,
     answer,
     toolCalls: modelToolCalls(stats.rawResponses),
+    // Provider or transport failure text, so infrastructure errors are not
+    // mistaken for model answers.
+    ...(errorMessage ? { errorMessage } : {}),
     wallMs: Date.now() - start,
     ...stats
   };
