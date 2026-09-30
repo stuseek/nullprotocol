@@ -1429,3 +1429,162 @@ describe('Repair of unusable replies', () => {
     expect(ai.makeAIRequest).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Repair accounting and provider requests', () => {
+  const workspaceSchema = {
+    type: 'object',
+    properties: { workspace: { type: 'string', pattern: '^w-\\d+$' } },
+    required: ['workspace']
+  };
+
+  test('attempts survive a transport error on the first call or on the repair call', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockRejectedValueOnce(new Error('network failed'));
+    expect(await ai.extract('Workspace w-12', workspaceSchema)).toMatchObject({
+      success: false,
+      attempts: 1,
+      repaired: false,
+      error: 'network failed'
+    });
+
+    ai.makeAIRequest
+      .mockReset()
+      .mockResolvedValueOnce('{"workspace":17}')
+      .mockRejectedValueOnce(new Error('network failed'));
+    expect(await ai.extract('Workspace w-12', workspaceSchema)).toMatchObject({
+      success: false,
+      attempts: 2,
+      repaired: false
+    });
+
+    ai.makeAIRequest
+      .mockReset()
+      .mockResolvedValueOnce('{"action":"wait","reasoning":"x"}')
+      .mockRejectedValueOnce(new Error('timeout'));
+    expect(await ai.decide({}, ['approve', 'escalate'])).toMatchObject({
+      success: false,
+      attempts: 2,
+      repaired: false,
+      parameters: {}
+    });
+  });
+
+  test('an invalid repairAttempts fails before any model call', async () => {
+    const ai = createAI();
+    const result = await ai.extract('Workspace w-12', workspaceSchema, { repairAttempts: 9 });
+    expect(result).toMatchObject({ success: false, attempts: 0 });
+    expect(ai.makeAIRequest).not.toHaveBeenCalled();
+  });
+
+  test('an abort between attempts stops without a repair call', async () => {
+    const ai = createAI();
+    const controller = new AbortController();
+    ai.makeAIRequest.mockImplementationOnce(async () => {
+      controller.abort();
+      return '{"workspace":"Workspace w-12"}';
+    });
+    const result = await ai.runContext.run({ runId: 'run-1', signal: controller.signal }, () =>
+      ai.extract('Workspace w-12', workspaceSchema)
+    );
+    expect(result).toMatchObject({ success: false, attempts: 1 });
+    expect(ai.makeAIRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test('decide parameters must be an object; the guard sees only an accepted decision', async () => {
+    const ai = createAI();
+    const guard = jest.fn(() => true);
+    ai.makeAIRequest
+      .mockResolvedValueOnce('{"action":"approve","reasoning":"ok","parameters":[1]}')
+      .mockResolvedValueOnce('{"action":"approve","reasoning":"ok","parameters":{"id":1}}');
+    expect(await ai.decide({}, ['approve'], { guard })).toMatchObject({
+      success: true,
+      parameters: { id: 1 },
+      attempts: 2,
+      repaired: true
+    });
+    expect(ai.makeAIRequest.mock.calls[1][0].user.at(-1).content).toMatch(
+      /parameters must be a JSON object/
+    );
+    expect(guard).toHaveBeenCalledTimes(1);
+
+    guard.mockClear();
+    ai.makeAIRequest
+      .mockReset()
+      .mockResolvedValue('{"action":"approve","reasoning":"ok","parameters":"id=1"}');
+    expect(await ai.decide({}, ['approve'], { guard })).toMatchObject({
+      success: false,
+      action: null,
+      attempts: 2
+    });
+    expect(guard).not.toHaveBeenCalled();
+
+    ai.makeAIRequest.mockReset().mockResolvedValue('{"action":"approve","reasoning":"ok"}');
+    expect(await ai.decide({}, ['approve'])).toMatchObject({ success: true, parameters: {} });
+  });
+
+  function traced(engine, create) {
+    const ai = new AIToolkit({
+      engines: { [engine]: 'test-key' },
+      defaultEngine: engine,
+      models: { [engine]: engine === 'openai' ? 'gpt-test' : 'claude-sonnet-5' },
+      maxTokens: 300,
+      retry: { maxRetries: 0 },
+      telemetryTimeline: true
+    });
+    ai.telemetry = { track: jest.fn(), trackTrace: jest.fn() };
+    ai.clients[engine] =
+      engine === 'openai' ? { chat: { completions: { create } } } : { messages: { create } };
+    return ai;
+  }
+
+  test('OpenAI: the repair request is the original turn, the reply and the feedback', async () => {
+    const replies = ['{"workspace":"Workspace w-12"}', '{"workspace":"w-12"}'];
+    const create = jest.fn(async () => ({
+      choices: [{ message: { content: replies.shift() }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 40, completion_tokens: 6 }
+    }));
+    const ai = traced('openai', create);
+    const result = await ai.extract('Workspace w-12', workspaceSchema);
+    expect(result).toMatchObject({ success: true, attempts: 2, repaired: true });
+    const second = create.mock.calls[1][0];
+    expect(second).toMatchObject({ model: 'gpt-test', max_tokens: 300 });
+    expect(second.messages.map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user'
+    ]);
+    expect(second.messages[2].content).toBe('{"workspace":"Workspace w-12"}');
+    expect(second.messages[3].content).toMatch(/does not match the schema/);
+    const usage = ai.telemetry.track.mock.calls.filter(([name]) => name === 'model_usage');
+    expect(usage).toHaveLength(2);
+    const steps = ai.telemetry.trackTrace.mock.calls[0][1].steps.filter(
+      step => step.kind === 'model'
+    );
+    expect(steps.map(step => step.inputTokens)).toEqual([40, 40]);
+  });
+
+  test('Anthropic: the repair request keeps the system prompt apart and alternates turns', async () => {
+    const replies = [
+      '{"action":"wait","reasoning":"x"}',
+      '{"action":"escalate","reasoning":"x","confidence":0.7}'
+    ];
+    const create = jest.fn(async () => ({
+      content: [{ type: 'text', text: replies.shift() }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 30, output_tokens: 8 }
+    }));
+    const ai = traced('anthropic', create);
+    const result = await ai.decide({ amount: 900 }, ['approve', 'escalate']);
+    expect(result).toMatchObject({ success: true, action: 'escalate', attempts: 2 });
+    const second = create.mock.calls[1][0];
+    expect(second).toMatchObject({ model: 'claude-sonnet-5', max_tokens: 300 });
+    expect(typeof second.system).toBe('string');
+    expect(second.messages.map(message => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(second.messages[2].content).toMatch(/"wait" is not an available action/);
+    const steps = ai.telemetry.trackTrace.mock.calls[0][1].steps.filter(
+      step => step.kind === 'model'
+    );
+    expect(steps.map(step => step.outputTokens)).toEqual([8, 8]);
+  });
+});

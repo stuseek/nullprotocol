@@ -122,6 +122,14 @@ function decisionProblem(decision, allowedActions) {
   }
   if (typeof decision.reasoning !== 'string') return 'reasoning must be a string.';
   if (
+    decision.parameters !== undefined &&
+    (decision.parameters === null ||
+      typeof decision.parameters !== 'object' ||
+      Array.isArray(decision.parameters))
+  ) {
+    return 'parameters must be a JSON object.';
+  }
+  if (
     decision.confidence !== undefined &&
     !(
       typeof decision.confidence === 'number' &&
@@ -542,16 +550,19 @@ class AIToolkit {
   // Asks, checks the reply, and when `check` reports a problem shows the model
   // its reply and the exact problem so it can answer again. `check` returns
   // { problem, ...values }, with problem null when the reply is usable.
-  async withRepair(messages, requestOptions, check, attempts) {
+  // `count.attempts` is raised before each model call, so the caller still
+  // knows how many calls were made when one of them throws.
+  async withRepair(messages, requestOptions, check, attempts, count) {
+    count.attempts++;
     let response = await this.makeAIRequest(messages, requestOptions);
     let checked = await check(response);
-    let used = 1;
     // The engines accept `user` as a list of turns, so a repair is the
     // original request, the model's reply and the problem, in order.
     let turns = Array.isArray(messages.user)
       ? messages.user
       : [{ role: 'user', content: messages.user }];
-    while (checked.problem && used <= attempts) {
+    while (checked.problem && count.attempts <= attempts) {
+      this.runContext.getStore()?.signal?.throwIfAborted();
       turns = [
         ...turns,
         {
@@ -560,11 +571,11 @@ class AIToolkit {
         },
         { role: 'user', content: `${checked.problem} Answer again with only the corrected JSON.` }
       ];
+      count.attempts++;
       response = await this.makeAIRequest({ ...messages, user: turns }, requestOptions);
       checked = await check(response);
-      used++;
     }
-    return { ...checked, attempts: used };
+    return { ...checked, attempts: count.attempts };
   }
 
   buildMessages(systemPrompt, userPrompt, additionalContext = null) {
@@ -1198,6 +1209,7 @@ class AIToolkit {
   async extract(data, schema, options = {}) {
     const start = Date.now();
     const { additionalContext, repairAttempts, ...apiOptions } = options;
+    const count = { attempts: 0 };
 
     try {
       const systemPrompt =
@@ -1229,7 +1241,8 @@ class AIToolkit {
               : `The JSON does not match the schema: ${result.issues.join('; ')}.`
           };
         },
-        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts)
+        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts),
+        count
       );
       const validation = this.validateOutputs || options.validate ? checked : null;
 
@@ -1265,6 +1278,8 @@ class AIToolkit {
         success: false,
         data: null,
         confidence: 0,
+        attempts: count.attempts,
+        repaired: false,
         error: error.message
       };
       this.lastResult = result;
@@ -1433,6 +1448,7 @@ class AIToolkit {
       repairAttempts,
       ...apiOptions
     } = options;
+    const count = { attempts: 0 };
 
     try {
       if (guard !== undefined && typeof guard !== 'function') {
@@ -1474,7 +1490,8 @@ class AIToolkit {
           const candidate = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
           return { decision: candidate, problem: decisionProblem(candidate, allowedActions) };
         },
-        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts)
+        repairAttempts === undefined ? this.repairAttempts : repairCount(repairAttempts),
+        count
       );
       const valid = !problem;
       let guardFailure = null;
@@ -1596,6 +1613,9 @@ class AIToolkit {
         action: null,
         reasoning: error.message,
         confidence: 0,
+        parameters: {},
+        attempts: count.attempts,
+        repaired: false,
         error: error.message
       };
       this.lastResult = result;
