@@ -75,13 +75,16 @@ export async function managedAgents(model, agents) {
       const agent = client.agent(ids[name]);
       const started = Date.now();
       const run = await agent.run(text, { conversation });
+      const seen = Date.now();
       const { steps } = await agent.listSteps(run.id);
+      const apiCallMs = Date.now() - seen;
       return {
         answer: run.status === 'succeeded' ? (run.output?.text ?? null) : null,
         errorCode: run.errorCode ?? null,
         runStatus: run.status,
         usage: run.usage ?? null,
-        ms: Date.now() - started,
+        ms: seen - started,
+        latency: latency(run, steps, started, seen, apiCallMs),
         toolErrors: steps
           .filter(step => step.status === 'failed' || step.payload?.allowed === false)
           .map(step => step.payload?.errorCode || step.payload?.reasonCode || step.kind),
@@ -93,5 +96,34 @@ export async function managedAgents(model, agents) {
       await executor.stop();
       await space.cleanup();
     }
+  };
+}
+
+// Where a managed turn's time went. The API runs in this process, so server
+// timestamps and Date.now() share a clock.
+function latency(run, steps, started, seen, apiCallMs) {
+  const at = value => (value ? Date.parse(value) : null);
+  const created = at(run.createdAt);
+  const claimed = at(run.startedAt);
+  const finished = at(run.finishedAt);
+  const duration = kind =>
+    steps
+      .filter(step => step.kind === kind && step.finishedAt)
+      .reduce((total, step) => total + at(step.finishedAt) - at(step.startedAt), 0);
+  const execution = claimed && finished ? finished - claimed : null;
+  const model = duration('model');
+  const action = duration('action');
+  const compaction = duration('compaction');
+  return {
+    createMs: created ? created - started : null,
+    queueMs: created && claimed ? claimed - created : null,
+    executionMs: execution,
+    modelMs: model,
+    actionMs: action,
+    compactionMs: compaction,
+    // Step writes, lease, context and commit inside the run.
+    platformMs: execution === null ? null : execution - model - action - compaction,
+    clientWaitMs: finished ? seen - finished : null,
+    apiCallMs
   };
 }

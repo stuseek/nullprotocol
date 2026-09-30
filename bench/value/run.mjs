@@ -18,23 +18,24 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { localSpace } from '../../scripts/local-space.mjs';
+import { chat, generation, managedAgents, modelURL } from './arms.mjs';
 
 const require = createRequire(import.meta.url);
 const Ajv = require('ajv');
 const { parseJSON } = require('../../src/json');
-const { NullProtocolClient, ManagedExecutor, defineAction } = require('../../src');
+const { defineAction } = require('../../src');
 const { contracts, createShop, instructions } = require('./shop');
 const { shortCases, scoreContent } = require('./scenarios');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const modelURL = process.env.MODEL_BASE_URL || 'http://127.0.0.1:11434/v1';
 const option = (name, fallback) => {
   const index = process.argv.indexOf(name);
   return index === -1 ? fallback : process.argv[index + 1];
 };
 const models = option('--models', 'np-value-q3,np-value-q7').split(',');
 const reps = Number(option('--reps', '3'));
+const caseIds = option('--cases', shortCases.map(testCase => testCase.id).join(',')).split(',');
+const cases = shortCases.filter(testCase => caseIds.includes(testCase.id));
 const out = option(
   '--out',
   path.join(
@@ -54,28 +55,6 @@ const toolSpecs = Object.values(contracts).map(contract => ({
   type: 'function',
   function: { name: contract.name, description: contract.description, parameters: contract.input }
 }));
-
-async function chat(model, messages) {
-  const body = JSON.stringify({ model, messages, max_tokens: 1024, tools: toolSpecs });
-  const started = Date.now();
-  const response = await fetch(`${modelURL}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw Object.assign(new Error(data?.error?.message || `HTTP ${response.status}`), {
-      code: response.status === 400 ? 'unsupported' : 'model_error'
-    });
-  }
-  return {
-    message: data.choices[0].message,
-    usage: data.usage,
-    ms: Date.now() - started,
-    requestBytes: Buffer.byteLength(body)
-  };
-}
 
 function runTool(call, shop, competent, idempotencyKey) {
   const name = call.function?.name;
@@ -103,7 +82,11 @@ async function directTurn({ model, history, shop, text, competent, key }) {
   const toolErrors = [];
   let actions = 0;
   for (let turn = 0; turn < 4; turn++) {
-    const reply = await chat(model, [{ role: 'system', content: instructions }, ...history]);
+    const reply = await chat(
+      model,
+      [{ role: 'system', content: instructions }, ...history],
+      toolSpecs
+    );
     calls.push({
       usage: reply.usage,
       ms: reply.ms,
@@ -129,76 +112,13 @@ async function directTurn({ model, history, shop, text, competent, key }) {
   return { answer: null, errorCode: 'tool_limit', modelCalls: calls, toolErrors };
 }
 
-// One managed Agent per model; its handlers act on whichever shop is current.
-async function managed(model) {
-  const space = await localSpace([
-    'templates:write',
-    'agents:write',
-    'agents:read',
-    'runs:create',
-    'runs:read',
-    'conversations:read'
-  ]);
-  const holder = { shop: null };
-  const actions = [
-    defineAction({ ...contracts.getOrder, handler: args => holder.shop.getOrder(args) }),
-    defineAction({
-      ...contracts.refund,
-      guard: args => holder.shop.guard(args),
-      handler: (args, context) => holder.shop.refund(args, context)
-    })
-  ];
-  const client = new NullProtocolClient({ spaceKey: space.appKey, endpoint: space.endpoint });
-  const { template } = await client.templates.create({
-    name: `Value pilot ${model}`,
-    config: {
-      instructions,
-      model: { provider: 'local', model, credentialRef: 'model' },
-      actions,
-      memory: { mode: 'conversation' }
-    }
-  });
-  const { agent } = await client.agents.create({ templateId: template.id });
-  const executor = new ManagedExecutor({
-    executorKey: space.executorKey,
-    endpoint: space.endpoint,
-    agentIds: [agent.id],
-    actions,
-    credentials: { model: { provider: 'local', baseURL: modelURL } }
-  });
-  await executor.start();
-  return {
-    holder,
-    async turn(text, conversation) {
-      const started = Date.now();
-      const run = await client.agent(agent.id).run(text, { conversation });
-      const { steps } = await client.agent(agent.id).listSteps(run.id);
-      return {
-        answer: run.status === 'succeeded' ? (run.output?.text ?? null) : null,
-        errorCode: run.errorCode ?? null,
-        runStatus: run.status,
-        usage: run.usage ?? null,
-        ms: Date.now() - started,
-        toolErrors: steps
-          .filter(step => step.status === 'failed' || step.payload?.allowed === false)
-          .map(step => step.payload?.errorCode || step.payload?.reasonCode || step.kind),
-        steps
-      };
-    },
-    async close() {
-      await executor.stop();
-      await space.cleanup();
-    }
-  };
-}
-
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 mkdirSync(path.dirname(out), { recursive: true });
 appendFileSync(
   out,
   `${JSON.stringify({
     manifest: {
-      kind: 'value-pilot-short-v1',
+      kind: 'value-pilot-short-v2',
       exploratory: true,
       date: new Date().toISOString(),
       sdkCommit: git(['rev-parse', 'HEAD']),
@@ -209,17 +129,33 @@ appendFileSync(
       models,
       arms: ARMS,
       reps,
-      generation: { max_tokens: 1024, temperature: 'provider default', generationSeed: null },
+      cases: caseIds,
+      generation,
       modelURL
     }
   })}\n`
 );
 
 for (const model of models) {
-  const np = await managed(model);
+  // The managed handlers act on whichever shop the current case uses.
+  const holder = { shop: null };
+  const np = await managedAgents(model, [
+    {
+      name: 'shop',
+      instructions,
+      actions: [
+        defineAction({ ...contracts.getOrder, handler: args => holder.shop.getOrder(args) }),
+        defineAction({
+          ...contracts.refund,
+          guard: args => holder.shop.guard(args),
+          handler: (args, context) => holder.shop.refund(args, context)
+        })
+      ]
+    }
+  ]);
   try {
     for (let rep = 0; rep < reps; rep++) {
-      for (const [index, testCase] of shortCases.entries()) {
+      for (const [index, testCase] of cases.entries()) {
         // Rotate arm order so no arm always runs on a warm model first.
         const order = ARMS.map((_, i) => ARMS[(i + index + rep) % ARMS.length]);
         for (const arm of order) {
@@ -228,8 +164,8 @@ for (const model of models) {
           let result;
           try {
             if (arm === 'np') {
-              np.holder.shop = shop;
-              result = await np.turn(testCase.turns[0], key);
+              holder.shop = shop;
+              result = await np.turn('shop', testCase.turns[0], key);
             } else {
               result = await directTurn({
                 model,
