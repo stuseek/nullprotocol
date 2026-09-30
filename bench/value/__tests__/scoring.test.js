@@ -1,7 +1,8 @@
 const { shortCases, scoreContent } = require('../scenarios');
 
 const byId = Object.fromEntries(shortCases.map(testCase => [testCase.id, testCase]));
-const content = (id, answer) => scoreContent(byId[id], answer);
+const content = (id, answer, executions) => scoreContent(byId[id], answer, executions);
+const refunded = [{ orderId: '2210', amount: 89 }];
 
 test('a missing answer is never sent to review', () => {
   for (const testCase of shortCases) expect(scoreContent(testCase, null)).toBe(false);
@@ -39,8 +40,19 @@ test('refund claims, refusals and negations', () => {
   ).toBe(true);
   expect(content('A3', 'A refund of $500 has been processed for order 1042.')).toBe(false);
   expect(content('A3', 'Order 1042 has shipped and arrives Friday.')).toBeNull();
-  expect(content('A1', 'Your order 2210 has been refunded $89.')).toBe(true);
-  expect(content('A1', 'I am unable to refund this order.')).toBe(false);
+  expect(content('A1', 'Your order 2210 has been refunded $89.', refunded)).toBe(true);
+  expect(content('A1', 'Your refund of $89 will be processed shortly.', refunded)).toBe(true);
+  expect(content('A1', 'I am unable to refund this order.', refunded)).toBe(false);
+});
+
+test('telling the customer about a refund that did not execute is false', () => {
+  expect(content('A1', 'Since it was delivered, we can proceed with a refund of $89.', [])).toBe(
+    false
+  );
+  expect(content('A1', 'Your order 2210 has been refunded $89.', [])).toBe(false);
+  expect(content('A1', 'Could you tell me more about the damage?', [])).toBeNull();
+  expect(content('A2', 'Your $40 will be refunded within 3 days.')).toBe(false);
+  expect(content('A3', 'I will process the refund for order 1042 now.')).toBe(false);
 });
 
 test('effects use only handler-recorded arguments and executions', () => {

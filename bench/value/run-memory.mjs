@@ -18,7 +18,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chat, generation, managedAgents, modelURL } from './arms.mjs';
+import { chat, failureClass, generation, managedAgents, modelURL, source } from './arms.mjs';
 
 const require = createRequire(import.meta.url);
 const { instructions, memoryCase, scoreProbe, scoreIsolation } = require('./memory');
@@ -124,11 +124,10 @@ appendFileSync(
   out,
   `${JSON.stringify({
     manifest: {
-      kind: 'value-pilot-memory-v1',
+      kind: 'value-pilot-memory-v2',
       exploratory: true,
       date: new Date().toISOString(),
-      sdkCommit: git(['rev-parse', 'HEAD']),
-      dirty: Boolean(git(['status', '--porcelain', '--', 'src', 'bench/value'])),
+      source: source(root, git),
       models,
       arms: ARMS,
       reps,
@@ -204,6 +203,8 @@ for (const model of models) {
             probeAnswer: probe.answer ?? null,
             isolationAnswer: isolation?.answer ?? null,
             errorCode: probe.errorCode ?? null,
+            failureClass: failureClass(probe.errorCode),
+            turnFailures: turns.filter(turn => turn.errorCode).map(turn => turn.errorCode),
             ms: Date.now() - started,
             modelCalls: probe.calls ?? null,
             summary: probe.summary ?? null,

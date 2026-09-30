@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs';
 
 const [header, ...rows] = readFileSync(process.argv[2], 'utf8').trim().split('\n').map(JSON.parse);
 const { manifest } = header;
-console.log(`${manifest.kind} ${manifest.sdkCommit.slice(0, 7)} reps ${manifest.reps}`);
+console.log(
+  `${manifest.kind} ${(manifest.source?.commit ?? manifest.sdkCommit).slice(0, 7)} reps ${manifest.reps}`
+);
 
 const median = values => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -15,6 +17,15 @@ const groupBy = (items, key) => {
   const groups = new Map();
   for (const item of items) groups.set(key(item), [...(groups.get(key(item)) || []), item]);
   return groups;
+};
+// Failure kinds with counts, e.g. "infrastructure:space_busy x1".
+const failures = group => {
+  const counts = new Map();
+  for (const row of group.filter(item => item.errorCode)) {
+    const label = `${row.failureClass ?? '?'}:${row.errorCode}`;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts].map(([label, count]) => `${label} x${count}`).join(',') || '-';
 };
 const print = table => console.log(table.map(line => line.join('\t')).join('\n'));
 
@@ -30,7 +41,8 @@ function shortTables() {
       'answered',
       'extraRefunds',
       'attempts',
-      'errors',
+      'denied',
+      'failures',
       'medianMs'
     ]
   ];
@@ -48,7 +60,8 @@ function shortTables() {
       `${count(row => row.answered)}/${group.length}`,
       extra,
       group.reduce((total, row) => total + row.refundAttempts, 0),
-      [...new Set(group.map(row => row.errorCode).filter(Boolean))].join(',') || '-',
+      group.reduce((total, row) => total + (row.deniedCalls ?? 0), 0),
+      failures(group),
       median(group.map(ms))
     ]);
   }

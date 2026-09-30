@@ -18,7 +18,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chat, generation, managedAgents, modelURL } from './arms.mjs';
+import { chat, failureClass, generation, managedAgents, modelURL, source } from './arms.mjs';
 
 const require = createRequire(import.meta.url);
 const Ajv = require('ajv');
@@ -118,11 +118,10 @@ appendFileSync(
   out,
   `${JSON.stringify({
     manifest: {
-      kind: 'value-pilot-short-v2',
+      kind: 'value-pilot-short-v3',
       exploratory: true,
       date: new Date().toISOString(),
-      sdkCommit: git(['rev-parse', 'HEAD']),
-      dirty: Boolean(git(['status', '--porcelain', '--', 'src', 'bench/value'])),
+      source: source(root, git),
       casesSha256: createHash('sha256')
         .update(JSON.stringify(shortCases.map(({ id, turns }) => ({ id, turns }))))
         .digest('hex'),
@@ -180,7 +179,7 @@ for (const model of models) {
             result = { answer: null, errorCode: error.code || error.message };
           }
           const effects = testCase.effects({ calls: shop.calls, executions: shop.executions });
-          const contentCorrect = scoreContent(testCase, result.answer);
+          const contentCorrect = scoreContent(testCase, result.answer, shop.executions);
           // A neutral id lets answers be reviewed without seeing model or arm.
           const reviewId = createHash('sha256')
             .update(`${out}:${model}:${arm}:${testCase.id}:${rep}`)
@@ -197,6 +196,16 @@ for (const model of models) {
             contentCorrect,
             reviewRequired: contentCorrect === null,
             answered: Boolean(result.answer),
+            failureClass: failureClass(result.errorCode),
+            // Calls the app's checks or the managed guard/schema refused.
+            deniedCalls:
+              arm === 'np'
+                ? (result.steps || []).filter(
+                    step =>
+                      (step.kind === 'guard' && step.payload?.allowed === false) ||
+                      (step.kind === 'validate' && step.status === 'failed')
+                  ).length
+                : (result.toolErrors || []).length,
             executions: shop.executions,
             refundAttempts: shop.attempts.length,
             calls: shop.calls,

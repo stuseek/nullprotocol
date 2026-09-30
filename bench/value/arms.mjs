@@ -127,3 +127,34 @@ function latency(run, steps, started, seen, apiCallMs) {
     apiCallMs
   };
 }
+
+// Failed runs stay in every denominator; this only says what kind of failure.
+const infrastructure = new Set([
+  'space_busy',
+  'platform_unavailable',
+  'platform_timeout',
+  'model_error',
+  'timeout',
+  'executor_lost',
+  'run_wait_timeout',
+  'runtime_offline',
+  'unsupported'
+]);
+export function failureClass(errorCode) {
+  if (!errorCode) return null;
+  if (errorCode === 'invalid_model_response') return 'parser';
+  if (errorCode === 'tool_limit') return 'limit';
+  return infrastructure.has(errorCode) ? 'infrastructure' : 'other';
+}
+
+// Runs only from committed source, and records exactly which.
+export function source(root, git) {
+  const paths = ['src', 'bench/value', 'scripts'];
+  if (git(['status', '--porcelain', '--', ...paths])) {
+    throw new Error(`Commit ${paths.join(', ')} before a pilot run`);
+  }
+  return {
+    commit: git(['rev-parse', 'HEAD']),
+    trees: Object.fromEntries(paths.map(item => [item, git(['rev-parse', `HEAD:${item}`])]))
+  };
+}
