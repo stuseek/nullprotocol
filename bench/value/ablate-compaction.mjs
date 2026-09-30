@@ -10,7 +10,8 @@
 //          counts as compacted when both halves are valid;
 //   AB   – A plus one repair turn.
 //
-//   node bench/value/ablate-compaction.mjs CAPTURE.jsonl OUT.jsonl [--picks 0,2,5,9,10,11] [--reps 2]
+//   node bench/value/ablate-compaction.mjs CAPTURE.jsonl OUT.jsonl [--picks 0,2,5,9,10,11|all] [--reps 2]
+//     [--variants base,A,B,C,AB]
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -27,9 +28,8 @@ const option = (name, fallback) => {
   const index = process.argv.indexOf(name);
   return index === -1 ? fallback : process.argv[index + 1];
 };
-const picks = option('--picks', '0,2,5,9,10,11').split(',').map(Number);
 const reps = Number(option('--reps', '2'));
-const VARIANTS = ['base', 'A', 'B', 'C', 'AB'];
+const VARIANTS = option('--variants', 'base,A,B,C,AB').split(',');
 // The captured runs used memory case seed 0.
 const customer = memoryCase(0, 30).customer;
 
@@ -135,6 +135,8 @@ async function run(record, variant) {
 }
 
 const records = readFileSync(capture, 'utf8').trim().split('\n').map(JSON.parse);
+const pickOption = option('--picks', '0,2,5,9,10,11');
+const picks = pickOption === 'all' ? records.map((_, index) => index) : pickOption.split(',').map(Number);
 const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 appendFileSync(
   out,
