@@ -507,7 +507,7 @@ The implementation pair agreed on these beta contracts while writing this docume
 
 The current SDK exposes `NullProtocol` as an alias to `AIToolkit`, existing primitive functions, telemetry flags and `serveAgents`. This target API is a significant semantic change. Keep all existing 2.x constructors and methods unchanged. Build the connected constructor with `spaceKey` and the new semantics only in a `3.0.0` prerelease (or a separately named explicit export during development). The final 3.0 `NullProtocol` can be the connected API; a temporary `AIToolkit` compatibility export may keep old primitives with documented deprecation. Do not make a 2.x upgrade introduce network calls into existing code. Keep an upgrade guide with old-to-new examples, current/target status for each method, and an announced support window. Do not claim `npm install nullprotocol` works until the package is actually published. Delay npm publication until registry ownership, package contents, semver, docs, smoke install and release provenance are verified; the founder previously chose to hold publication.
 
-## 14. Cabinet: Agent Center
+## 14. Cabinet: Agents
 
 The cabinet should be the place where a developer understands and controls an Agent, not merely a page of counters. Keep screens separate so the user sees a hierarchy rather than a crowded dashboard. Use the existing Radix Themes-based design system; do not invent a fresh component system or fill the interface with labels such as “Interactive example,” “Start here / 01,” or generic AI copy. Show actual resource names, state, timestamps, versions and consequences. Critical actions need clear confirmation and result feedback, but routine reversible edits should be quick.
 
@@ -545,6 +545,14 @@ These are information areas, not a mandate to create eleven top-level tabs. Give
 - Pause/stop controls must show online instances and applied revision counts. A telemetry-only discovered ID is not a connected managed Agent. Existing discovered agents may need a separate legacy badge or migration path rather than silently becoming managed Agents.
 - Deletion UI states exactly what is purged and what remains (Template, Space Context, anonymous usage, backup retention). The user can delete one conversation, clear Agent memory/context, or delete the whole Agent. Bulk deletion is a separate deliberate operation with progress and failure state.
 - Keep usage numbers tied to provider-reported token counts and show missing usage explicitly. Do not manufacture token estimates as billable facts.
+
+### Shipped navigation (2026-09-30)
+
+The cabinet has one level of context: a Space selector at the top of the sidebar (with **All spaces**), then **Agents** as the main screen, a **Telemetry** disclosure for the SDK telemetry screens (Observed agents, Activity, Connections), and **Settings** at the bottom for the owner. The Agent's own sections (Overview, Connect, Ask, Runs, Conversations, Memory, Context, Actions) stay inside the Agent, not in the Space menu. API keys and shared context sit under **More** beside **Create agent**.
+
+### Backlog: Run graph
+
+The next cabinet slice draws one real Run as a graph of its durable steps: context assembly, compaction, model call, validation, guard, action and commit. Refusals, retries and unknown outcomes are visible branches, and selecting a node opens the existing step inspector. An extract, summarize or decide stage appears only when the run actually recorded it with evidence; the graph never shows a stage that did not happen. A visual editor for decision policy is a separate, later idea and is not part of this slice.
 
 ### Landing and onboarding copy
 
