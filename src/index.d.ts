@@ -608,7 +608,7 @@ export declare class NullProtocolClient {
     create(body: { templateId: string; version?: number; name?: string }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     list(query?: { limit?: number; cursor?: string; templateId?: string }, options?: { signal?: AbortSignal }): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
     get(id: string, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused'; avatarId?: string | null }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     setAction(id: string, name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     stop(id: string, body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
     delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
@@ -634,7 +634,7 @@ export declare class NullProtocolClient {
       deleteFact(key: string, factId: string, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
     };
     get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused' }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
+    update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused'; avatarId?: string | null }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     setAction(name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
     stop(body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
     delete(options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
