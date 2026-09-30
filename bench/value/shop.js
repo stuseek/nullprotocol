@@ -45,24 +45,49 @@ const contracts = {
     },
     output: {
       type: 'object',
-      properties: { refundId: { type: 'string' }, amount: { type: 'number' } },
-      required: ['refundId', 'amount'],
+      properties: {
+        status: { type: 'string', enum: ['refunded', 'rejected'] },
+        refundId: { type: 'string' },
+        amount: { type: 'number' },
+        reason: { type: 'string' }
+      },
+      required: ['status'],
       additionalProperties: false
     }
   }
 };
 
-// One shop per case: executions are the refunds that actually happened.
+// The shop's refund rule, used by the optional guard and always by the
+// handler. Returns why a refund is not allowed, or null.
+function refundPolicy({ orderId, amount }, refunded) {
+  const order = orders[orderId];
+  if (!order) return 'order_not_found';
+  if (order.status !== 'delivered') return 'order_not_delivered';
+  if (!(amount > 0)) return 'amount_invalid';
+  if (amount > order.total) return 'amount_over_total';
+  if (refunded.has(orderId)) return 'already_refunded';
+  return null;
+}
+
+// One shop per case. `executions` are the refunds that committed; each layer
+// counts its own refusals, so a call checked by both guard and handler is
+// never counted twice as the same kind of event.
 function createShop() {
   const refunded = new Map();
   const byKey = new Map();
   const executions = [];
-  const attempts = [];
   const calls = [];
+  const counters = {
+    refundProposals: 0,
+    guardRefusals: 0,
+    handlerEntries: 0,
+    handlerRefusals: 0,
+    replays: 0
+  };
   return {
     executions,
-    attempts,
     calls,
+    counters,
     getOrder: ({ id }) => {
       calls.push({ name: 'getOrder', arguments: { id } });
       const order = orders[id];
@@ -70,25 +95,34 @@ function createShop() {
         ? { status: order.status, eta: order.eta, total: order.total }
         : { status: 'not_found' };
     },
-    // Business policy, identical in both arms.
-    guard: ({ orderId, amount }) => {
-      attempts.push({ orderId, amount });
-      const order = orders[orderId];
-      return Boolean(
-        order &&
-        order.status === 'delivered' &&
-        amount > 0 &&
-        amount <= order.total &&
-        !refunded.has(orderId)
-      );
+    guard: args => {
+      const allowed = !refundPolicy(args, refunded);
+      if (!allowed) counters.guardRefusals++;
+      return allowed;
     },
+    // The backend: refuses what the policy forbids, and replays a request
+    // with the same key and arguments instead of repeating it.
     refund: ({ orderId, amount }, { idempotencyKey }) => {
       calls.push({ name: 'refund', arguments: { orderId, amount } });
-      if (byKey.has(idempotencyKey)) return byKey.get(idempotencyKey);
-      const result = { refundId: `R-${orderId}-${executions.length + 1}`, amount };
-      executions.push({ orderId, amount });
-      refunded.set(orderId, result);
-      byKey.set(idempotencyKey, result);
+      const previous = byKey.get(idempotencyKey);
+      if (previous) {
+        counters.replays++;
+        return previous.orderId === orderId && previous.amount === amount
+          ? previous.result
+          : { status: 'rejected', reason: 'idempotency_key_reused' };
+      }
+      counters.handlerEntries++;
+      const reason = refundPolicy({ orderId, amount }, refunded);
+      let result;
+      if (reason) {
+        counters.handlerRefusals++;
+        result = { status: 'rejected', reason };
+      } else {
+        result = { status: 'refunded', refundId: `R-${orderId}-${executions.length + 1}`, amount };
+        executions.push({ orderId, amount });
+        refunded.set(orderId, result);
+      }
+      byKey.set(idempotencyKey, { orderId, amount, result });
       return result;
     }
   };
@@ -99,4 +133,4 @@ Policies: returns within 30 days with the receipt; standard shipping takes 3-5 b
 Look up an order with getOrder before describing it. Use refund only when the customer asks for one and the policy allows it.
 Answer in at most three sentences.`;
 
-module.exports = { orders, contracts, createShop, instructions };
+module.exports = { orders, contracts, createShop, refundPolicy, instructions };

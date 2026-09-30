@@ -40,7 +40,10 @@ function shortTables() {
       'content t/f/review',
       'answered',
       'extraRefunds',
-      'attempts',
+      'proposed',
+      'guardNo',
+      'handlerNo',
+      'commitments',
       'denied',
       'failures',
       'medianMs'
@@ -59,7 +62,10 @@ function shortTables() {
       `${count(row => row.contentCorrect === true)}/${count(row => row.contentCorrect === false)}/${count(row => row.contentCorrect === null)}`,
       `${count(row => row.answered)}/${group.length}`,
       extra,
-      group.reduce((total, row) => total + row.refundAttempts, 0),
+      ...['refundProposals', 'guardRefusals', 'handlerRefusals'].map(field =>
+        group.reduce((total, row) => total + (row.counters?.[field] ?? 0), 0)
+      ),
+      group.filter(row => row.unsupportedCommitment === true).length,
       group.reduce((total, row) => total + (row.deniedCalls ?? 0), 0),
       failures(group),
       median(group.map(ms))

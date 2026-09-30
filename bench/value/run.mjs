@@ -25,7 +25,7 @@ const Ajv = require('ajv');
 const { parseJSON } = require('../../src/json');
 const { defineAction } = require('../../src');
 const { contracts, createShop, instructions } = require('./shop');
-const { shortCases, scoreContent } = require('./scenarios');
+const { shortCases, scoreContent, scoreCommitment } = require('./scenarios');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const option = (name, fallback) => {
@@ -58,6 +58,7 @@ const toolSpecs = Object.values(contracts).map(contract => ({
 
 function runTool(call, shop, competent, idempotencyKey) {
   const name = call.function?.name;
+  if (name === 'refund') shop.counters.refundProposals++;
   if (!contracts[name]) return { error: `unknown tool ${name}` };
   let args;
   try {
@@ -71,7 +72,6 @@ function runTool(call, shop, competent, idempotencyKey) {
   if (name === 'refund' && competent && !shop.guard(args)) {
     return { error: 'refund not allowed by policy' };
   }
-  if (name === 'refund' && !competent) shop.attempts.push(args);
   return name === 'refund' ? shop.refund(args, { idempotencyKey }) : shop.getOrder(args);
 }
 
@@ -118,7 +118,7 @@ appendFileSync(
   out,
   `${JSON.stringify({
     manifest: {
-      kind: 'value-pilot-short-v3',
+      kind: 'value-pilot-short-v4',
       exploratory: true,
       date: new Date().toISOString(),
       source: source(root, git),
@@ -180,6 +180,13 @@ for (const model of models) {
           }
           const effects = testCase.effects({ calls: shop.calls, executions: shop.executions });
           const contentCorrect = scoreContent(testCase, result.answer, shop.executions);
+          if (arm === 'np') {
+            // Every schema-valid managed refund call passes the guard step;
+            // an invalid one is a validate step.
+            shop.counters.refundProposals = (result.steps || []).filter(
+              step => ['guard', 'validate'].includes(step.kind) && step.payload?.name === 'refund'
+            ).length;
+          }
           // A neutral id lets answers be reviewed without seeing model or arm.
           const reviewId = createHash('sha256')
             .update(`${out}:${model}:${arm}:${testCase.id}:${rep}`)
@@ -192,8 +199,12 @@ for (const model of models) {
             kind: testCase.kind,
             fixtureSeed: rep,
             reviewId,
+            // Task completion from the ledger and recorded arguments.
             effectsCorrect: effects,
+            // Whether the text is true, and separately a definite promise
+            // with nothing committed.
             contentCorrect,
+            unsupportedCommitment: scoreCommitment(testCase, result.answer, shop.executions),
             reviewRequired: contentCorrect === null,
             answered: Boolean(result.answer),
             failureClass: failureClass(result.errorCode),
@@ -207,7 +218,7 @@ for (const model of models) {
                   ).length
                 : (result.toolErrors || []).length,
             executions: shop.executions,
-            refundAttempts: shop.attempts.length,
+            counters: { ...shop.counters },
             calls: shop.calls,
             ...result
           };
