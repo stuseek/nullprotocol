@@ -1077,134 +1077,242 @@ test.each([
   );
 });
 
-test.each([
-  ['a policy guard', '{"orderId":"3307","amount":40}', 'guard', 'guard_rejected'],
-  ['the action schema', '{"orderId":3307}', 'validate', 'invalid_action_input']
-])(
-  'a call refused by %s is recorded and answered, and the run still replies',
-  async (_, args, kind, reasonCode) => {
-    const action = {
-      name: 'refund',
-      description: 'Refund an order',
-      input: {
-        type: 'object',
-        properties: { orderId: { type: 'string' }, amount: { type: 'number' } },
-        required: ['orderId', 'amount'],
-        additionalProperties: false
-      },
-      output: {
-        type: 'object',
-        properties: { refundId: { type: 'string' } },
-        required: ['refundId']
-      },
-      effect: 'write'
-    };
-    const contractHash = actionContractHash(action);
-    const actionConfig = { ...config, actions: [action] };
+describe('refused action calls', () => {
+  const refund = {
+    name: 'refund',
+    description: 'Refund an order',
+    input: {
+      type: 'object',
+      properties: { orderId: { type: 'string' }, amount: { type: 'number' } },
+      required: ['orderId', 'amount'],
+      additionalProperties: false
+    },
+    output: {
+      type: 'object',
+      properties: { refundId: { type: 'string' } },
+      required: ['refundId']
+    },
+    effect: 'write'
+  };
+  const getOrder = {
+    name: 'getOrder',
+    description: 'Read an order',
+    input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    output: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] },
+    effect: 'read'
+  };
+  const native = (...calls) => ({
+    content: null,
+    tool_calls: calls.map(([id, name, args]) => ({
+      id,
+      type: 'function',
+      function: { name, arguments: JSON.stringify(args) }
+    }))
+  });
+  const answer = text => ({ content: text });
+
+  // Runs one job against stubbed platform calls; `replies` are the model's
+  // messages in order, the last one repeating.
+  async function run({ replies, text = false, guard = async () => false, lease, lost = false }) {
+    const actions = [getOrder, refund];
+    const actionConfig = { ...config, actions };
+    const requests = [];
     const steps = [];
     const commits = [];
-    const fetchImpl = jest.fn(async (url, options) => {
-      if (url.endsWith('/v1/space')) {
-        return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
-      }
-      if (url.endsWith('/lease')) {
-        return new globalThis.Response(
-          JSON.stringify({
-            expiresAt: new Date(Date.now() + 30000),
-            cancelRequested: false,
-            disabledActions: []
-          })
-        );
-      }
-      if (url.endsWith('/context')) {
-        return new globalThis.Response(
-          JSON.stringify({
-            spaceContext: [],
-            agentContext: [],
-            agentMemory: [],
-            disabledActions: []
-          })
-        );
-      }
-      if (url.endsWith('/steps')) {
-        steps.push(JSON.parse(options.body).steps[0]);
-        return new globalThis.Response(JSON.stringify({ accepted: 1 }));
-      }
-      if (url.endsWith('/commit')) {
-        commits.push(JSON.parse(options.body));
-        return new globalThis.Response(JSON.stringify({ run: { status: commits[0].status } }));
-      }
-      throw new Error('unexpected API request');
-    });
-    const modelRequests = [];
-    const modelFetchImpl = jest.fn(async (_url, options) => {
-      modelRequests.push(JSON.parse(options.body));
-      return new globalThis.Response(
-        JSON.stringify(
-          modelRequests.length === 1
-            ? {
-                choices: [
-                  {
-                    message: {
-                      content: null,
-                      tool_calls: [
-                        {
-                          id: 'call-1',
-                          type: 'function',
-                          function: { name: 'refund', arguments: args }
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            : { choices: [{ message: { content: 'I cannot refund that order.' } }] }
-        )
-      );
-    });
-    const handler = jest.fn(async () => ({ refundId: 'R-1' }));
+    const handlers = {
+      refund: jest.fn(async () => ({ refundId: 'R-1' })),
+      getOrder: jest.fn(async () => ({ status: 'delivered' }))
+    };
     const executor = new ManagedExecutor({
       executorKey,
       agentIds: [agentId],
-      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
-      actions: [{ ...action, guard: async () => false, handler }],
-      fetchImpl,
-      modelFetchImpl
+      credentials: {
+        localModel: {
+          provider: 'local',
+          baseURL: 'http://localhost:11434/v1',
+          ...(text ? { toolCalls: false } : {})
+        }
+      },
+      actions: [
+        { ...refund, guard, handler: handlers.refund },
+        { ...getOrder, handler: handlers.getOrder }
+      ],
+      modelFetchImpl: async (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        const message = replies[Math.min(requests.length, replies.length) - 1];
+        return new globalThis.Response(JSON.stringify({ choices: [{ message }] }));
+      }
     });
-    const result = await executor.processJob({
-      run: {
-        id: runId,
-        agentId,
-        input: 'Please refund $40 for order 3307.',
-        conversationId,
-        deadlineAt: new Date(Date.now() + 180000).toISOString()
-      },
-      lease: {
-        token: `np_lease_${'B'.repeat(43)}`,
-        expiresAt: new Date(Date.now() + 30000).toISOString()
-      },
-      template: { contentHash: hashJson(actionConfig), config: actionConfig },
-      actions: [{ ...action, contractHash }],
-      actionManifestHash: hashJson([{ name: action.name, contractHash }]),
+    const state = { cancelled: false, lost: false };
+    executor._lease = jest.fn(
+      lease || (async () => ({ expiresAt: new Date(Date.now() + 30000), disabledActions: [] }))
+    );
+    executor._context = jest.fn(async () => ({
       spaceContext: [],
-      conversation: { id: conversationId, version: 0, messages: [] },
       agentContext: [],
       agentMemory: [],
-      pendingOutcomes: []
+      disabledActions: []
+    }));
+    executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+    executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => {
+      commits.push(body);
+      return { run: body };
+    });
+    const result = await executor._processActionJob(
+      {
+        run: {
+          id: runId,
+          agentId,
+          input: 'Please refund order 3307.',
+          deadlineAt: new Date(Date.now() + 180000).toISOString()
+        },
+        template: { config: actionConfig },
+        actions: actions.map(action => ({ ...action, contractHash: actionContractHash(action) })),
+        actionManifestHash: hashJson(
+          actions.map(action => ({ name: action.name, contractHash: actionContractHash(action) }))
+        ),
+        spaceContext: [],
+        conversation: { id: conversationId, version: 0, messages: [] }
+      },
+      `np_lease_${'B'.repeat(43)}`,
+      executor.credentials.localModel,
+      new AbortController(),
+      {
+        expiresAt: () => Date.now() + 30000,
+        lost: () => lost || state.lost,
+        cancelled: () => state.cancelled,
+        requestCancel: () => {
+          state.cancelled = true;
+        }
+      }
+    );
+    return { result, requests, steps, commits, handlers };
+  }
+
+  test.each([
+    ['guard', 'native', native(['call-1', 'refund', { orderId: '3307', amount: 40 }])],
+    [
+      'guard',
+      'text',
+      { content: '{"action":"refund","parameters":{"orderId":"3307","amount":40}}' }
+    ],
+    ['schema', 'native', native(['call-1', 'refund', { orderId: 3307 }])],
+    ['schema', 'text', { content: '{"action":"refund","parameters":{"orderId":3307}}' }]
+  ])(
+    'a %s refusal over the %s protocol is answered by a refusal in a succeeded run',
+    async (reason, protocol, call) => {
+      const text = protocol === 'text';
+      const reply = text
+        ? { content: '{"answer":"I cannot refund that order."}' }
+        : answer('I cannot refund that order.');
+      const { result, requests, steps, commits, handlers } = await run({
+        replies: [call, reply],
+        text
+      });
+      expect(result.run).toMatchObject({
+        status: 'succeeded',
+        output: { text: 'I cannot refund that order.' }
+      });
+      expect(commits[0].conversation.append.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: 'I cannot refund that order.'
+      });
+      expect(handlers.refund).not.toHaveBeenCalled();
+      const reasonCode = reason === 'guard' ? 'guard_rejected' : 'invalid_action_input';
+      expect(
+        steps.find(step => step.kind === (reason === 'guard' ? 'guard' : 'validate')).payload
+      ).toMatchObject({
+        name: 'refund',
+        reasonCode
+      });
+      expect(steps.some(step => step.kind === 'action')).toBe(false);
+      expect(JSON.stringify(requests[1].messages)).toContain(reasonCode);
+    }
+  );
+
+  test('invalid input then a corrected permitted call runs the handler exactly once', async () => {
+    const { result, steps, handlers } = await run({
+      guard: async ({ orderId }) => orderId === '2210',
+      replies: [
+        native(['call-1', 'refund', { orderId: 2210 }]),
+        native(['call-2', 'refund', { orderId: '2210', amount: 89 }]),
+        answer('Refunded $89.')
+      ]
     });
     expect(result.run.status).toBe('succeeded');
-    expect(commits[0]).toMatchObject({
-      status: 'succeeded',
-      output: { text: 'I cannot refund that order.' }
+    expect(handlers.refund).toHaveBeenCalledTimes(1);
+    expect(handlers.refund.mock.calls[0][0]).toEqual({ orderId: '2210', amount: 89 });
+    expect(steps.map(step => `${step.kind}:${step.status}`)).toEqual(
+      expect.arrayContaining(['validate:failed', 'guard:succeeded', 'action:succeeded'])
+    );
+  });
+
+  test('repeated denied calls stop at the turn limit with no effect', async () => {
+    const { result, requests, handlers } = await run({
+      replies: [native(['call-1', 'refund', { orderId: '3307', amount: 40 }])]
     });
-    expect(handler).not.toHaveBeenCalled();
-    expect(steps.find(step => step.kind === kind).payload).toMatchObject({
-      name: 'refund',
-      reasonCode
+    expect(result.run).toMatchObject({ status: 'failed', errorCode: 'tool_limit' });
+    expect(requests).toHaveLength(4);
+    expect(handlers.refund).not.toHaveBeenCalled();
+  });
+
+  test('several calls in one reply each get a matching result', async () => {
+    const { result, requests, handlers } = await run({
+      replies: [
+        native(
+          ['call-1', 'getOrder', { id: '3307' }],
+          ['call-2', 'refund', { orderId: '3307', amount: 40 }]
+        ),
+        answer('Order 3307 is delivered, but I cannot refund it.')
+      ]
     });
-    expect(steps.some(step => step.kind === 'action')).toBe(false);
-    const toolResult = modelRequests[1].messages.find(message => message.role === 'tool');
-    expect(JSON.parse(toolResult.content)).toMatchObject({ error: reasonCode });
-    expect(toolResult.tool_call_id).toBe('call-1');
-  }
-);
+    expect(result.run.status).toBe('succeeded');
+    expect(handlers.getOrder).toHaveBeenCalledTimes(1);
+    expect(handlers.refund).not.toHaveBeenCalled();
+    const results = requests[1].messages.filter(message => message.role === 'tool');
+    expect(results.map(message => message.tool_call_id)).toEqual(['call-1', 'call-2']);
+    expect(JSON.parse(results[1].content)).toMatchObject({ error: 'guard_rejected' });
+  });
+
+  test.each([
+    [
+      'a guard exception',
+      {
+        guard: async () => {
+          throw new Error('policy service down');
+        }
+      },
+      'guard_error'
+    ],
+    [
+      'cancellation',
+      { lease: async () => ({ expiresAt: new Date(Date.now() + 30000), cancelRequested: true }) },
+      'run_cancelled'
+    ]
+  ])(
+    '%s still ends the run without another model call or handler',
+    async (_, options, errorCode) => {
+      const { result, requests, handlers } = await run({
+        replies: [native(['call-1', 'refund', { orderId: '3307', amount: 40 }]), answer('Done.')],
+        ...options
+      });
+      expect(result.run.errorCode).toBe(errorCode);
+      expect(requests).toHaveLength(1);
+      expect(handlers.refund).not.toHaveBeenCalled();
+    }
+  );
+
+  test('a lost lease ends processing without another model call or handler', async () => {
+    const { result, requests, commits, handlers } = await run({
+      replies: [native(['call-1', 'refund', { orderId: '3307', amount: 40 }]), answer('Done.')],
+      lease: async () => {
+        throw Object.assign(new Error('lease_expired'), { code: 'lease_expired' });
+      },
+      lost: true
+    });
+    expect(result).toBeNull();
+    expect(commits).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(handlers.refund).not.toHaveBeenCalled();
+  });
+});
