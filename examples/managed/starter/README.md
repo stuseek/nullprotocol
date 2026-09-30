@@ -17,7 +17,7 @@ Four small scripts that run one order-support Agent with a local model:
 
 ## Steps
 
-1. In the cabinet, open your Space → **Agent Center** → **Space keys** → **Manage**, and press **Create app key** and **Create executor key**. You need the owner or admin role; no Agent has to exist yet. Each secret is shown once. Keep both keys on servers, never in a browser.
+1. In the cabinet, open your Space → **Agents** → **More** → **API keys**, and press **Create app key** and **Create executor key**. You need the owner or admin role; no Agent has to exist yet. Each secret is shown once. Keep both keys on servers, never in a browser.
 
 2. Set the environment in one shell:
 
