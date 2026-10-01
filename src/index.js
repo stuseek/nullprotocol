@@ -277,11 +277,16 @@ class AIToolkit {
   _controlled(name, start, stream) {
     const control = this.control;
     const begin = async () => {
+      const started = Date.now();
       try {
         return await control.begin();
       } catch (error) {
         if (error instanceof ControlError) {
-          this.telemetry?.track(name, { success: false, duration: 0, errorCode: error.code });
+          this.telemetry?.track(name, {
+            success: false,
+            duration: Date.now() - started,
+            errorCode: error.code
+          });
         }
         throw error;
       }

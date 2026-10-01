@@ -488,6 +488,9 @@ test('telemetry events carry each client agent ID, and a refusal is one event', 
   try {
     await support.extract('Order 42', { orderId: 'number' });
     await ops.extract('Order 42', { orderId: 'number' });
+    // The refusal waits for the first control state, which arrives after a delay.
+    const release = control.hold();
+    setTimeout(release, 60);
     await paused.extract('Order 42', { orderId: 'number' });
     await Promise.all([support.close(), ops.close(), paused.close()]);
     const extracts = events.filter(event => event.event === 'extract');
@@ -499,6 +502,7 @@ test('telemetry events carry each client agent ID, and a refusal is one event', 
         data: expect.objectContaining({ success: false, errorCode: 'agent_paused' })
       })
     ]);
+    expect(refused[0].data.duration).toBeGreaterThanOrEqual(50);
     expect(model.requests).toHaveLength(2);
   } finally {
     requestSpy.mockRestore();
