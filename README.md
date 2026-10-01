@@ -34,7 +34,7 @@ const openai = new OpenAI();
 const support = connectOpenAI(openai, {
   agentId: 'support',
   telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY,
-  telemetryEndpoint: 'https://api.nullprotocol.ai'
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
   // Optional, for pause and stop from the cabinet:
   // runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
   // runtimeEndpoint: 'https://api.nullprotocol.ai'
