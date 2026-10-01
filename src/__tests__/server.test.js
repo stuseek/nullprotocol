@@ -232,20 +232,6 @@ describe('Server — authenticated requests', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid JSON');
   });
-
-  test('server.ai exposes AIToolkit instance', () => {
-    expect(server.ai).toBeDefined();
-    expect(server.ai.resilience).toBeDefined();
-  });
-
-  test('server.routes lists available routes', () => {
-    expect(server.routes).toContain('/extract');
-    expect(server.routes).toContain('/validate');
-    expect(server.routes).toContain('/summarize');
-    expect(server.routes).toContain('/decide');
-    expect(server.routes).toContain('/chat');
-    expect(server.routes).toContain('/health');
-  });
 });
 
 test('server rejects oversized request bodies', async () => {

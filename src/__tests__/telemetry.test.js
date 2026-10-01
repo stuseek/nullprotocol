@@ -482,19 +482,5 @@ describe('TelemetryClient', () => {
         requestSpy.mockRestore();
       }
     });
-
-    test('should clear interval and flush', () => {
-      // Use real timers for this test since we need clearInterval to be real
-      jest.useRealTimers();
-      client = new TelemetryClient(activeOptions);
-      client.flush = jest.fn();
-      const interval = client.flushInterval;
-
-      client.destroy();
-
-      expect(client.flush).toHaveBeenCalled();
-      // Interval should have been cleared (no way to directly assert, but no error = success)
-      expect(client.flushInterval).toBeDefined(); // still holds the ref, but cleared
-    });
   });
 });

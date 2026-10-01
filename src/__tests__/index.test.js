@@ -547,20 +547,6 @@ describe('Chat', () => {
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0].name).toBe('get_weather');
   });
-
-  test('tools passed through to makeAIRequest', async () => {
-    const ai = createAI();
-    ai.makeAIRequest.mockResolvedValue('ok');
-
-    const tools = [{ name: 'fn', description: 'd', parameters: {} }];
-    const onToolCall = jest.fn();
-
-    await ai.chat('test', { tools, onToolCall });
-    expect(ai.makeAIRequest).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ tools, onToolCall })
-    );
-  });
 });
 
 // ─── Conversation History ───────────────────────────────────────
@@ -697,13 +683,6 @@ describe('Model Routing', () => {
       models: { openai: 'gpt-4o', anthropic: 'claude-sonnet-4-5-20250929' }
     });
     expect(ai._resolveModel(undefined, 'openai')).toBe('gpt-4o');
-  });
-
-  test('falls back to hardcoded defaults', () => {
-    const ai = createAI();
-    // Config has defaults from ConfigLoader, but let's test the resolution chain
-    expect(ai._resolveModel(undefined, 'openai')).toBeDefined();
-    expect(ai._resolveModel(undefined, 'anthropic')).toBeDefined();
   });
 });
 

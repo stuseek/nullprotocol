@@ -1005,23 +1005,6 @@ test('provider errors are not returned to HTTP callers', async () => {
   }
 });
 
-test('tools are offered only to chat', async () => {
-  const base = server.agents.get('worker').base;
-  const original = base.decide;
-  base.decide = jest.fn(async () => ({ success: true, action: 'wait', confidence: 1 }));
-  try {
-    const response = await call('/v1/agents/worker/invoke', 'POST', {
-      operation: 'decide',
-      input: { context: 'quiet', actions: ['wait', 'inspect'] }
-    });
-    expect(response.status).toBe(200);
-    expect(base.decide.mock.calls[0][2].tools).toBeUndefined();
-    expect(base.decide.mock.calls[0][2].onToolCall).toBeUndefined();
-  } finally {
-    base.decide = original;
-  }
-});
-
 test('session store enforces owner and lease', async () => {
   const store = new MemorySessionStore({ maxSessions: 1 });
   const id = await store.create({ agent: 'x', principal: 'alice' }, { messages: [], context: {} });

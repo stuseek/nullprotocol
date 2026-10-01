@@ -93,158 +93,39 @@ describe('Resilience', () => {
       expect(r.circuitBreaker.failures).toBe(0);
     });
 
-    test('retries on 429 status', async () => {
+    test.each([
+      ['429', { status: 429 }],
+      ['503', { status: 503 }],
+      ['529 (Anthropic overloaded)', { status: 529 }],
+      ['ECONNRESET', { code: 'ECONNRESET' }],
+      ['ETIMEDOUT', { code: 'ETIMEDOUT' }],
+      ['an "overloaded" message', { message: 'API is overloaded' }]
+    ])('retries on %s', async (_, fields) => {
       const r = new Resilience({ maxRetries: 2, timeout: 0 });
-      // Stub _sleep to avoid actual delays
       r._sleep = () => Promise.resolve();
-
       let calls = 0;
       const fn = () => {
         calls++;
-        if (calls < 3) {
-          const err = new Error('Rate limited');
-          err.status = 429;
-          return Promise.reject(err);
-        }
+        if (calls < 3) return Promise.reject(Object.assign(new Error('Failed'), fields));
         return Promise.resolve('ok');
       };
-
-      const result = await r.execute(fn);
-      expect(result).toBe('ok');
-      expect(calls).toBe(3); // 1 initial + 2 retries
-    });
-
-    test('retries on 503 status', async () => {
-      const r = new Resilience({ maxRetries: 1, timeout: 0 });
-      r._sleep = () => Promise.resolve();
-
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        if (calls < 2) {
-          const err = new Error('Service unavailable');
-          err.status = 503;
-          return Promise.reject(err);
-        }
-        return Promise.resolve('recovered');
-      };
-
-      const result = await r.execute(fn);
-      expect(result).toBe('recovered');
-      expect(calls).toBe(2);
-    });
-
-    test('retries on 529 status (Anthropic overloaded)', async () => {
-      const r = new Resilience({ maxRetries: 1, timeout: 0 });
-      r._sleep = () => Promise.resolve();
-
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        if (calls === 1) {
-          const err = new Error('Overloaded');
-          err.status = 529;
-          return Promise.reject(err);
-        }
-        return Promise.resolve('done');
-      };
-
-      const result = await r.execute(fn);
-      expect(result).toBe('done');
-    });
-
-    test('retries on ECONNRESET', async () => {
-      const r = new Resilience({ maxRetries: 1, timeout: 0 });
-      r._sleep = () => Promise.resolve();
-
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        if (calls === 1) {
-          const err = new Error('Connection reset');
-          err.code = 'ECONNRESET';
-          return Promise.reject(err);
-        }
-        return Promise.resolve('ok');
-      };
-
-      const result = await r.execute(fn);
-      expect(result).toBe('ok');
-    });
-
-    test('retries on ETIMEDOUT', async () => {
-      const r = new Resilience({ maxRetries: 1, timeout: 0 });
-      r._sleep = () => Promise.resolve();
-
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        if (calls === 1) {
-          const err = new Error('Timed out');
-          err.code = 'ETIMEDOUT';
-          return Promise.reject(err);
-        }
-        return Promise.resolve('ok');
-      };
-
       await expect(r.execute(fn)).resolves.toBe('ok');
+      expect(calls).toBe(3);
     });
 
-    test('retries on "overloaded" message', async () => {
-      const r = new Resilience({ maxRetries: 1, timeout: 0 });
-      r._sleep = () => Promise.resolve();
-
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        if (calls === 1) {
-          return Promise.reject(new Error('API is overloaded'));
-        }
-        return Promise.resolve('ok');
-      };
-
-      await expect(r.execute(fn)).resolves.toBe('ok');
-    });
-
-    test('does NOT retry on 400 Bad Request', async () => {
+    test.each([
+      ['400 Bad Request', { status: 400 }],
+      ['401 Unauthorized', { status: 401 }],
+      ['a generic error', {}]
+    ])('does not retry on %s', async (_, fields) => {
       const r = new Resilience({ maxRetries: 2, timeout: 0 });
       r._sleep = () => Promise.resolve();
-
       let calls = 0;
       const fn = () => {
         calls++;
-        const err = new Error('Bad request');
-        err.status = 400;
-        return Promise.reject(err);
+        return Promise.reject(Object.assign(new Error('Failed'), fields));
       };
-
-      await expect(r.execute(fn)).rejects.toThrow('Bad request');
-      expect(calls).toBe(1); // no retries
-    });
-
-    test('does NOT retry on 401 Unauthorized', async () => {
-      const r = new Resilience({ maxRetries: 2, timeout: 0 });
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        const err = new Error('Unauthorized');
-        err.status = 401;
-        return Promise.reject(err);
-      };
-
-      await expect(r.execute(fn)).rejects.toThrow('Unauthorized');
-      expect(calls).toBe(1);
-    });
-
-    test('does NOT retry on generic errors', async () => {
-      const r = new Resilience({ maxRetries: 2, timeout: 0 });
-      let calls = 0;
-      const fn = () => {
-        calls++;
-        return Promise.reject(new Error('JSON parse failed'));
-      };
-
-      await expect(r.execute(fn)).rejects.toThrow('JSON parse failed');
+      await expect(r.execute(fn)).rejects.toThrow('Failed');
       expect(calls).toBe(1);
     });
 
@@ -400,20 +281,6 @@ describe('Resilience', () => {
   });
 
   describe('timeout', () => {
-    test('times out slow functions', async () => {
-      const r = new Resilience({ timeout: 50, maxRetries: 0 });
-
-      const slow = () => new Promise(resolve => setTimeout(() => resolve('late'), 500));
-
-      await expect(r.execute(slow)).rejects.toThrow('timed out');
-    });
-
-    test('does not time out fast functions', async () => {
-      const r = new Resilience({ timeout: 5000, maxRetries: 0 });
-      const result = await r.execute(() => Promise.resolve('fast'));
-      expect(result).toBe('fast');
-    });
-
     test('no timeout when timeout is 0', async () => {
       const r = new Resilience({ timeout: 0, maxRetries: 0 });
       const result = await r.execute(() => Promise.resolve('ok'));

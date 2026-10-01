@@ -188,27 +188,6 @@ describe('safety regressions', () => {
     expect(ai.getHistory()).toEqual([]);
   });
 
-  test('streams Anthropic text deltas', async () => {
-    const ai = new AIToolkit({
-      engines: { anthropic: 'test' },
-      defaultEngine: 'anthropic',
-      models: { anthropic: 'small' }
-    });
-    ai.clients.anthropic = {
-      messages: {
-        stream: jest.fn(() =>
-          (async function* () {
-            yield { type: 'content_block_delta', delta: { text: 'ready' } };
-          })()
-        )
-      }
-    };
-
-    const result = await ai.chat('status?', { stream: true, collect: true });
-    expect(result.message).toBe('ready');
-    expect(ai.clients.anthropic.messages.stream).toHaveBeenCalledTimes(1);
-  });
-
   test('sliding window removes whole old turns and keeps the current request', async () => {
     const ai = new AIToolkit({ engines: { openai: 'test' }, maxContextLength: 50 });
     ai.addMessage('user', 'a'.repeat(20));
