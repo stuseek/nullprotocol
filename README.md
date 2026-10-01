@@ -2,11 +2,11 @@
 
 # NullProtocol
 
-A Node.js library for model calls with local checks: structured output validated against a JSON Schema, decisions limited to the actions you allow, an optional guard, bounded tool calls, retries and timeouts. It also connects managed Agents to the NullProtocol API, with their model credentials and actions kept in your own executor process.
+A Node.js SDK for the AI steps in your application. Each step checks the model's output against a JSON Schema or the actions you allow, with guards, bounded tool calls, retries and timeouts. Connected to a NullProtocol Space, its calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
-The library is MIT licensed and runs without an account. Telemetry, shared Space context and managed Agents are optional and use the separate NullProtocol API.
+The library is MIT licensed. Telemetry, control, shared Space context and managed Agents use the separate NullProtocol API; everything else runs without an account.
 
 ## Install
 
@@ -15,6 +15,95 @@ npm install nullprotocol 'openai@^4.104.0'
 ```
 
 Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node 22 you can install the current one. Install `@anthropic-ai/sdk` instead if you use Anthropic.
+
+## Connect your application
+
+Give each AI step in your code an `agentId` and connect it to a Space. Its calls then appear in Activity under that ID, and the cabinet can pause or stop it:
+
+```js
+import { NullProtocol } from 'nullprotocol';
+
+const support = new NullProtocol({
+  agentId: 'support',
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  telemetry: true,
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
+  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY,
+  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
+  runtimeEndpoint: 'https://api.nullprotocol.ai'
+});
+
+const result = await support.extract('Order 42: two blue mugs', {
+  orderId: 'number',
+  quantity: 'number',
+  item: 'string'
+});
+```
+
+The ingest and runtime keys come from **Connect** in the cabinet. Each operation appears as one `ai_request` event per model request, with the model's name, and one event for the operation, all with the same run ID. Activity holds metadata only: prompts, replies and the failing field stay in your application's result.
+
+| Activity shows | What happened |
+| --- | --- |
+| `ai_request` failed with `timeout`, `rate_limited` or `provider_error`, and the operation with the same code | The model request failed |
+| `ai_request` succeeded, then `extract` or `decide` with `schema_mismatch` | The model answered and the answer did not pass the check; each attempt, including a repair turn, is its own `ai_request` |
+| `ai_request` succeeded, then `decide` with `guard_rejected` | Your guard refused the model's choice |
+| The operation with `config_error` and no `ai_request` | The input failed before any model request, such as an invalid schema |
+| The operation with `agent_paused` and no `ai_request` | The agent is paused in the cabinet |
+| `ai_request` and the operation with `aborted` | The agent was stopped during the request |
+
+Without the telemetry and runtime settings the same client runs locally with no account; see [Local primitives](#local-primitives).
+
+## What needs a NullProtocol account
+
+| Feature | Account | Key |
+| --- | --- | --- |
+| `extract`, `validate`, `summarize`, `decide`, `chat`, tools, guards | No | Only your model's key, if it needs one |
+| `serveAgents`, `serve` and the CLI | No | Your own HTTP `apiKey` for callers |
+| Telemetry | Yes | Space ingest key as `telemetryKey` |
+| Shared Space context | Yes | Space context key as `spaceContextKey` |
+| Managed Agents | Yes, allowlisted team | App key for `NullProtocolClient`, executor key for `ManagedExecutor` |
+
+## Optional telemetry
+
+Telemetry is off by default. With `telemetry: true`, an HTTPS `telemetryEndpoint` and a `telemetryKey`, the client sends operation metadata and reported token usage, never prompts, replies, tool parameters or credentials. For the hosted API, use `https://api.nullprotocol.ai` with a Space ingest key from the [cabinet](https://app.nullprotocol.ai/), and keep the key on your server.
+
+```js
+const ai = new NullProtocol({
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  telemetry: true,
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
+  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY
+});
+await ai.telemetry?.destroy(); // flush before shutdown; delivery is best effort
+```
+
+Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events are buffered. `telemetryTimeline: true` adds one metadata event per top-level call with up to 24 model, tool and guard steps.
+
+## Pause and stop from the cabinet
+
+A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Connect → Runtime keys**:
+
+```js
+const ops = new NullProtocol({
+  agentId: 'ops',
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
+  runtimeEndpoint: 'https://api.nullprotocol.ai'
+});
+// ...
+await ops.close(); // on shutdown
+```
+
+- **Pause:** new operations of that agent return `{ success: false, errorCode: 'agent_paused' }` without calling the model, and a stream raises a `ControlError` when read. Running ones finish.
+- **Stop:** pauses and cancels running operations: the model request is aborted, and no retry, repair turn or further tool round starts. A tool callback receives the abort `signal` and must stop its own work; effects already made are not undone.
+- **Connection:** the first operation waits up to 10 seconds for the agent's state and returns `control_unavailable` if it gets none, so a restart cannot skip a pause. After that the last confirmed state holds while the API is unreachable, and new commands apply on reconnect. A refused runtime key returns `control_rejected`.
+- Clients with the same `agentId`, in one process or many, are one agent in the cabinet. With telemetry on, a refused operation is reported with its code.
 
 ## Local primitives
 
@@ -189,16 +278,6 @@ NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
 
 This calls Ollama's OpenAI-compatible endpoint once per operation and once with a tool. It checks format, not model quality. `npm test` never calls paid model APIs; set `NULLPROTOCOL_LIVE_TESTS=1` with provider keys to run the live suite. Benchmark runs with local 3B and 7B models are in [bench](bench/README.md), with the [frozen 48-task result](bench/published/frozen-qwen-2026-09-24.md) and other [published results](bench/published).
 
-## What needs a NullProtocol account
-
-| Feature | Account | Key |
-| --- | --- | --- |
-| `extract`, `validate`, `summarize`, `decide`, `chat`, tools, guards | No | Only your model's key, if it needs one |
-| `serveAgents`, `serve` and the CLI | No | Your own HTTP `apiKey` for callers |
-| Telemetry | Yes | Space ingest key as `telemetryKey` |
-| Shared Space context | Yes | Space context key as `spaceContextKey` |
-| Managed Agents | Yes, allowlisted team | App key for `NullProtocolClient`, executor key for `ManagedExecutor` |
-
 ## Managed Agents (allowlisted beta)
 
 `NullProtocolClient` manages Templates, Agents and runs in a Space. In a Template's `model`, `credentialRef` names the executor credential to use and `provider` is a label that must equal that credential's `provider` for the executor to count as compatible. The executor calls any OpenAI-compatible endpoint; this `provider` is not the constructor's `provider` above. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
@@ -254,67 +333,7 @@ What a run guarantees:
 
 `agent.cancelRun(runId)` cancels a server run; `agent.setAction(name, { disabled: true, ifRevision })` disables an action without changing the Template. More shapes are in [examples/managed](examples/managed) and the [upgrade guide](docs/upgrade-managed.md).
 
-## Shared Space context
-
-Agents in one Space can share small versioned JSON documents through a separate context key, independent of telemetry and your model provider:
-
-```js
-const ai = new NullProtocol({
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct',
-  spaceContextKey: process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY,
-  spaceContextEndpoint: 'https://api.nullprotocol.ai'
-});
-const current = await ai.spaceContext.get('ops', 'last-check');
-await ai.spaceContext.put('ops', 'last-check', { status: 'ok' }, {
-  ifVersion: current?.version ?? null,
-  ttlSeconds: 3600
-});
-```
-
-`ifVersion: null` creates a document; a stale version throws `SpaceContextError` with `status: 409`. A Space holds up to 100 documents of 4 KiB each. Values are never added to prompts automatically, and the API stores them until deletion or expiry, so avoid secrets and personal data.
-
-## Optional telemetry
-
-Telemetry is off by default. With `telemetry: true`, an HTTPS `telemetryEndpoint` and a `telemetryKey`, the client sends operation metadata and reported token usage, never prompts, replies, tool parameters or credentials. For the hosted API, use `https://api.nullprotocol.ai` with a Space ingest key from the [cabinet](https://app.nullprotocol.ai/), and keep the key on your server.
-
-```js
-const ai = new NullProtocol({
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct',
-  telemetry: true,
-  telemetryEndpoint: 'https://api.nullprotocol.ai',
-  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY
-});
-await ai.telemetry?.destroy(); // flush before shutdown; delivery is best effort
-```
-
-Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events are buffered. `telemetryTimeline: true` adds one metadata event per top-level call with up to 24 model, tool and guard steps.
-
-## Pause and stop from the cabinet
-
-A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Connect → Runtime keys**:
-
-```js
-const ops = new NullProtocol({
-  agentId: 'ops',
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct',
-  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
-  runtimeEndpoint: 'https://api.nullprotocol.ai'
-});
-// ...
-await ops.close(); // on shutdown
-```
-
-- **Pause:** new operations of that agent return `{ success: false, errorCode: 'agent_paused' }` without calling the model, and a stream raises a `ControlError` when read. Running ones finish.
-- **Stop:** pauses and cancels running operations: the model request is aborted, and no retry, repair turn or further tool round starts. A tool callback receives the abort `signal` and must stop its own work; effects already made are not undone.
-- **Connection:** the first operation waits up to 10 seconds for the agent's state and returns `control_unavailable` if it gets none, so a restart cannot skip a pause. After that the last confirmed state holds while the API is unreachable, and new commands apply on reconnect. A refused runtime key returns `control_rejected`.
-- Clients with the same `agentId`, in one process or many, are one agent in the cabinet. With telemetry on, a refused operation is reported with its code.
-
+## Named agents over HTTP
 
 Optional: use this only if you want to expose your agents over HTTP. The primitives above need no server, database or NullProtocol account.
 
@@ -366,6 +385,27 @@ The CLI runs an exported configuration from a project where the package is insta
 **Older single-agent adapter.** `serve({ apiKey, port, ...clientOptions })` exposes `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat` and `GET /health`, binds to `127.0.0.1` and requires a Bearer token. Its `apiKey` is that HTTP token, so with `provider` the model key comes from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, and an `openai-compatible` server gets no key.
 
 </details>
+
+## Shared Space context
+
+Agents in one Space can share small versioned JSON documents through a separate context key, independent of telemetry and your model provider:
+
+```js
+const ai = new NullProtocol({
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  spaceContextKey: process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY,
+  spaceContextEndpoint: 'https://api.nullprotocol.ai'
+});
+const current = await ai.spaceContext.get('ops', 'last-check');
+await ai.spaceContext.put('ops', 'last-check', { status: 'ok' }, {
+  ifVersion: current?.version ?? null,
+  ttlSeconds: 3600
+});
+```
+
+`ifVersion: null` creates a document; a stale version throws `SpaceContextError` with `status: 409`. A Space holds up to 100 documents of 4 KiB each. Values are never added to prompts automatically, and the API stores them until deletion or expiry, so avoid secrets and personal data.
 
 ## Moving from `@stuseek/ai-toolkit`
 
