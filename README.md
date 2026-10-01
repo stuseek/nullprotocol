@@ -18,16 +18,17 @@ Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node
 
 ## Local primitives
 
-Point the OpenAI client at a compatible endpoint, including a local model server. Save this example as `example.mjs`:
+> The `provider` settings below are on GitHub `main` and come in the next npm release. `nullprotocol@1.0.0` on npm takes the [engines form](#engines-form); until then, install from GitHub to use them: `npm install git+https://github.com/stuseek/nullprotocol.git`.
+
+With a local model server you need no account and no key. Save this example as `example.mjs`:
 
 ```js
 import { NullProtocol } from 'nullprotocol';
 
 const ai = new NullProtocol({
-  engines: { openai: process.env.MODEL_API_KEY || 'local' },
-  openaiBaseURL: process.env.MODEL_BASE_URL || 'http://127.0.0.1:11434/v1',
-  models: { openai: process.env.MODEL_NAME || 'your-model' },
-  timeout: 20_000
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct'
 });
 
 const result = await ai.extract('Order 42: two blue mugs', {
@@ -43,8 +44,40 @@ For Ollama, pull the model and run the example:
 
 ```sh
 ollama pull qwen2.5:3b-instruct
-MODEL_NAME=qwen2.5:3b-instruct node example.mjs
+node example.mjs
 ```
+
+The same client with a cloud model:
+
+```js
+const openai = new NullProtocol({ provider: 'openai', model: 'gpt-5-mini' }); // reads OPENAI_API_KEY
+const claude = new NullProtocol({ provider: 'anthropic', model: 'claude-sonnet-5' }); // reads ANTHROPIC_API_KEY
+```
+
+Any call can use another model of the same provider by its name: `ai.extract(text, schema, { model: 'qwen2.5:7b-instruct' })`.
+
+| `provider` | Calls | Key |
+| --- | --- | --- |
+| `'openai-compatible'` | Any server that speaks the OpenAI chat API at `baseURL`: Ollama, LM Studio, vLLM, a proxy | `apiKey` if the server needs one; cloud key variables are never read |
+| `'openai'` | The OpenAI API | `apiKey`, or `OPENAI_API_KEY` |
+| `'anthropic'` | The Anthropic Messages API | `apiKey`, or `ANTHROPIC_API_KEY`; needs `@anthropic-ai/sdk` |
+
+| Constructor field | What to put | Required | Default |
+| --- | --- | --- | --- |
+| `provider` | One of the values above | Yes | — |
+| `model` | The model name the provider knows, such as `qwen2.5:3b-instruct` | Yes | — |
+| `baseURL` | Server address, such as `http://localhost:11434/v1` | With `openai-compatible` only | — |
+| `apiKey` | The model API key | For `openai` and `anthropic`, unless set in the environment | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
+| `temperature` | Sampling temperature | No | `0.3` (not sent to Claude 4.7 and later) |
+| `maxTokens` | Reply length limit | No | `1000` |
+| `timeout` | Milliseconds per model request | No | `30000` |
+| `retry` | `{ maxRetries }` for transient errors | No | `{ maxRetries: 2 }` |
+| `repairAttempts` | Extra turns to fix an unusable reply, 0 to 3 | No | `1` |
+| `basePrompt` | Instructions added to every call | No | — |
+| `trackHistory` | Keep `chat` history in this instance | No | `false` |
+| `maxContextLength` | Character budget for a request | No | none |
+
+Settings come from a config file (`nullprotocol.config.json`, or `configFile`), then from options, which win field by field. A configuration error, such as a missing `model` or a `baseURL` with `openai`, is thrown by the constructor before any request. `provider` cannot be combined with the engines form; with `provider` set, the engines form's environment variables are not used.
 
 | Operation | Result | Local check |
 | --- | --- | --- |
@@ -53,6 +86,16 @@ MODEL_NAME=qwen2.5:3b-instruct node example.mjs
 | `summarize(content)` | Summary and key points | Response shape, length, confidence range |
 | `decide(context, actions)` | Selected action | Membership in the allowed list, confidence range |
 | `chat(prompt)` | Text or tool calls | Nonempty response, tool allowlist |
+
+Every operation takes `model`, `temperature`, `maxTokens` and `additionalContext` in its options. The rest belong to one operation:
+
+| Operation | Its own options |
+| --- | --- |
+| `extract` | `repairAttempts`, `validate` (include the validation details in the result) |
+| `validate` | none; the score is the model's judgment, checked only for range and shape |
+| `summarize` | `maxLength` (characters, default 200), `focus` |
+| `decide` | `guard`, `guardTimeoutMs`, `repairAttempts` |
+| `chat` | `systemPrompt`, `tools` with `onToolCall`, `stream`, `collect`, `trackHistory` |
 
 Operations return `{ success, ... }`; model and validation failures are `{ success: false, error }`, so check `success` before acting. A refused, truncated or content-filtered reply is a failure, never partial text. Validation catches malformed output; it cannot prove the extracted facts are true.
 
@@ -116,11 +159,15 @@ await ai.execute(decision, { confirm: async (action, parameters) => askUserToApp
 
 Without an approving callback, `execute` throws `ConfirmationRequiredError` and the handler is not called.
 
-### Models, history and context size
+### History and context size
 
-`models` can hold aliases (`{ openai: 'default-model', cheap: 'small-model' }`) selected per call with `{ model: 'cheap' }`; choosing and falling back stays in your code. With `trackHistory: true`, `chat` keeps history per instance, so use one instance per conversation. `{ stream: true }` returns an async generator; add `collect: true` for a normal result. `maxContextLength` (characters) drops the oldest chat turns before a request and fails if the system text and current input alone do not fit.
+With `trackHistory: true`, `chat` keeps history per instance, so use one instance per conversation. `{ stream: true }` returns an async generator; add `collect: true` for a normal result. `maxContextLength` (characters) drops the oldest chat turns before a request and fails if the system text and current input alone do not fit.
 
-Claude 4.7 and later accept no sampling parameters, so `temperature` is sent only to older Claude models. The Anthropic default model is `claude-sonnet-5`.
+Claude 4.7 and later accept no sampling parameters, so `temperature` is sent only to older Claude models.
+
+### Engines form
+
+Configurations written for `nullprotocol@1.0.0` keep working without `provider`: `engines` holds a key per engine (`{ openai, anthropic }`), `defaultEngine` picks one, `openaiBaseURL` points the OpenAI engine at another server, and `models` sets each engine's model (default `gpt-4` and `claude-sonnet-5`) plus aliases you can pass as a per-call `model`. In this form the environment can also set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_DEFAULT_ENGINE`, `AI_MODEL_OPENAI`, `AI_MODEL_ANTHROPIC` and `NULLPROTOCOL_OPENAI_BASE_URL`, and `OPENAI_API_KEY` is sent to `openaiBaseURL` when no other key is given.
 
 ### Checking a local model
 
@@ -130,9 +177,19 @@ NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
 
 This calls Ollama's OpenAI-compatible endpoint once per operation and once with a tool. It checks format, not model quality. `npm test` never calls paid model APIs; set `NULLPROTOCOL_LIVE_TESTS=1` with provider keys to run the live suite. Benchmark runs with local 3B and 7B models are in [bench](bench/README.md), with the [frozen 48-task result](bench/published/frozen-qwen-2026-09-24.md) and other [published results](bench/published).
 
+## What needs a NullProtocol account
+
+| Feature | Account | Key |
+| --- | --- | --- |
+| `extract`, `validate`, `summarize`, `decide`, `chat`, tools, guards | No | Only your model's key, if it needs one |
+| `serveAgents`, `serve` and the CLI | No | Your own HTTP `apiKey` for callers |
+| Telemetry | Yes | Space ingest key as `telemetryKey` |
+| Shared Space context | Yes | Space context key as `spaceContextKey` |
+| Managed Agents | Yes, allowlisted team | App key for `NullProtocolClient`, executor key for `ManagedExecutor` |
+
 ## Managed Agents (allowlisted beta)
 
-`NullProtocolClient` manages Templates, Agents and runs in a Space. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
+`NullProtocolClient` manages Templates, Agents and runs in a Space. Here a Template's model `provider` is a label that names one of the executor's `credentials`, which always call an OpenAI-compatible endpoint; it is not the constructor's `provider` above. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
 
 ```js
 import { NullProtocolClient, ManagedExecutor, defineAction } from 'nullprotocol';
@@ -191,8 +248,11 @@ Agents in one Space can share small versioned JSON documents through a separate 
 
 ```js
 const ai = new NullProtocol({
-  engines: { openai: process.env.MODEL_API_KEY },
-  spaceContextKey: process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  spaceContextKey: process.env.NULLPROTOCOL_SPACE_CONTEXT_KEY,
+  spaceContextEndpoint: 'https://api.nullprotocol.ai'
 });
 const current = await ai.spaceContext.get('ops', 'last-check');
 await ai.spaceContext.put('ops', 'last-check', { status: 'ok' }, {
@@ -209,7 +269,8 @@ Telemetry is off by default. With `telemetry: true`, an HTTPS `telemetryEndpoint
 
 ```js
 const ai = new NullProtocol({
-  engines: { openai: process.env.OPENAI_API_KEY },
+  provider: 'openai',
+  model: 'gpt-5-mini',
   telemetry: true,
   telemetryEndpoint: process.env.TELEMETRY_ENDPOINT,
   telemetryKey: process.env.TELEMETRY_KEY
@@ -227,16 +288,18 @@ Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events
 import { serveAgents, MemorySessionStore } from 'nullprotocol';
 
 serveAgents({
-  apiKey: process.env.NULLPROTOCOL_API_KEY,
+  apiKey: process.env.NULLPROTOCOL_API_KEY, // callers of your HTTP service send this
   store: new MemorySessionStore(),
   agents: [
     { id: 'support', mode: 'stateless', operations: ['chat'],
-      engines: { openai: process.env.OPENAI_API_KEY }, models: { openai: 'your-model' } },
+      provider: 'openai', model: 'gpt-5-mini' }, // model key from OPENAI_API_KEY
     { id: 'game-character', mode: 'stateful', basePrompt: 'You are the merchant in the game.',
-      engines: { openai: process.env.OPENAI_API_KEY }, models: { openai: 'your-model' } }
+      provider: 'openai-compatible', baseURL: 'http://localhost:11434/v1', model: 'qwen2.5:3b-instruct' }
   ]
 });
 ```
+
+The outer `apiKey` protects your HTTP service; it is never sent to a model. Each agent definition takes the same `provider`, `model`, `apiKey` and `baseURL` as the constructor, and its `apiKey` is the model key.
 
 Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "prompt": "Hello" } }`. A stateful agent first creates a session with `POST /v1/agents/:id/sessions`, then posts to `.../sessions/:sessionId/messages`. Extraction schemas are defined in the agent configuration, never in request bodies. Routes require the API key or an `authenticate(req)` hook returning `{ principal, agents, canManage }` for per-caller access.
 
@@ -244,7 +307,7 @@ For several processes, apply `sql/session-store.sql` to your PostgreSQL database
 
 The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.0.0 nullprotocol-serve --config ./agents.js`.
 
-The older single-agent adapter `serve({ apiKey, engines, port })` exposes `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat` and `GET /health`, binds to `127.0.0.1` and requires a Bearer token.
+The older single-agent adapter `serve({ apiKey, port, ...clientOptions })` exposes `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat` and `GET /health`, binds to `127.0.0.1` and requires a Bearer token. Its `apiKey` is that HTTP token, so with `provider` the model key comes from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, and an `openai-compatible` server gets no key.
 
 ## Moving from `@stuseek/ai-toolkit`
 

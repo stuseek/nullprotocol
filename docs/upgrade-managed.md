@@ -8,7 +8,7 @@ Install `nullprotocol` and use a Space key from an allowlisted team. The SDK def
 
 | Local primitives | Connected Agent |
 | --- | --- |
-| `new NullProtocol({ engines, models })` runs a primitive in your process | `new NullProtocolClient({ spaceKey })` manages a Space and submits runs to the API |
+| `new NullProtocol({ provider, model })` runs a primitive in your process | `new NullProtocolClient({ spaceKey })` manages a Space and submits runs to the API |
 | `extract`, `validate`, `summarize`, `decide`, `chat` are direct calls | A versioned Agent Template defines instructions, model, actions and memory policy; `agent.run(input, { conversation })` starts a managed run |
 | `serveAgents` exposes an HTTP service you host | `ManagedExecutor` connects outbound to the API and executes runs for one or more explicit Agent IDs |
 | Chat history or a session store belongs to the local process/service | Each conversation key under a managed Agent has isolated history, facts and summary in the Space |

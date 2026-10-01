@@ -7,13 +7,10 @@ if (!model) {
 }
 
 const ai = new NullProtocol({
-  defaultEngine: 'openai',
-  engines: { openai: process.env.NULLPROTOCOL_MODEL_KEY || 'local' },
-  openaiBaseURL:
-    process.env.NULLPROTOCOL_MODEL_URL ||
-    process.env.NULLPROTOCOL_OPENAI_BASE_URL ||
-    'http://127.0.0.1:11434/v1',
-  models: { openai: model },
+  provider: 'openai-compatible',
+  baseURL: process.env.NULLPROTOCOL_MODEL_URL || 'http://127.0.0.1:11434/v1',
+  model,
+  apiKey: process.env.NULLPROTOCOL_MODEL_KEY,
   debug: false,
   temperature: 0,
   maxTokens: 400,
