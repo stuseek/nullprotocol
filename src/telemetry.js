@@ -1,7 +1,4 @@
-/**
- * Telemetry Client for AI Toolkit
- * Sends opt-in usage metadata without prompt or response content.
- */
+// Opt-in usage telemetry: metadata only, never prompt or response content.
 
 const https = require('https');
 const crypto = require('crypto');

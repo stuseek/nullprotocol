@@ -1,7 +1,4 @@
-/**
- * Action Executor for AI Toolkit
- * Registers and executes actions based on AI decisions
- */
+// Registers actions and runs the one a decision names.
 
 class ConfirmationRequiredError extends Error {
   constructor(action) {
@@ -16,9 +13,6 @@ class ActionExecutor {
     this.registry = new Map();
   }
 
-  /**
-   * Register an action
-   */
   register(name, handler, metadata = {}) {
     if (typeof handler !== 'function') {
       throw new Error(`Handler for action "${name}" must be a function`);
@@ -41,9 +35,6 @@ class ActionExecutor {
     return this;
   }
 
-  /**
-   * Get all available actions for AI
-   */
   getAvailableActions() {
     const actions = [];
 
@@ -59,9 +50,6 @@ class ActionExecutor {
     return actions;
   }
 
-  /**
-   * Execute an action
-   */
   async execute(decision, options = {}) {
     if (!decision || !decision.action) {
       throw new Error('Invalid decision: missing action');
@@ -106,37 +94,14 @@ class ActionExecutor {
     }
   }
 
-  /**
-   * Check if action exists
-   */
-  has(name) {
-    return this.registry.has(name);
-  }
-
-  /**
-   * Remove an action
-   */
   unregister(name) {
     return this.registry.delete(name);
   }
 
-  /**
-   * Clear all actions
-   */
   clear() {
     this.registry.clear();
   }
 
-  /**
-   * Get action count
-   */
-  size() {
-    return this.registry.size;
-  }
-
-  /**
-   * List all registered actions
-   */
   list() {
     const actions = [];
     for (const [name, config] of this.registry) {

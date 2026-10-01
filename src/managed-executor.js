@@ -1499,4 +1499,4 @@ class ManagedExecutor {
   }
 }
 
-module.exports = { ManagedExecutor, composeMessages };
+module.exports = { ManagedExecutor };

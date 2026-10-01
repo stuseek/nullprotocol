@@ -13,12 +13,6 @@ const { randomUUID } = require('crypto');
 // Global instance for functional usage
 let globalInstance = null;
 
-/**
- * Main AIToolkit Class
- */
-/**
- * Industry presets for common use cases
- */
 // Claude 4.7 and later reject sampling parameters. Only these released
 // families accept temperature; any other model gets none.
 const SAMPLING_MODELS = /^claude-(3-|haiku-4-5|sonnet-4-(5|6|20)|opus-4-(0|1|5|6|20))/;
@@ -59,6 +53,7 @@ function anthropicText(message) {
   return text;
 }
 
+// Industry presets for common use cases.
 const PRESETS = {
   security: {
     basePrompt:
@@ -85,24 +80,21 @@ const PRESETS = {
     basePrompt:
       'You are a financial analyst with expertise in risk assessment and compliance. Be precise with numbers and conservative with recommendations. Consider regulatory requirements.',
     temperature: 0.1,
-    validateOutputs: true,
-    audit: true
+    validateOutputs: true
   },
 
   medical: {
     basePrompt:
       'You are a medical professional assistant. Prioritize patient safety and privacy. Be conservative with health recommendations. Always suggest consulting healthcare providers for medical decisions.',
     temperature: 0.1,
-    validateOutputs: true,
-    audit: true
+    validateOutputs: true
   },
 
   legal: {
     basePrompt:
       'You are a legal analyst. Be precise with terminology and conservative with interpretations. Consider jurisdictional differences. This is not legal advice.',
     temperature: 0.2,
-    validateOutputs: true,
-    audit: true
+    validateOutputs: true
   },
 
   marketing: {
@@ -378,49 +370,31 @@ class AIToolkit {
     }
   }
 
-  /**
-   * Add context for stateful mode
-   */
   addContext(key, value) {
     this.context.set(key, value);
     return this;
   }
 
-  /**
-   * Remove context
-   */
   removeContext(key) {
     this.context.delete(key);
     return this;
   }
 
-  /**
-   * Clear all context
-   */
   clearContext() {
     this.context.clear();
     return this;
   }
 
-  /**
-   * Add a message to conversation history
-   */
   addMessage(role, content) {
     this.messages.push({ role, content });
     this._trimHistory();
     return this;
   }
 
-  /**
-   * Get conversation history
-   */
   getHistory() {
     return [...this.messages];
   }
 
-  /**
-   * Clear conversation history
-   */
   clearHistory() {
     this.messages = [];
     return this;
@@ -468,9 +442,7 @@ class AIToolkit {
     return history;
   }
 
-  /**
-   * Trim history to stay within token budget (rough estimate: 4 chars = 1 token)
-   */
+  // Trims history to the token budget, estimating 4 characters per token.
   _trimHistory() {
     const charsPerToken = 4;
     const maxChars = this.maxHistoryTokens * charsPerToken;
@@ -507,9 +479,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * Get formatted context string
-   */
   getContextString() {
     if (this.context.size === 0) {
       return '';
@@ -522,9 +491,6 @@ class AIToolkit {
     return `\nContext:\n${contextParts.join('\n')}`;
   }
 
-  /**
-   * Create a new instance with additional context
-   */
   withContext(additionalPrompt) {
     const newPrompt = this.basePrompt
       ? `${this.basePrompt}\n\n${additionalPrompt}`
@@ -537,9 +503,6 @@ class AIToolkit {
     });
   }
 
-  /**
-   * Create specialized instance for specific domain
-   */
   forDomain(domain) {
     if (!PRESETS[domain]) {
       throw new Error(`Unknown domain: ${domain}. Available: ${Object.keys(PRESETS).join(', ')}`);
@@ -552,9 +515,6 @@ class AIToolkit {
     });
   }
 
-  /**
-   * Build messages with base prompt
-   */
   // Asks, checks the reply, and when `check` reports a problem shows the model
   // its reply and the exact problem so it can answer again. `check` returns
   // { problem, ...values }, with problem null when the reply is usable.
@@ -650,9 +610,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * Resolve model name — supports aliases (fast, balanced, powerful) and per-engine defaults
-   */
   _resolveModel(model, engine) {
     const defaults = { openai: 'gpt-4', anthropic: 'claude-sonnet-5' };
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
@@ -732,9 +689,6 @@ class AIToolkit {
     return response;
   }
 
-  /**
-   * Format tools for the target provider
-   */
   _formatToolsForProvider(tools, engine) {
     if (!tools || !Array.isArray(tools)) return undefined;
 
@@ -757,9 +711,6 @@ class AIToolkit {
     }));
   }
 
-  /**
-   * Handle tool call loop for chat with tools
-   */
   _fitToolContext(engine, params, tools, historyCount) {
     if (!this.maxContextLength) return historyCount;
     const messages = params.messages;
@@ -1058,9 +1009,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * Make a streaming request — returns an async generator
-   */
   async *makeStreamRequest(messages, options = {}) {
     const engine = options.engine || this.defaultEngine;
     if (
@@ -1202,9 +1150,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * Parse JSON from AI response
-   */
   parseJSON(response) {
     try {
       return parseJSON(response);
@@ -1217,9 +1162,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * 📊 EXTRACT - Structure unstructured data
-   */
   async extract(data, schema, options = {}) {
     const start = Date.now();
     const { additionalContext, repairAttempts, ...apiOptions } = options;
@@ -1303,9 +1245,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * ✅ VALIDATE - Assess against criteria
-   */
   async validate(criteria, subject, reference = null, options = {}) {
     const start = Date.now();
     const { additionalContext, ...apiOptions } = options;
@@ -1379,9 +1318,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * 📝 SUMMARIZE - Synthesize key insights
-   */
   async summarize(content, options = {}) {
     const start = Date.now();
     const { maxLength = 200, focus = 'key_insights', additionalContext, ...apiOptions } = options;
@@ -1452,9 +1388,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * 🧠 DECIDE - Choose best action
-   */
   async decide(context, actions, options = {}) {
     const start = Date.now();
     const {
@@ -1640,7 +1573,6 @@ class AIToolkit {
   }
 
   /**
-   * 💬 CHAT - Conversational AI interaction
    * Generate free-form conversational responses
    * Supports tool use ({ tools, onToolCall }), streaming ({ stream: true }),
    * and conversation history ({ trackHistory: true })
@@ -1846,9 +1778,6 @@ class AIToolkit {
     }
   }
 
-  /**
-   * 🔄 CHAIN - Compose multiple operations
-   */
   async chain(...operations) {
     let result = null;
 
@@ -1866,9 +1795,6 @@ class AIToolkit {
     return result;
   }
 
-  /**
-   * 🎯 PIPELINE - Create reusable pipeline
-   */
   pipeline(...steps) {
     return async input => {
       let result = input;
@@ -1886,9 +1812,6 @@ class AIToolkit {
     };
   }
 
-  /**
-   * Execute action (if executor configured)
-   */
   async execute(decision, options = {}) {
     if (!this.executor) {
       throw new Error('Executor not configured. Initialize with { withExecutor: true }');
@@ -1902,9 +1825,6 @@ class AIToolkit {
     return await this.executor.execute(decision, options);
   }
 
-  /**
-   * Register action for execution
-   */
   registerAction(name, handler, metadata) {
     if (!this.executor) {
       this.executor = new ActionExecutor();
@@ -1913,16 +1833,10 @@ class AIToolkit {
     return this.executor.register(name, handler, metadata);
   }
 
-  /**
-   * Validate extraction result
-   */
   async validateExtraction(extracted, schema) {
     return validateSchema(extracted, schema);
   }
 
-  /**
-   * Calculate extraction confidence
-   */
   calculateConfidence(extracted, schema) {
     if (!extracted || extracted.error) {
       return 0;
@@ -1947,9 +1861,6 @@ class AIToolkit {
   }
 }
 
-/**
- * Initialize global instance for functional usage
- */
 function getGlobalInstance() {
   if (!globalInstance) {
     globalInstance = new AIToolkit();
@@ -1957,9 +1868,7 @@ function getGlobalInstance() {
   return globalInstance;
 }
 
-/**
- * Functional exports - can be used directly
- */
+// Functional exports that use a shared default instance.
 const extract = (data, schema, options) => getGlobalInstance().extract(data, schema, options);
 const validate = (criteria, subject, reference, options) =>
   getGlobalInstance().validate(criteria, subject, reference, options);
@@ -1968,17 +1877,12 @@ const decide = (context, actions, options) => getGlobalInstance().decide(context
 const chat = (prompt, options) => getGlobalInstance().chat(prompt, options);
 const execute = (decision, options) => getGlobalInstance().execute(decision, options);
 
-/**
- * Configure global instance
- */
 function configure(options) {
   globalInstance = new AIToolkit(options);
   return globalInstance;
 }
 
-/**
- * Factory functions for creating specialized instances
- */
+// Instances preconfigured with an industry preset.
 const createAI = {
   security: () => new AIToolkit({ preset: 'security' }),
   devops: () => new AIToolkit({ preset: 'devops' }),

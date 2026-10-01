@@ -1,6 +1,4 @@
-/**
- * AI Toolkit TypeScript Definitions
- */
+// TypeScript definitions for nullprotocol.
 
 export interface BaseOptions {
   engine?: 'openai' | 'anthropic';

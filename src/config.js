@@ -1,10 +1,7 @@
-/**
- * Configuration Management for AI Toolkit
- */
+// Configuration defaults, config files and environment variables.
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 class ConfigLoader {
   load(options = {}) {
@@ -44,8 +41,6 @@ class ConfigLoader {
       telemetryTimeline: false,
       validateOutputs: false,
       withExecutor: false,
-      logging: false,
-      audit: false,
       debug: false
     };
   }
@@ -53,16 +48,7 @@ class ConfigLoader {
   loadFromFile(configFile) {
     const searchPaths = configFile
       ? [configFile]
-      : [
-          './nullprotocol.config.js',
-          './nullprotocol.config.json',
-          './.nullprotocolrc',
-          './ai-toolkit.config.js',
-          './ai-toolkit.config.json',
-          './.ai-toolkit.rc',
-          path.join(process.cwd(), 'ai-toolkit.config.js'),
-          path.join(os.homedir(), '.ai-toolkit', 'config.json')
-        ];
+      : ['./nullprotocol.config.js', './nullprotocol.config.json', './.nullprotocolrc'];
 
     for (const configPath of searchPaths) {
       try {

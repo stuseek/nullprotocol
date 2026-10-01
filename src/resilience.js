@@ -1,6 +1,4 @@
-/**
- * Resilience - Retry, Circuit Breaker, and Timeout for AI Toolkit
- */
+// Retries, timeouts and a circuit breaker around model requests.
 
 class CircuitBreakerError extends Error {
   constructor(failures, totalSkipped) {
@@ -83,25 +81,16 @@ class Resilience {
     throw lastError;
   }
 
-  /**
-   * Check if circuit breaker is tripped
-   */
   isTripped() {
     return this.circuitBreaker.tripped;
   }
 
-  /**
-   * Reset circuit breaker
-   */
   reset() {
     this.circuitBreaker.failures = 0;
     this.circuitBreaker.tripped = false;
     this.circuitBreaker.tripTime = null;
   }
 
-  /**
-   * Record a successful call
-   */
   recordSuccess() {
     this.circuitBreaker.failures = 0;
     if (this.circuitBreaker.tripped) {
@@ -110,9 +99,6 @@ class Resilience {
     }
   }
 
-  /**
-   * Record a failed call
-   */
   recordFailure() {
     const cb = this.circuitBreaker;
     cb.failures++;
@@ -123,9 +109,6 @@ class Resilience {
     }
   }
 
-  /**
-   * Get circuit breaker stats
-   */
   getStats() {
     const cb = this.circuitBreaker;
     return {
@@ -136,9 +119,6 @@ class Resilience {
     };
   }
 
-  /**
-   * Wrap a function with a timeout
-   */
   _withTimeout(fn, ms, externalSignal) {
     return new Promise((resolve, reject) => {
       const controller = new AbortController();
@@ -182,9 +162,6 @@ class Resilience {
     });
   }
 
-  /**
-   * Check if an error is retryable
-   */
   _isRetryable(error) {
     // HTTP status codes
     const status = error.status || error.statusCode || error.response?.status;
@@ -226,9 +203,7 @@ class Resilience {
     return this._isRetryable(error);
   }
 
-  /**
-   * Calculate exponential backoff delay with jitter
-   */
+  // Exponential backoff with jitter.
   _backoffDelay(attempt) {
     const base = 1000 * Math.pow(2, attempt);
     const jitter = Math.random() * 500;
