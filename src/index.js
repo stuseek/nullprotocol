@@ -271,39 +271,47 @@ class AIToolkit {
   }
 
   // Runs one top-level operation under control: it is refused while the agent is
-  // paused, and its signal is aborted on stop. A stream stays registered until it
-  // is read to the end or closed. A refusal is one telemetry event for the
-  // operation; a stream raises it when read, as streams raise their other errors.
-  async _controlled(name, start, stream) {
-    let run;
-    try {
-      run = await this.control.begin();
-    } catch (error) {
-      if (!(error instanceof ControlError)) throw error;
-      this.telemetry?.track(name, { success: false, duration: 0, errorCode: error.code });
-      if (stream) {
-        return (async function* () {
-          throw error;
-        })();
-      }
-      return { success: false, error: error.message, errorCode: error.code };
-    }
-    let value;
-    try {
-      value = await start({ signal: run.signal });
-    } catch (error) {
-      this.control.end(run);
-      throw error;
-    }
-    if (typeof value?.[Symbol.asyncIterator] !== 'function') {
-      this.control.end(run);
-      if (run.signal.aborted && value?.success === false) value.errorCode = run.signal.reason.code;
-      return value;
-    }
+  // paused, and its signal is aborted on stop. A refusal is one telemetry event for
+  // the operation. A stream is checked when it is first read, raises a refusal as
+  // it raises its other errors, and stays registered until it ends or is closed.
+  _controlled(name, start, stream) {
     const control = this.control;
-    return (async function* () {
+    const begin = async () => {
       try {
-        yield* value;
+        return await control.begin();
+      } catch (error) {
+        if (error instanceof ControlError) {
+          this.telemetry?.track(name, { success: false, duration: 0, errorCode: error.code });
+        }
+        throw error;
+      }
+    };
+    if (stream) {
+      return (async function* () {
+        const run = await begin();
+        try {
+          const value = await start({ signal: run.signal });
+          if (typeof value?.[Symbol.asyncIterator] !== 'function') throw new Error(value?.error);
+          yield* value;
+        } finally {
+          control.end(run);
+        }
+      })();
+    }
+    return (async () => {
+      let run;
+      try {
+        run = await begin();
+      } catch (error) {
+        if (!(error instanceof ControlError)) throw error;
+        return { success: false, error: error.message, errorCode: error.code };
+      }
+      try {
+        const value = await start({ signal: run.signal });
+        if (run.signal.aborted && value?.success === false) {
+          value.errorCode = run.signal.reason.code;
+        }
+        return value;
       } finally {
         control.end(run);
       }

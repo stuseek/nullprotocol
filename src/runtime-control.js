@@ -106,20 +106,22 @@ class ControlLink {
     this.timer.unref();
   }
 
-  // Resolves once a sync has reported this agent, the key was refused, or the time is up.
-  waitFor(id, ms) {
+  // Resolves once a sync has reported this agent, the key was refused, the
+  // signal is aborted, or the time is up.
+  waitFor(id, ms, signal) {
     return new Promise(resolve => {
-      const waiter = () => {
-        if (!this.states.has(id) && !this.rejected) return;
+      const done = () => {
         clearTimeout(timer);
+        signal.removeEventListener('abort', done);
         this.waiters.delete(waiter);
         resolve();
       };
-      const timer = setTimeout(() => {
-        this.waiters.delete(waiter);
-        resolve();
-      }, ms);
+      const waiter = () => {
+        if (this.states.has(id) || this.rejected) done();
+      };
+      const timer = setTimeout(done, ms);
       timer.unref();
+      signal.addEventListener('abort', done, { once: true });
       this.waiters.add(waiter);
     });
   }
@@ -300,6 +302,7 @@ class ClientControl {
     this.runs = new Set();
     this.leave = null;
     this.closed = false;
+    this.lifetime = new AbortController();
     this.member = {
       pollMs: 15000,
       agents: () => [{ ...agent, activeRuns: this.runs.size }],
@@ -317,7 +320,10 @@ class ClientControl {
       this.leave = this.link.join(this.member);
     }
     const { id } = this.agent;
-    if (!this.link.states.has(id) && !this.link.rejected) await this.link.waitFor(id, 10000);
+    if (!this.link.states.has(id) && !this.link.rejected) {
+      await this.link.waitFor(id, 10000, this.lifetime.signal);
+      if (this.closed) throw new ControlError('control_closed', 'This client was closed');
+    }
     if (this.link.rejected) {
       throw new ControlError('control_rejected', 'The runtime key was refused by the control API');
     }
@@ -342,6 +348,7 @@ class ClientControl {
 
   close() {
     this.closed = true;
+    this.lifetime.abort();
     for (const run of this.runs) run.abort(cancelled('client_closed'));
     this.leave?.();
   }

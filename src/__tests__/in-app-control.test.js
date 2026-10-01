@@ -17,11 +17,13 @@ async function controlApi() {
   const desired = new Map();
   const syncs = [];
   let status = 200;
+  let gate = null;
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     syncs.push(body);
+    await gate;
     if (status !== 200) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end('{}');
@@ -46,6 +48,15 @@ async function controlApi() {
     syncs,
     set: (id, state) => desired.set(id, { ...desired.get(id), ...state }),
     fail: code => (status = code),
+    // Holds sync answers until the returned function is called.
+    hold: () => {
+      let release;
+      gate = new Promise(resolve => (release = resolve));
+      return () => {
+        gate = null;
+        release();
+      };
+    },
     close: () => close(server)
   };
 }
@@ -163,6 +174,42 @@ describe('control of clients in an application', () => {
       })()
     ).rejects.toMatchObject({ name: 'ControlError', code: 'agent_paused' });
     expect(model.requests).toHaveLength(0);
+  });
+
+  test('a client closed while waiting for its first state does not call the model', async () => {
+    const support = open('support');
+    await support.chat('hi');
+    const release = control.hold();
+    const ops = open('ops');
+    const pending = ops.chat('hi');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await ops.close();
+    release();
+    expect(await pending).toMatchObject({ success: false, errorCode: 'control_closed' });
+    expect(model.requests).toHaveLength(1);
+  });
+
+  test('a stream closed before it is read leaves no active run', async () => {
+    const ops = open('ops');
+    await ops.chat('hi');
+    const stream = await ops.chat('hi', { stream: true });
+    await stream.return();
+    await syncNow(ops);
+    expect(control.syncs.at(-1).agents).toEqual([expect.objectContaining({ activeRuns: 0 })]);
+    expect(model.requests).toHaveLength(1);
+  });
+
+  test('a pause between chat() and the first read blocks the stream', async () => {
+    const ops = open('ops');
+    await ops.chat('hi');
+    const stream = await ops.chat('hi', { stream: true });
+    control.set('ops', { paused: true, revision: 1 });
+    await syncNow(ops);
+    await expect(stream.next()).rejects.toMatchObject({
+      name: 'ControlError',
+      code: 'agent_paused'
+    });
+    expect(model.requests).toHaveLength(1);
   });
 
   test('a new process starts paused when the cabinet has paused the agent', async () => {
