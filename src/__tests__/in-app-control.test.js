@@ -347,6 +347,36 @@ describe('stop', () => {
     }
   });
 
+  test('a stopped request and its operation are both reported as aborted', async () => {
+    let ops;
+    const model = await modelApi(async () => {
+      await stop(ops);
+      return { content: '{"orderId": 42}' };
+    });
+    ops = client('ops', control, model, key, {
+      telemetry: true,
+      telemetryKey: 'test',
+      telemetryEndpoint: 'https://telemetry.example.test'
+    });
+    try {
+      await ops.extract('Order 42', { orderId: 'number' });
+      const events = ops.telemetry.queue.map(event => ({ event: event.event, ...event.data }));
+      expect(events).toEqual([
+        expect.objectContaining({
+          event: 'ai_request',
+          success: false,
+          errorCode: 'aborted',
+          model: 'local-model'
+        }),
+        expect.objectContaining({ event: 'extract', success: false, errorCode: 'aborted' })
+      ]);
+    } finally {
+      ops.telemetry.enabled = false;
+      await ops.close();
+      await model.close();
+    }
+  });
+
   test('aborts a stream mid-way', async () => {
     let ops;
     const model = await modelApi(async (_body, _count, res) => {

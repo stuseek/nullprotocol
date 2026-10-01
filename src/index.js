@@ -21,6 +21,13 @@ function acceptsTemperature(model) {
   return SAMPLING_MODELS.test(model);
 }
 
+// A model name as telemetry accepts it, or nothing.
+function modelLabel(model) {
+  return typeof model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(model)
+    ? model
+    : undefined;
+}
+
 // A refused, truncated or paused reply is not an answer; the primitives are
 // bounded single calls, so they reject it instead of returning partial text.
 const INCOMPLETE_STOPS = new Set([
@@ -387,16 +394,24 @@ class AIToolkit {
     return 'provider_error';
   }
 
+  // The one event for an operation that threw: a stop is aborted, a failed model
+  // request keeps its code, an error before any model call is the caller's input,
+  // and anything else is internal.
+  _trackFailure(operation, start, attempts) {
+    if (!this.telemetry) return;
+    const run = this.runContext.getStore();
+    const errorCode = run?.signal?.aborted
+      ? 'aborted'
+      : (run?.modelFailure ?? (attempts ? 'internal' : 'config_error'));
+    this.telemetry.track(operation, { duration: Date.now() - start, success: false, errorCode });
+  }
+
   _recordStreamingChat(details) {
     if (!this.telemetry) return;
     const { context, started, status, errorCode, inputTokens, outputTokens, modelAttempted } =
       details;
     const engine = ['openai', 'anthropic'].includes(details.engine) ? details.engine : undefined;
-    const model =
-      typeof details.model === 'string' &&
-      /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(details.model)
-        ? details.model
-        : undefined;
+    const model = modelLabel(details.model);
     const duration = Math.min(1_000_000_000, Math.max(0, Date.now() - started));
     const success = status === 'completed';
     const usage = {
@@ -985,10 +1000,10 @@ class AIToolkit {
     }
 
     const start = Date.now();
+    const resolvedModel = this._resolveModel(options.model, engine);
 
     const sdkCall = async () => {
       const { system, user } = messages;
-      const resolvedModel = this._resolveModel(options.model, engine);
       const history = this._fitContext(system, user, options.includeHistory, options.tools);
 
       // Build conversation messages including history
@@ -1078,6 +1093,7 @@ class AIToolkit {
       if (this.telemetry) {
         this.telemetry.track('ai_request', {
           engine,
+          model: modelLabel(resolvedModel),
           duration: Date.now() - start,
           success: true,
           operation: options.operation
@@ -1086,13 +1102,17 @@ class AIToolkit {
 
       return response;
     } catch (error) {
-      // Track error
+      const run = this.runContext.getStore();
+      const errorCode = run?.signal?.aborted ? 'aborted' : this._streamErrorCode(error);
+      // The operation reports a failed model request with the request's own code.
+      if (run) run.modelFailure = errorCode;
       if (this.telemetry) {
         this.telemetry.track('ai_request', {
           engine,
+          model: modelLabel(resolvedModel),
           duration: Date.now() - start,
           success: false,
-          errorCode: this.runContext.getStore()?.signal?.aborted ? 'aborted' : 'provider_error',
+          errorCode,
           operation: options.operation
         });
       }
@@ -1333,6 +1353,7 @@ class AIToolkit {
 
       return result;
     } catch (error) {
+      this._trackFailure('extract', start, count.attempts);
       const result = {
         success: false,
         data: null,
@@ -1658,6 +1679,7 @@ class AIToolkit {
 
       return result;
     } catch (error) {
+      this._trackFailure('decide', start, count.attempts);
       const result = {
         success: false,
         action: null,
