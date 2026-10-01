@@ -76,6 +76,9 @@ Any call can use another model of the same provider by its name: `ai.extract(tex
 | `basePrompt` | Instructions added to every call | No | — |
 | `trackHistory` | Keep `chat` history in this instance | No | `false` |
 | `maxContextLength` | Character budget for a request | No | none |
+| `telemetry` | `true` to send usage metadata, see [Optional telemetry](#optional-telemetry) | No | `false` |
+| `telemetryEndpoint` | `https://api.nullprotocol.ai` for the hosted API | With `telemetry` | — |
+| `telemetryKey` | Space ingest key from the cabinet | With `telemetry` | — |
 
 Settings come from a config file (`nullprotocol.config.json`, or `configFile`), then from options, which win field by field. A configuration error, such as a missing `model` or a `baseURL` with `openai`, is thrown by the constructor before any request. `provider` cannot be combined with the engines form; with `provider` set, the engines form's environment variables are not used.
 
@@ -87,7 +90,16 @@ Settings come from a config file (`nullprotocol.config.json`, or `configFile`), 
 | `decide(context, actions)` | Selected action | Membership in the allowed list, confidence range |
 | `chat(prompt)` | Text or tool calls | Nonempty response, tool allowlist |
 
-Every operation takes `model`, `temperature`, `maxTokens` and `additionalContext` in its options. The rest belong to one operation:
+Every operation takes these in its options:
+
+| Option | What to put | Default |
+| --- | --- | --- |
+| `model` | Another model name of the same provider | The constructor's `model` |
+| `temperature` | Sampling temperature for this call | The constructor's `temperature` |
+| `maxTokens` | Reply length limit for this call | The constructor's `maxTokens` |
+| `additionalContext` | Extra text or an object sent with this call | none |
+
+The rest belong to one operation:
 
 | Operation | Its own options |
 | --- | --- |
@@ -189,7 +201,7 @@ This calls Ollama's OpenAI-compatible endpoint once per operation and once with 
 
 ## Managed Agents (allowlisted beta)
 
-`NullProtocolClient` manages Templates, Agents and runs in a Space. Here a Template's model `provider` is a label that names one of the executor's `credentials`, which always call an OpenAI-compatible endpoint; it is not the constructor's `provider` above. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
+`NullProtocolClient` manages Templates, Agents and runs in a Space. In a Template's `model`, `credentialRef` names the executor credential to use and `provider` is a label that must equal that credential's `provider` for the executor to count as compatible. The executor calls any OpenAI-compatible endpoint; this `provider` is not the constructor's `provider` above. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
 
 ```js
 import { NullProtocolClient, ManagedExecutor, defineAction } from 'nullprotocol';
@@ -269,11 +281,12 @@ Telemetry is off by default. With `telemetry: true`, an HTTPS `telemetryEndpoint
 
 ```js
 const ai = new NullProtocol({
-  provider: 'openai',
-  model: 'gpt-5-mini',
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
   telemetry: true,
-  telemetryEndpoint: process.env.TELEMETRY_ENDPOINT,
-  telemetryKey: process.env.TELEMETRY_KEY
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
+  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY
 });
 await ai.telemetry?.destroy(); // flush before shutdown; delivery is best effort
 ```
