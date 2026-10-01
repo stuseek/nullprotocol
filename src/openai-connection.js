@@ -67,6 +67,8 @@ function chunks(stream, controller, end, failure) {
       return this;
     },
     async next() {
+      // A cancelled call gives no more data, not even chunks already buffered.
+      if (controller.signal.aborted) throw controller.signal.reason;
       let step;
       try {
         step = await iterator.next();

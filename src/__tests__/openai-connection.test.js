@@ -349,6 +349,19 @@ test('an unread stream cancelled by its caller or by stop ends at once', async (
   ]);
 });
 
+test('a stream cancelled by its caller gives no buffered chunk afterwards', async () => {
+  handle = async res => sse(res, [chunk('Ship'), chunk('ped')], { end: false });
+  const connection = connect(openai());
+  const caller = new AbortController();
+  const stream = await connection.create({ ...params, stream: true }, { signal: caller.signal });
+  await new Promise(r => setTimeout(r, 50));
+  const reason = new Error('caller left');
+  caller.abort(reason);
+  await expect(stream[Symbol.asyncIterator]().next()).rejects.toBe(reason);
+  await connection.close();
+  expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'aborted' })]);
+});
+
 test('close cancels an unread stream, records it, and records nothing after', async () => {
   handle = async res => sse(res, [chunk('Ship')], { end: false });
   const connection = connect(openai());
