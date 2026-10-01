@@ -158,12 +158,11 @@ class AIToolkit {
       options = { ...PRESETS[options.preset], ...options };
     }
 
-    // Store base prompt for context
-    this.basePrompt = options.basePrompt || null;
     // Context store for stateful mode
     this.context = new Map();
     // Load configuration
     this.config = new ConfigLoader().load(options);
+    this.basePrompt = this.config.basePrompt || null;
     this.agentId = this.config.agentId || 'default-agent';
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.agentId)) {
       throw new Error('agentId must be a stable lowercase slug (up to 64 characters)');

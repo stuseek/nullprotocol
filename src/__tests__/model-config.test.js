@@ -258,6 +258,31 @@ test('options override the config file field by field', async () => {
   }
 });
 
+test('basePrompt from the config file reaches the model, and options override it', async () => {
+  const server = await recorder();
+  const config = writeConfig({
+    provider: 'openai-compatible',
+    baseURL: server.baseURL,
+    model: 'local-model',
+    basePrompt: 'From the file.'
+  });
+  try {
+    const ai = new NullProtocol({ configFile: config.file });
+    await ai.chat('hi');
+    await new NullProtocol({ configFile: config.file, basePrompt: 'From options.' }).chat('hi');
+    config.remove();
+    await ai.withContext('More.').chat('hi');
+    const system = server.requests.map(request => request.body.messages[0].content);
+    expect(system[0]).toContain('From the file.');
+    expect(system[1]).toContain('From options.');
+    expect(system[1]).not.toContain('From the file.');
+    expect(system[2]).toContain('From the file.\n\nMore.');
+  } finally {
+    config.remove();
+    await server.close();
+  }
+});
+
 describe('copies keep the effective configuration', () => {
   test('without reading the config file again', () => {
     const config = writeConfig({
