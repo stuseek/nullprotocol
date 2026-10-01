@@ -2,7 +2,7 @@
 
 # NullProtocol
 
-A Node.js library for model calls whose results your code can trust: structured output checked against a schema, decisions limited to the actions you allow, bounded tool calls, retries and timeouts. It also connects managed Agents to the NullProtocol API, with their model credentials and actions kept in your own executor process.
+A Node.js library for model calls with local checks: structured output validated against a JSON Schema, decisions limited to the actions you allow, an optional guard, bounded tool calls, retries and timeouts. It also connects managed Agents to the NullProtocol API, with their model credentials and actions kept in your own executor process.
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
@@ -171,9 +171,9 @@ The app key needs `templates:write`, `agents:write`, `agents:read`, `runs:create
 What a run guarantees:
 
 - **Actions are checked before they run.** The model's arguments and the handler's output are validated against the action's JSON Schemas. An optional guard (five-second limit) must return `true`. A call that fails a check, names a disabled action, or would write while earlier context is missing does not run; the run's steps record it, and the model is told so it can decline, ask, or correct the call.
-- **Writes are idempotent and traced.** A `write` handler receives an `idempotencyKey`, `runId`, `callId` and an abort signal; use the key in the system that performs the write. A started write that cannot be confirmed is recorded as `unknown` and blocks further writes with the same action name in that conversation until you call `agent.reconcileStep(runId, ordinal, { outcome, note })`.
+- **Writes carry idempotency keys and recorded outcomes.** A `write` handler receives an `idempotencyKey`, `runId`, `callId` and an abort signal; your handler must use the key in the system that performs the write. A started write that cannot be confirmed is recorded as `unknown` and blocks further writes with the same action name in that conversation until you call `agent.reconcileStep(runId, ordinal, { outcome, note })`.
 - **A succeeded run means the interaction finished**, not that a requested action happened. Read the run's steps to see what was done.
-- **Memory is bounded and honest.** `agent.context.put` and `agent.memory.add` store current data and long-term notes for an Agent; older conversation messages are compacted into sourced facts. When a request would exceed the model budget, the oldest facts and turns are left out of that request (not deleted), the model is told memory is incomplete, a `context` step records what was omitted, and write actions are unavailable for that turn.
+- **Memory is bounded.** `agent.context.put` and `agent.memory.add` store current data and long-term notes for an Agent; older conversation messages are compacted into sourced facts by the model, which can lose or distort them. When a request would exceed the model budget, the oldest facts and turns are left out of that request (not deleted), the model is told memory is incomplete, a `context` step records what was omitted, and write actions are unavailable for that turn.
 - **Retention is opt-in.** A Template can set `retention: { agentIdleDays: 30 }`; the Agent and all its content are deleted 30 days after it was created or last ran, whichever is later. Database backups have their own retention.
 
 `agent.cancelRun(runId)` cancels a server run; `agent.setAction(name, { disabled: true, ifRevision })` disables an action without changing the Template. More shapes are in [examples/managed](examples/managed) and the [upgrade guide](docs/upgrade-managed.md).
@@ -235,7 +235,7 @@ Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "p
 
 For several processes, apply `sql/session-store.sql` to your PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity, and each turn holds a lease, so concurrent writes to one session return `session_busy`. `POST /v1/agents/:id/stop` disables an agent and cancels its active runs; `server.shutdown({ drainTimeoutMs, cancelTimeoutMs })` drains gracefully. Tool callbacks receive `principal`, `agentId`, `sessionId`, `runId`, `callId` and an abort signal; heed the signal and use idempotency keys for side effects. With `runtimeKey`, the service reports its agents to a Space so the cabinet can pause, resume or stop them.
 
-The CLI runs an exported configuration: `npx nullprotocol-serve --config ./agents.js`.
+The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol nullprotocol-serve --config ./agents.js`.
 
 The older single-agent adapter `serve({ apiKey, engines, port })` exposes `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat` and `GET /health`, binds to `127.0.0.1` and requires a Bearer token.
 
