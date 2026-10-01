@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { NullProtocolClient, ManagedExecutor, defineAction } = require('../src');
 const apiRepo =
   process.env.NULLPROTOCOL_API_REPO ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../nullprotocol-api');
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../api');
 const { createPool } = await import(pathToFileURL(path.join(apiRepo, 'src/db.js')).href);
 const { createApp } = await import(pathToFileURL(path.join(apiRepo, 'src/app.js')).href);
 assert.ok(process.env.TEST_DATABASE_URL);

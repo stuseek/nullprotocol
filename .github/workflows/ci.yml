@@ -56,7 +56,7 @@ jobs:
       with:
         files: ./coverage/lcov.info
         flags: unittests
-        name: ai-toolkit-coverage
+        name: nullprotocol-coverage
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -89,11 +89,6 @@ jobs:
           echo "Package too large (>1MB)"
           exit 1
         fi
-    
-    - name: Test examples (smoke test)
-      run: |
-        echo "Testing examples with mock API..."
-        npm run example:basic 2>&1 | grep -q "API" && echo "Example runs" || echo "Example needs API key"
 
   current-peers:
     runs-on: ubuntu-latest

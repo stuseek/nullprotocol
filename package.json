@@ -5,9 +5,9 @@
   "main": "src/index.js",
   "scripts": {
     "test": "jest",
-    "test:managed-integration": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-managed-integration.mjs",
-    "test:starter": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-starter.mjs",
-    "test:starter:packed": "node --env-file-if-exists=../nullprotocol-api/.env scripts/test-starter.mjs --packed",
+    "test:managed-integration": "node --env-file-if-exists=../api/.env scripts/test-managed-integration.mjs",
+    "test:starter": "node --env-file-if-exists=../api/.env scripts/test-starter.mjs",
+    "test:starter:packed": "node --env-file-if-exists=../api/.env scripts/test-starter.mjs --packed",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
@@ -16,17 +16,6 @@
     "format": "prettier --write \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.js\" \"examples/**/*.js\" \"bench/**/*.js\"",
     "validate": "npm run lint && npm run format:check && npm test",
-    "version:patch": "npm version patch",
-    "version:minor": "npm version minor",
-    "version:major": "npm version major",
-    "version": "npm run changelog && npm run version:sync && git add package.json package-lock.json CHANGELOG.md README.md",
-    "version:sync": "node scripts/sync-version.js",
-    "changelog": "node scripts/changelog.js",
-    "example:basic": "node examples/basic-usage.js",
-    "example:quick": "node examples/quick-start.js",
-    "example:customer": "node examples/customer-support.js",
-    "example:devops": "node examples/devops-incident.js",
-    "example:cicd": "node examples/cicd-analyzer.js",
     "smoke:local": "node examples/local-smoke.js",
     "bench:local": "node bench/run.js",
     "bench:frozen": "node bench/run.js --suite=frozen",
@@ -76,10 +65,6 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "directories": {
-    "example": "examples",
-    "test": "test"
   },
   "bin": {
     "nullprotocol-serve": "./bin/serve.js"

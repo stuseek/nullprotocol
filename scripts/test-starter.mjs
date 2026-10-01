@@ -42,7 +42,7 @@ const tag = randomBytes(5).toString('hex');
 const production = process.argv.indexOf('--production');
 
 async function localSpace() {
-  const apiRepo = process.env.NULLPROTOCOL_API_REPO || path.resolve(root, '../nullprotocol-api');
+  const apiRepo = process.env.NULLPROTOCOL_API_REPO || path.resolve(root, '../api');
   const { createPool } = await import(pathToFileURL(path.join(apiRepo, 'src/db.js')).href);
   const { createApp } = await import(pathToFileURL(path.join(apiRepo, 'src/app.js')).href);
   assert.ok(process.env.TEST_DATABASE_URL);
