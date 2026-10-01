@@ -254,10 +254,8 @@ class TelemetryClient {
         }
       };
 
-      let settled = false;
+      // A promise settles once, so later calls only repeat the cleanup.
       const settle = (error, result) => {
-        if (settled) return;
-        settled = true;
         clearTimeout(timer);
         this.pendingRequests.delete(req);
         if (error) reject(error);
@@ -266,7 +264,6 @@ class TelemetryClient {
       const req = https.request(options, res => {
         let body = '';
         res.on('data', chunk => (body += chunk));
-        res.on('error', error => settle(error));
         // A response cut off mid-body ends with close but no end.
         res.on('close', () => {
           if (!res.complete) settle(new Error('Telemetry response was cut off'));
