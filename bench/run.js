@@ -99,7 +99,7 @@ async function sdk(task, model, budget) {
     timeout: 120_000,
     retry: { maxRetries: 0 },
     telemetry: false,
-    configFile: path.join(__dirname, 'no-config-file.json')
+    configFile: false
   });
   const stats = meter(ai.clients.openai, budget);
   const start = Date.now();

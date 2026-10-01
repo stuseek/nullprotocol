@@ -63,6 +63,26 @@ describe('ConfigLoader', () => {
   });
 
   describe('load', () => {
+    test('an explicit config file that is missing or invalid is an error, not the defaults', () => {
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'np-config-'));
+      const broken = path.join(dir, 'nullprotocol.config.json');
+      fs.writeFileSync(broken, '{ "temperature": ');
+      try {
+        expect(() => loader.load({ configFile: path.join(dir, 'missing.json') })).toThrow(
+          'Cannot load config file'
+        );
+        expect(() => loader.load({ configFile: broken })).toThrow('Cannot load config file');
+        fs.writeFileSync(broken, '{ "temperature": 0.9 }');
+        expect(loader.load({ configFile: broken }).temperature).toBe(0.9);
+        expect(loader.load({ configFile: false }).temperature).toBe(0.3);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test('should merge options with defaults', () => {
       const config = loader.load({
         temperature: 0.7,

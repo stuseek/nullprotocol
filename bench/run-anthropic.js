@@ -135,7 +135,7 @@ async function sdk(task, model) {
     timeout,
     retry: { maxRetries: 0 },
     telemetry: false,
-    configFile: path.join(__dirname, 'no-config-file.json')
+    configFile: false
   });
   const stats = meter(ai.clients.anthropic, budgetFor(task));
   let status = 'ok';

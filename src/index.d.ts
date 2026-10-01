@@ -28,6 +28,8 @@ export interface ModelAliases {
 }
 
 export interface AIToolkitOptions {
+  /** A config file to load, or `false` to skip config files. */
+  configFile?: string | false;
   engines?: {
     openai?: string;
     anthropic?: string;

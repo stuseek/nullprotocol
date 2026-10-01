@@ -65,7 +65,7 @@ test.each(['extract', 'decide', 'tool'])(
       maxTokens: 280,
       telemetry: false,
       retry: { maxRetries: 0 },
-      configFile: '/nonexistent/nullprotocol-bench-config.json'
+      configFile: false
     });
     let sent;
     ai.clients.openai.chat.completions.create = async params => {

@@ -45,29 +45,22 @@ class ConfigLoader {
     };
   }
 
+  // An explicit file must load; `false` skips files. Otherwise the first default
+  // file found is used, and one that exists but cannot be read is an error too.
   loadFromFile(configFile) {
-    const searchPaths = configFile
-      ? [configFile]
-      : ['./nullprotocol.config.js', './nullprotocol.config.json', './.nullprotocolrc'];
-
-    for (const configPath of searchPaths) {
-      try {
-        if (fs.existsSync(configPath)) {
-          const ext = path.extname(configPath);
-
-          if (ext === '.js') {
-            return require(path.resolve(configPath));
-          } else {
-            const content = fs.readFileSync(configPath, 'utf8');
-            return JSON.parse(content);
-          }
-        }
-      } catch (error) {
-        console.warn(`Failed to load config from ${configPath}:`, error.message);
-      }
+    if (configFile === false) return null;
+    const configPath =
+      configFile ||
+      ['./nullprotocol.config.js', './nullprotocol.config.json', './.nullprotocolrc'].find(file =>
+        fs.existsSync(file)
+      );
+    if (!configPath) return null;
+    try {
+      if (path.extname(configPath) === '.js') return require(path.resolve(configPath));
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+      throw new Error(`Cannot load config file ${configPath}: ${error.message}`);
     }
-
-    return null;
   }
 
   loadFromEnv() {
