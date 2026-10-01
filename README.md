@@ -2,7 +2,7 @@
 
 # NullProtocol
 
-A Node.js SDK for the AI steps in your application. Each step checks the model's output against a JSON Schema or the actions you allow, with guards, bounded tool calls, retries and timeouts. Connected to a NullProtocol Space, its calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
+A Node.js SDK for the AI steps in your application. `extract` validates the model's output against a JSON Schema, and `decide` limits it to the actions you allow and checks it with your guard; every request has retries and timeouts, and `chat` bounds its tool calls. Connected to a NullProtocol Space, a client's calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
@@ -35,23 +35,28 @@ const support = new NullProtocol({
   runtimeEndpoint: 'https://api.nullprotocol.ai'
 });
 
-const result = await support.extract('Order 42: two blue mugs', {
-  orderId: 'number',
-  quantity: 'number',
-  item: 'string'
-});
+try {
+  const result = await support.extract('Order 42: two blue mugs', {
+    orderId: 'number',
+    quantity: 'number',
+    item: 'string'
+  });
+  console.log(result);
+} finally {
+  await support.close(); // sends buffered events and releases the control connection
+}
 ```
 
-The ingest and runtime keys come from **Connect** in the cabinet. Each operation appears as one `ai_request` event per model request, with the model's name, and one event for the operation, all with the same run ID. Activity holds metadata only: prompts, replies and the failing field stay in your application's result.
+The ingest and runtime keys come from **Connect** in the cabinet. For `extract` and `decide`, each model request is one `ai_request` event with the model's name, and the operation sends one final event, also when it fails with an error; all share one run ID. `chat` with tools reports one `ai_request` for all its tool rounds. Activity holds metadata only: prompts, replies and the failing field stay in your application's result.
 
 | Activity shows | What happened |
 | --- | --- |
-| `ai_request` failed with `timeout`, `rate_limited` or `provider_error`, and the operation with the same code | The model request failed |
+| `ai_request` failed with `timeout`, `rate_limited` or `provider_error`, and `extract` or `decide` with the same code | The model request failed |
 | `ai_request` succeeded, then `extract` or `decide` with `schema_mismatch` | The model answered and the answer did not pass the check; each attempt, including a repair turn, is its own `ai_request` |
 | `ai_request` succeeded, then `decide` with `guard_rejected` | Your guard refused the model's choice |
-| The operation with `config_error` and no `ai_request` | The input failed before any model request, such as an invalid schema |
-| The operation with `agent_paused` and no `ai_request` | The agent is paused in the cabinet |
-| `ai_request` and the operation with `aborted` | The agent was stopped during the request |
+| `extract` or `decide` with `config_error` and no `ai_request` | The input failed before any model request, such as an invalid schema |
+| An operation with `agent_paused` and no `ai_request` | The agent is paused in the cabinet |
+| `ai_request` and `extract` or `decide` with `aborted` | The request was cancelled, for example by Stop in the cabinet |
 
 Without the telemetry and runtime settings the same client runs locally with no account; see [Local primitives](#local-primitives).
 
@@ -62,6 +67,7 @@ Without the telemetry and runtime settings the same client runs locally with no 
 | `extract`, `validate`, `summarize`, `decide`, `chat`, tools, guards | No | Only your model's key, if it needs one |
 | `serveAgents`, `serve` and the CLI | No | Your own HTTP `apiKey` for callers |
 | Telemetry | Yes | Space ingest key as `telemetryKey` |
+| Runtime control (pause, resume, stop) | Yes | Runtime key as `runtimeKey` |
 | Shared Space context | Yes | Space context key as `spaceContextKey` |
 | Managed Agents | Yes, allowlisted team | App key for `NullProtocolClient`, executor key for `ManagedExecutor` |
 
@@ -101,7 +107,7 @@ await ops.close(); // on shutdown
 ```
 
 - **Pause:** new operations of that agent return `{ success: false, errorCode: 'agent_paused' }` without calling the model, and a stream raises a `ControlError` when read. Running ones finish.
-- **Stop:** pauses and cancels running operations: the model request is aborted, and no retry, repair turn or further tool round starts. A tool callback receives the abort `signal` and must stop its own work; effects already made are not undone.
+- **Stop:** pauses the agent and requests cancellation of its running operations: their model requests are aborted, and no retry, repair turn or further tool round starts. Cancellation is cooperative for your code: a tool callback receives the abort `signal` and must stop its own work, and effects already made are not undone.
 - **Connection:** the first operation waits up to 10 seconds for the agent's state and returns `control_unavailable` if it gets none, so a restart cannot skip a pause. After that the last confirmed state holds while the API is unreachable, and new commands apply on reconnect. A refused runtime key returns `control_rejected`.
 - Clients with the same `agentId`, in one process or many, are one agent in the cabinet. With telemetry on, a refused operation is reported with its code.
 
