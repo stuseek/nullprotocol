@@ -18,8 +18,6 @@ Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node
 
 ## Local primitives
 
-> The `provider` settings below come in the next npm release. `nullprotocol@1.0.0` on npm takes the [engines form](#engines-form). To try them before the release, install the branch: `npm install 'git+https://github.com/stuseek/nullprotocol.git#claude/simple-model-config'`.
-
 With a local model server you need no account and no key. Save this example as `example.mjs`:
 
 ```js
@@ -320,7 +318,7 @@ Call `POST /v1/agents/support/invoke` with `{ "operation": "chat", "input": { "p
 
 For several processes, apply `sql/session-store.sql` to your PostgreSQL database and use `new PostgresSessionStore(pool)`. Sessions expire after 24 hours of inactivity, and each turn holds a lease, so concurrent writes to one session return `session_busy`. `POST /v1/agents/:id/stop` disables an agent and cancels its active runs; `server.shutdown({ drainTimeoutMs, cancelTimeoutMs })` drains gracefully. Tool callbacks receive `principal`, `agentId`, `sessionId`, `runId`, `callId` and an abort signal; heed the signal and use idempotency keys for side effects. With `runtimeKey`, the service reports its agents to a Space so the cabinet can pause, resume or stop them.
 
-The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.0.0 nullprotocol-serve --config ./agents.js`.
+The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.1.0 nullprotocol-serve --config ./agents.js`.
 
 The older single-agent adapter `serve({ apiKey, port, ...clientOptions })` exposes `POST /extract`, `/validate`, `/summarize`, `/decide`, `/chat` and `GET /health`, binds to `127.0.0.1` and requires a Bearer token. Its `apiKey` is that HTTP token, so with `provider` the model key comes from `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, and an `openai-compatible` server gets no key.
 
