@@ -18,10 +18,10 @@ Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node
 
 ## Local primitives
 
-Point the OpenAI client at any compatible endpoint, including a local model server:
+Point the OpenAI client at a compatible endpoint, including a local model server. Save this example as `example.mjs`:
 
 ```js
-const { NullProtocol } = require('nullprotocol');
+import { NullProtocol } from 'nullprotocol';
 
 const ai = new NullProtocol({
   engines: { openai: process.env.MODEL_API_KEY || 'local' },
@@ -37,6 +37,13 @@ const result = await ai.extract('Order 42: two blue mugs', {
 });
 if (result.success) console.log(result.data);
 else console.error(result.error); // ask again, use a stronger model, or send for review
+```
+
+For Ollama, pull the model and run the example:
+
+```sh
+ollama pull qwen2.5:3b-instruct
+MODEL_NAME=qwen2.5:3b-instruct node example.mjs
 ```
 
 | Operation | Result | Local check |
@@ -128,7 +135,7 @@ This calls Ollama's OpenAI-compatible endpoint once per operation and once with 
 `NullProtocolClient` manages Templates, Agents and runs in a Space. `ManagedExecutor` is an outbound process in your infrastructure that runs them: it holds the model credentials and action handlers, and can serve several Agents, one run at a time. Access requires an allowlisted team. The quickest start is the cabinet: create an Agent, create an executor key, and copy the files from the Agent's Connect tab. [examples/managed/starter](examples/managed/starter/README.md) does the same in code.
 
 ```js
-const { NullProtocolClient, ManagedExecutor, defineAction } = require('nullprotocol');
+import { NullProtocolClient, ManagedExecutor, defineAction } from 'nullprotocol';
 const orders = new Map([['42', { status: 'shipped' }]]);
 
 const getOrder = defineAction({
@@ -217,7 +224,7 @@ Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events
 `serveAgents` runs agents defined in code behind one HTTP service:
 
 ```js
-const { serveAgents, MemorySessionStore } = require('nullprotocol');
+import { serveAgents, MemorySessionStore } from 'nullprotocol';
 
 serveAgents({
   apiKey: process.env.NULLPROTOCOL_API_KEY,
