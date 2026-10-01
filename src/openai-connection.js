@@ -68,7 +68,7 @@ function chunks(stream, controller, end, failure, register) {
       try {
         step = await iterator.next();
       } catch (error) {
-        end({ ...failure(error), ...tokens(usage) });
+        end({ ...failure(error, true), ...tokens(usage) });
         throw error;
       }
       if (!step.done) {
@@ -122,8 +122,8 @@ function connectOpenAI(client, options = {}) {
         operations: ['chat']
       })
     : null;
-  // The timeout error class of the SDK the application passed in.
-  const Timeout = client.constructor?.APIConnectionTimeoutError;
+  // The error classes of the SDK the application passed in.
+  const { APIError, APIConnectionTimeoutError } = client.constructor ?? {};
   // close() aborts this, which cancels every call that is waiting or running.
   const shutdown = new AbortController();
   const pending = new Set();
@@ -175,11 +175,16 @@ function connectOpenAI(client, options = {}) {
       if (run) control.end(run);
       record(fields);
     };
-    const failure = error => {
-      let errorCode = 'provider_error';
+    // Before an answer, only the SDK's own API and connection errors are the
+    // provider's; any other exception, such as a TypeError for invalid params, is
+    // internal. While an answer is being read, a failure is the provider's.
+    const failure = (error, reading = false) => {
+      let errorCode = reading ? 'provider_error' : 'internal';
       if (controller.signal.aborted) errorCode = 'aborted';
       else if (error?.status === 429) errorCode = 'rate_limited';
-      else if (Timeout && error instanceof Timeout) errorCode = 'timeout';
+      else if (APIConnectionTimeoutError && error instanceof APIConnectionTimeoutError) {
+        errorCode = 'timeout';
+      } else if (APIError && error instanceof APIError) errorCode = 'provider_error';
       return { success: false, errorCode };
     };
 

@@ -171,6 +171,16 @@ test('the SDK completion and the SDK error come back unchanged, with one model.c
   expect(completed.runId).not.toBe(limited.runId);
 });
 
+test('an exception before any request is internal, not a provider failure', async () => {
+  const connection = connect(openai());
+  handle = async res => json(res, 200, completion);
+  const error = await connection.create(null).catch(e => e);
+  expect(error).toBeInstanceOf(TypeError);
+  await connection.close();
+  expect(requests).toHaveLength(0);
+  expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'internal' })]);
+});
+
 test('a client timeout is the SDK timeout error and is reported as timeout', async () => {
   const connection = connect(openai({ timeout: 50 }));
   handle = async res => {
