@@ -313,6 +313,78 @@ try {
   assert.equal(spaceUsage.usage.managedAgents, 1);
   assert.ok(spaceUsage.usage.runsToday >= 6);
   assert.ok(Number.isSafeInteger(spaceUsage.tokens.today.runsWithoutUsage));
+  // Two calls with one name in one reply: the guard stops one and allows the
+  // other. Each call's checks and action share its own recorded call ID, and
+  // only the allowed call reaches the handler.
+  const guardedCalls = [];
+  const guardedRefund = defineAction({
+    name: 'issueRefund',
+    description: 'Refund an order',
+    effect: 'write',
+    input: { type: 'object', properties: { orderId: { type: 'string' } }, required: ['orderId'] },
+    output: { type: 'object', properties: { receipt: { type: 'string' } }, required: ['receipt'] },
+    guard: async args => args.orderId === '2210',
+    handler: async (args, context) => {
+      guardedCalls.push({ args, callId: context.callId, idempotencyKey: context.idempotencyKey });
+      return { receipt: `R-${args.orderId}` };
+    }
+  });
+  const guardedTemplate = await manager.templates.create({
+    name: 'Guarded refunds',
+    config: { instructions: 'Answer the user.', model, actions: [guardedRefund] }
+  });
+  const guardedAgent = (await manager.agents.create({ templateId: guardedTemplate.template.id }))
+    .agent;
+  const guardedExecutor = new ManagedExecutor({
+    executorKey,
+    endpoint,
+    agentIds: [guardedAgent.id],
+    credentials: { localModel: { provider: 'local', baseURL: 'http://127.0.0.1:11434/v1' } },
+    actions: [guardedRefund],
+    modelFetchImpl: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      const answered = request.messages.some(message => message.role === 'tool');
+      const message = answered
+        ? { content: 'Refunded order 2210; the refund for 3307 was not allowed.' }
+        : {
+            content: null,
+            tool_calls: [
+              ['call-a', '3307'],
+              ['call-b', '2210']
+            ].map(([id, orderId]) => ({
+              id,
+              type: 'function',
+              function: { name: 'issueRefund', arguments: JSON.stringify({ orderId }) }
+            }))
+          };
+      return new Response(JSON.stringify({ choices: [{ message }] }));
+    }
+  });
+  await executor.stop();
+  await guardedExecutor.register();
+  const guardedRun = await caller.agent(guardedAgent.id).startRun('Refund orders 3307 and 2210');
+  assert.equal((await guardedExecutor.pollOnce()).run.status, 'succeeded');
+  const guardedSteps = (await caller.agent(guardedAgent.id).listSteps(guardedRun.id)).steps;
+  const guards = guardedSteps.filter(step => step.kind === 'guard');
+  const actions = guardedSteps.filter(step => step.kind === 'action');
+  assert.deepEqual(
+    guards.map(step => step.payload.allowed),
+    [false, true]
+  );
+  assert.ok(guards.every(step => /^[0-9a-f-]{36}$/.test(step.callId)));
+  assert.notEqual(guards[0].callId, guards[1].callId);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].callId, guards[1].callId);
+  assert.ok(!guardedSteps.some(step => step.kind === 'action' && step.callId === guards[0].callId));
+  assert.equal(guardedCalls.length, 1);
+  assert.deepEqual(guardedCalls[0], {
+    args: { orderId: '2210' },
+    callId: guards[1].callId,
+    idempotencyKey: `${guardedRun.id}:${guards[1].callId}`
+  });
+  console.log(
+    `Call ID link: guards ${guards.map(step => `#${step.ordinal}:${step.payload.allowed}`).join(', ')}; action #${actions[0].ordinal} shares the allowed guard's ID; handler calls ${guardedCalls.length}`
+  );
   console.log('Managed SDK/API integration passed');
 } finally {
   if (server.listening) await new Promise(resolve => server.close(resolve));
