@@ -1319,10 +1319,38 @@ class ManagedExecutor {
           }
         });
       }
-      const messages = composeMessages(job);
+      // The request is fitted to the model's byte budget like an action run. What
+      // is left out stays stored; only this request omits it, and a context step
+      // records what was omitted.
+      const fitted = fitPrompt(job, [], model.model, new Map(), credential);
+      const messages = fitted.messages;
       const remaining = Date.parse(run.deadlineAt) - Date.now() - 5000;
       if (!Number.isFinite(remaining) || remaining < 1000) {
         throw new ManagedModelError('timeout');
+      }
+      const omitted = fitted.truncated;
+      if (
+        omitted.facts ||
+        omitted.messages ||
+        omitted.agentMemory ||
+        omitted.agentContextKeys.length
+      ) {
+        const now = new Date().toISOString();
+        await this._stepWithRetry(
+          run.id,
+          token,
+          {
+            ordinal: 0,
+            kind: 'context',
+            status: 'succeeded',
+            callId: null,
+            startedAt: now,
+            finishedAt: now,
+            payload: { truncated: omitted }
+          },
+          () => leaseExpiresAt
+        );
+        step.ordinal = 1;
       }
       await this._stepWithRetry(run.id, token, step, () => leaseExpiresAt);
       stepStarted = true;

@@ -88,6 +88,91 @@ test('one executor claims, traces and commits a conversation turn', async () => 
   expect(modelFetchImpl).toHaveBeenCalledTimes(1);
 });
 
+test('a run without actions fits a heavy memory into the request and still answers', async () => {
+  const calls = [];
+  const facts = Array.from({ length: 100 }, (_, index) => ({
+    id: `fact-${index}`,
+    value: { note: 'n'.repeat(1500) },
+    sourceSeqs: [index + 1]
+  }));
+  const job = {
+    run: {
+      id: runId,
+      agentId,
+      conversationId,
+      deadlineAt: new Date(Date.now() + 180000).toISOString(),
+      input: 'What do you remember?'
+    },
+    lease: {
+      token: `np_lease_${'B'.repeat(43)}`,
+      expiresAt: new Date(Date.now() + 30000).toISOString()
+    },
+    template: { contentHash: hashJson(config), config },
+    spaceContext: [],
+    conversation: {
+      id: conversationId,
+      version: 3,
+      messages: [
+        { seq: 101, role: 'user', content: 'Hello' },
+        { seq: 102, role: 'assistant', content: 'Hi' }
+      ],
+      facts
+    }
+  };
+  const fetchImpl = jest.fn(async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/v1/space')) {
+      return new globalThis.Response(
+        JSON.stringify({ space: { id: 's', slug: 'demo', name: 'Demo' } })
+      );
+    }
+    if (url.endsWith('/claim')) return new globalThis.Response(JSON.stringify({ job }));
+    if (url.endsWith('/commit')) {
+      return new globalThis.Response(
+        JSON.stringify({ run: { id: runId, status: 'succeeded', output: { text: 'Some' } } })
+      );
+    }
+    return new globalThis.Response(JSON.stringify({ accepted: 1, executor: { instanceId: 'x' } }));
+  });
+  const modelBodies = [];
+  const modelFetchImpl = jest.fn(async (_url, options) => {
+    modelBodies.push(options.body);
+    return new globalThis.Response(
+      JSON.stringify({ choices: [{ message: { content: 'Some of it.' } }] })
+    );
+  });
+  const executor = new ManagedExecutor({
+    executorKey,
+    agentIds: [agentId],
+    credentials: { localModel: { provider: 'local', baseURL: 'http://127.0.0.1:11434/v1' } },
+    fetchImpl,
+    modelFetchImpl
+  });
+  await executor.register();
+  const result = await executor.pollOnce();
+  expect(result.run.status).toBe('succeeded');
+  expect(modelBodies).toHaveLength(1);
+  expect(Buffer.byteLength(modelBodies[0])).toBeLessThanOrEqual(128 * 1024);
+  expect(modelBodies[0]).toContain('Some stored context, earlier messages or actions are missing');
+  const steps = calls
+    .filter(call => call.url.endsWith('/steps'))
+    .flatMap(call => JSON.parse(call.options.body).steps);
+  expect(steps[0]).toMatchObject({
+    ordinal: 0,
+    kind: 'context',
+    payload: { truncated: expect.objectContaining({ facts: expect.any(Number) }) }
+  });
+  expect(steps[0].payload.truncated.facts).toBeGreaterThan(0);
+  expect(steps.filter(step => step.kind === 'model').map(step => step.ordinal)).toEqual([1, 1]);
+  const commit = JSON.parse(calls.find(call => call.url.endsWith('/commit')).options.body);
+  // The answer is kept, and stored facts are only left out of the request, not removed.
+  expect(commit.conversation.append).toEqual([
+    { role: 'user', content: 'What do you remember?' },
+    { role: 'assistant', content: 'Some of it.' }
+  ]);
+  expect(JSON.stringify(commit.conversation)).not.toContain('factsRemove');
+});
+
 test('a missing selected Space Context key fails without calling the model', async () => {
   const calls = [];
   const fetchImpl = jest.fn(async (url, options) => {
