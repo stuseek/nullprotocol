@@ -994,7 +994,11 @@ class AIToolkit {
     const client = this.clients[engine];
 
     if (!client) {
-      throw new Error(`AI engine ${engine} not configured. Pass an API key for this engine.`);
+      const error = new Error(
+        `AI engine ${engine} not configured. Pass an API key for this engine.`
+      );
+      failureCodes.set(error, 'config_error');
+      throw error;
     }
 
     const start = Date.now();

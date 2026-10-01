@@ -121,6 +121,22 @@ test('an input longer than maxContextLength is the caller input, not a provider 
   ]);
 });
 
+test('a call to an engine that is not configured is the caller input', async () => {
+  let requests = 0;
+  reply = async () => {
+    requests++;
+    return { content: '{"orderId": 42}' };
+  };
+  const ai = client();
+  expect(
+    (await ai.extract('Order 42', { orderId: 'number' }, { engine: 'anthropic' })).success
+  ).toBe(false);
+  expect(requests).toBe(0);
+  expect(rows(ai)).toEqual([
+    expect.objectContaining({ event: 'extract', success: false, errorCode: 'config_error' })
+  ]);
+});
+
 test('a guard refusal is reported as before', async () => {
   reply = async () => ({
     content: '{"action": "escalate", "reasoning": "long queue", "confidence": 0.9}'
