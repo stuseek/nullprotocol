@@ -86,6 +86,7 @@
     "src/resilience.js",
     "src/schema.js",
     "src/json.js",
+    "src/runtime-control.js",
     "src/server.js",
     "src/agent-server.js",
     "src/session-store.js",
