@@ -1,7 +1,7 @@
 /** Core library for model requests, structured output, and tool calls. */
 
 const { ConfigLoader, configCopy, PROVIDERS } = require('./config');
-const { TelemetryClient } = require('./telemetry');
+const { TelemetryClient, modelLabel } = require('./telemetry');
 const { SpaceContextClient, SpaceContextError } = require('./space-context');
 const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
 const { Resilience, CircuitBreakerError } = require('./resilience');
@@ -24,13 +24,6 @@ function acceptsTemperature(model) {
 // The telemetry code of a failure, set where it is known: the provider request
 // for transport failures, the context fit for an input that does not fit.
 const failureCodes = new WeakMap();
-
-// A model name as telemetry accepts it, or nothing.
-function modelLabel(model) {
-  return typeof model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(model)
-    ? model
-    : undefined;
-}
 
 // A refused, truncated or paused reply is not an answer; the primitives are
 // bounded single calls, so they reject it instead of returning partial text.

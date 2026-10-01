@@ -106,13 +106,13 @@ class ControlLink {
     this.timer.unref();
   }
 
-  // Resolves once a sync has reported this agent, the key was refused, the
-  // signal is aborted, or the time is up.
-  waitFor(id, ms, signal) {
+  // Resolves once a sync has reported this agent, the key was refused, one of
+  // the signals is aborted, or the time is up.
+  waitFor(id, ms, signals) {
     return new Promise(resolve => {
       const done = () => {
         clearTimeout(timer);
-        signal.removeEventListener('abort', done);
+        for (const signal of signals) signal.removeEventListener('abort', done);
         this.waiters.delete(waiter);
         resolve();
       };
@@ -121,7 +121,7 @@ class ControlLink {
       };
       const timer = setTimeout(done, ms);
       timer.unref();
-      signal.addEventListener('abort', done, { once: true });
+      for (const signal of signals) signal.addEventListener('abort', done, { once: true });
       this.waiters.add(waiter);
     });
   }
@@ -313,16 +313,24 @@ class ClientControl {
     };
   }
 
-  async begin() {
+  // `signal` is the caller's: aborting it ends the wait for a first state, and
+  // begin then throws its reason without registering a run.
+  async begin(signal) {
     if (this.closed) throw new ControlError('control_closed', 'This client was closed');
+    signal?.throwIfAborted();
     if (!this.leave) {
       this.link = controlLink(this.runtimeKey, this.runtimeEndpoint);
       this.leave = this.link.join(this.member);
     }
     const { id } = this.agent;
     if (!this.link.states.has(id) && !this.link.rejected) {
-      await this.link.waitFor(id, 10000, this.lifetime.signal);
+      await this.link.waitFor(
+        id,
+        10000,
+        signal ? [this.lifetime.signal, signal] : [this.lifetime.signal]
+      );
       if (this.closed) throw new ControlError('control_closed', 'This client was closed');
+      signal?.throwIfAborted();
     }
     if (this.link.rejected) {
       throw new ControlError('control_rejected', 'The runtime key was refused by the control API');

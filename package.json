@@ -70,6 +70,17 @@
     "nullprotocol-serve": "./bin/serve.js"
   },
   "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./openai": {
+      "types": "./openai.d.ts",
+      "default": "./openai.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "src/index.js",
     "src/config.js",
@@ -87,6 +98,7 @@
     "src/schema.js",
     "src/json.js",
     "src/runtime-control.js",
+    "src/openai-connection.js",
     "src/server.js",
     "src/agent-server.js",
     "src/session-store.js",
@@ -116,7 +128,9 @@
     "sql/session-store.sql",
     "assets/nullprotocol.png",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "openai.js",
+    "openai.d.ts"
   ],
   "jest": {
     "testEnvironment": "node",

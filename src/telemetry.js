@@ -3,6 +3,13 @@
 const https = require('https');
 const crypto = require('crypto');
 
+// A model name as the telemetry API accepts it, or nothing.
+function modelLabel(model) {
+  return typeof model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(model)
+    ? model
+    : undefined;
+}
+
 class TelemetryClient {
   constructor(options = {}) {
     this.token = options.token;
@@ -319,4 +326,4 @@ class TelemetryClient {
   }
 }
 
-module.exports = { TelemetryClient };
+module.exports = { TelemetryClient, modelLabel };
