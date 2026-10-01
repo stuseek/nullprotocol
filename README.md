@@ -18,7 +18,7 @@ Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node
 
 ## Local primitives
 
-> The `provider` settings below are on GitHub `main` and come in the next npm release. `nullprotocol@1.0.0` on npm takes the [engines form](#engines-form); until then, install from GitHub to use them: `npm install git+https://github.com/stuseek/nullprotocol.git`.
+> The `provider` settings below come in the next npm release. `nullprotocol@1.0.0` on npm takes the [engines form](#engines-form). To try them before the release, install the branch: `npm install 'git+https://github.com/stuseek/nullprotocol.git#claude/simple-model-config'`.
 
 With a local model server you need no account and no key. Save this example as `example.mjs`:
 
@@ -50,9 +50,11 @@ node example.mjs
 The same client with a cloud model:
 
 ```js
-const openai = new NullProtocol({ provider: 'openai', model: 'gpt-5-mini' }); // reads OPENAI_API_KEY
+const openai = new NullProtocol({ provider: 'openai', model: 'gpt-4.1-mini' }); // reads OPENAI_API_KEY
 const claude = new NullProtocol({ provider: 'anthropic', model: 'claude-sonnet-5' }); // reads ANTHROPIC_API_KEY
 ```
+
+With `openai`, every request sends `temperature` and `max_tokens`. OpenAI reasoning models that reject these parameters, such as `gpt-5-mini`, are not supported by this client yet; use a chat model such as `gpt-4.1-mini`.
 
 Any call can use another model of the same provider by its name: `ai.extract(text, schema, { model: 'qwen2.5:7b-instruct' })`.
 
@@ -305,7 +307,7 @@ serveAgents({
   store: new MemorySessionStore(),
   agents: [
     { id: 'support', mode: 'stateless', operations: ['chat'],
-      provider: 'openai', model: 'gpt-5-mini' }, // model key from OPENAI_API_KEY
+      provider: 'openai', model: 'gpt-4.1-mini' }, // model key from OPENAI_API_KEY
     { id: 'game-character', mode: 'stateful', basePrompt: 'You are the merchant in the game.',
       provider: 'openai-compatible', baseURL: 'http://localhost:11434/v1', model: 'qwen2.5:3b-instruct' }
   ]
