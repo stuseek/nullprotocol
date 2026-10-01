@@ -60,6 +60,38 @@ The ingest and runtime keys come from **Connect** in the cabinet. For `extract` 
 
 Without the telemetry and runtime settings the same client runs locally with no account; see [Local primitives](#local-primitives).
 
+### An existing OpenAI client
+
+Code that already calls `openai.chat.completions.create` can keep its requests, tool loop and error handling and report each call through `nullprotocol/openai`:
+
+```js
+import OpenAI from 'openai';
+import { connectOpenAI } from 'nullprotocol/openai';
+
+const openai = new OpenAI();
+const support = connectOpenAI(openai, {
+  agentId: 'support',
+  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY,
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
+  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
+  runtimeEndpoint: 'https://api.nullprotocol.ai'
+});
+
+try {
+  // In place of openai.chat.completions.create
+  const completion = await support.create({ model: 'gpt-4.1-mini', messages });
+  console.log(completion.choices[0].message.content);
+} finally {
+  await support.close();
+}
+```
+
+- `create` passes the parameters and request options to your client unchanged and returns its completion, or throws its error, as they are. The client's retries, timeout and defaults stay as you set them.
+- It returns a plain Promise, so `.withResponse()` and `.asResponse()` are not available; call your client directly for those, and that call is not reported.
+- With `stream: true` it returns an async iterable of the SDK's chunks, not the SDK's `Stream`: there is no `controller`, `tee()` or `toReadableStream()`. Leaving the loop early closes the connection.
+- Each call is one `model.call` event in Activity with the requested model, its duration, the token counts the provider reported and, on failure, `aborted`, `rate_limited`, `timeout`, `provider_error` or `internal`. No prompt or reply is sent.
+- With a runtime key, a paused agent's `create` throws a `ControlError` without sending a request, and Stop cancels the `create` calls in flight, streams included. It does not stop your code between calls, such as running tools: a loop ends when its next `create` is refused.
+
 ## What needs a NullProtocol account
 
 | Feature | Account | Key |
