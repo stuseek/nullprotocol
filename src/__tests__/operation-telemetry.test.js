@@ -92,6 +92,35 @@ test('an invalid schema is the caller input, with no model request', async () =>
   ]);
 });
 
+test('a timed-out request is reported as timeout by the request and the operation', async () => {
+  reply = () => new Promise(resolve => setTimeout(() => resolve({ content: '{}' }), 500));
+  const ai = client({ timeout: 50 });
+  expect((await ai.extract('Order 42', { orderId: 'number' })).success).toBe(false);
+  expect(rows(ai)).toEqual([
+    expect.objectContaining({
+      event: 'ai_request',
+      success: false,
+      errorCode: 'timeout',
+      model: 'qwen2.5:3b-instruct'
+    }),
+    expect.objectContaining({ event: 'extract', success: false, errorCode: 'timeout' })
+  ]);
+});
+
+test('an input longer than maxContextLength is the caller input, not a provider failure', async () => {
+  let requests = 0;
+  reply = async () => {
+    requests++;
+    return { content: '{"orderId": 42}' };
+  };
+  const ai = client({ maxContextLength: 20 });
+  expect((await ai.extract('Order 42: '.repeat(20), { orderId: 'number' })).success).toBe(false);
+  expect(requests).toBe(0);
+  expect(rows(ai)).toEqual([
+    expect.objectContaining({ event: 'extract', success: false, errorCode: 'config_error' })
+  ]);
+});
+
 test('a guard refusal is reported as before', async () => {
   reply = async () => ({
     content: '{"action": "escalate", "reasoning": "long queue", "confidence": 0.9}'

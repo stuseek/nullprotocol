@@ -21,6 +21,10 @@ function acceptsTemperature(model) {
   return SAMPLING_MODELS.test(model);
 }
 
+// The telemetry code of a failure, set where it is known: the provider request
+// for transport failures, the context fit for an input that does not fit.
+const failureCodes = new WeakMap();
+
 // A model name as telemetry accepts it, or nothing.
 function modelLabel(model) {
   return typeof model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/+@-]{0,127}$/.test(model)
@@ -394,15 +398,14 @@ class AIToolkit {
     return 'provider_error';
   }
 
-  // The one event for an operation that threw: a stop is aborted, a failed model
-  // request keeps its code, an error before any model call is the caller's input,
+  // The one event for an operation that threw: a stop is aborted, a failure with a
+  // known code keeps it, an error before any model request is the caller's input,
   // and anything else is internal.
-  _trackFailure(operation, start, attempts) {
+  _trackFailure(operation, start, attempts, error) {
     if (!this.telemetry) return;
-    const run = this.runContext.getStore();
-    const errorCode = run?.signal?.aborted
+    const errorCode = this.runContext.getStore()?.signal?.aborted
       ? 'aborted'
-      : (run?.modelFailure ?? (attempts ? 'internal' : 'config_error'));
+      : (failureCodes.get(error) ?? (attempts ? 'internal' : 'config_error'));
     this.telemetry.track(operation, { duration: Date.now() - start, success: false, errorCode });
   }
 
@@ -754,20 +757,15 @@ class AIToolkit {
         }
       );
     } catch (error) {
+      const errorCode = this._streamErrorCode(error);
+      failureCodes.set(error, errorCode);
       this._traceStep({
         kind: 'model',
         started,
         duration: Date.now() - started,
         success: false,
         model: params.model,
-        errorCode:
-          error?.code === 'ETIMEDOUT' || error?.name === 'TimeoutError'
-            ? 'timeout'
-            : error?.name === 'AbortError'
-              ? 'aborted'
-              : error?.status === 429
-                ? 'rate_limited'
-                : 'provider_error'
+        errorCode
       });
       throw error;
     }
@@ -1001,11 +999,16 @@ class AIToolkit {
 
     const start = Date.now();
     const resolvedModel = this._resolveModel(options.model, engine);
+    const { system, user } = messages;
+    let history;
+    try {
+      history = this._fitContext(system, user, options.includeHistory, options.tools);
+    } catch (error) {
+      failureCodes.set(error, 'config_error');
+      throw error;
+    }
 
     const sdkCall = async () => {
-      const { system, user } = messages;
-      const history = this._fitContext(system, user, options.includeHistory, options.tools);
-
       // Build conversation messages including history
       const hasTools = options.tools && Array.isArray(options.tools) && options.onToolCall;
 
@@ -1102,10 +1105,11 @@ class AIToolkit {
 
       return response;
     } catch (error) {
-      const run = this.runContext.getStore();
-      const errorCode = run?.signal?.aborted ? 'aborted' : this._streamErrorCode(error);
-      // The operation reports a failed model request with the request's own code.
-      if (run) run.modelFailure = errorCode;
+      // A reply that arrived but cannot be used is the provider's failure too.
+      const errorCode = this.runContext.getStore()?.signal?.aborted
+        ? 'aborted'
+        : (failureCodes.get(error) ?? 'provider_error');
+      failureCodes.set(error, errorCode);
       if (this.telemetry) {
         this.telemetry.track('ai_request', {
           engine,
@@ -1353,7 +1357,7 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      this._trackFailure('extract', start, count.attempts);
+      this._trackFailure('extract', start, count.attempts, error);
       const result = {
         success: false,
         data: null,
@@ -1679,7 +1683,7 @@ class AIToolkit {
 
       return result;
     } catch (error) {
-      this._trackFailure('decide', start, count.attempts);
+      this._trackFailure('decide', start, count.attempts, error);
       const result = {
         success: false,
         action: null,
