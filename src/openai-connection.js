@@ -46,19 +46,22 @@ function tokens(usage) {
 }
 
 // The chunks of a stream as an async iterable that ends the call when the stream
-// ends, fails or is closed. The SDK may stop following the request signal once
-// the answer has started, so cancellation reaches the stream through its own
-// controller; closing the iterable, also before the first read, closes the
-// connection.
-function chunks(stream, controller, end, failure, register) {
+// ends, fails or is cancelled. The SDK may stop following the request signal once
+// the answer has started, so a cancellation aborts the stream's own controller,
+// which closes the connection, and ends the call at once, read or not.
+function chunks(stream, controller, end, failure) {
   const iterator = stream[Symbol.asyncIterator]();
-  const abortStream = () => stream.controller?.abort();
-  if (controller.signal.aborted) abortStream();
-  else controller.signal.addEventListener('abort', abortStream, { once: true });
   let usage;
-  // Ends the call as cancelled, keeping any usage the stream already reported.
-  const cancelled = () => end({ success: false, errorCode: 'aborted', ...tokens(usage) });
-  register(cancelled);
+  const finish = fields => {
+    controller.signal.removeEventListener('abort', cancel);
+    end({ ...fields, ...tokens(usage) });
+  };
+  function cancel() {
+    stream.controller.abort();
+    finish({ success: false, errorCode: 'aborted' });
+  }
+  if (controller.signal.aborted) cancel();
+  else controller.signal.addEventListener('abort', cancel, { once: true });
   return {
     [Symbol.asyncIterator]() {
       return this;
@@ -68,7 +71,7 @@ function chunks(stream, controller, end, failure, register) {
       try {
         step = await iterator.next();
       } catch (error) {
-        end({ ...failure(error, true), ...tokens(usage) });
+        finish(failure(error, true));
         throw error;
       }
       if (!step.done) {
@@ -76,17 +79,17 @@ function chunks(stream, controller, end, failure, register) {
         return step;
       }
       // The SDK ends an aborted stream quietly; a cut answer is not a short one.
-      if (controller.signal.aborted) {
-        cancelled();
-        throw controller.signal.reason;
-      }
-      end({ success: true, ...tokens(usage) });
+      if (controller.signal.aborted) throw controller.signal.reason;
+      finish({ success: true });
       return step;
     },
     async return(value) {
-      controller.abort(Object.assign(new Error('Stream closed'), { name: 'AbortError' }));
-      await iterator.return?.().catch(() => {});
-      cancelled();
+      try {
+        controller.abort(Object.assign(new Error('Stream closed'), { name: 'AbortError' }));
+        await iterator.return();
+      } finally {
+        finish({ success: false, errorCode: 'aborted' });
+      }
       return { done: true, value };
     }
   };
@@ -127,7 +130,6 @@ function connectOpenAI(client, options = {}) {
   // close() aborts this, which cancels every call that is waiting or running.
   const shutdown = new AbortController();
   const pending = new Set();
-  const streams = new Set();
   let closing = null;
   let closed = false;
 
@@ -165,13 +167,11 @@ function connectOpenAI(client, options = {}) {
 
     const { controller, release } = follow([requestOptions.signal, run?.signal, shutdown.signal]);
     let ended = false;
-    let cancelStream = null;
     // Each call is recorded once, by whichever outcome comes first.
     const end = fields => {
       if (ended) return;
       ended = true;
       release();
-      streams.delete(cancelStream);
       if (run) control.end(run);
       record(fields);
     };
@@ -202,10 +202,7 @@ function connectOpenAI(client, options = {}) {
       end({ success: true, ...tokens(value?.usage) });
       return value;
     }
-    return chunks(value, controller, end, failure, cancel => {
-      cancelStream = cancel;
-      streams.add(cancel);
-    });
+    return chunks(value, controller, end, failure);
   }
 
   function create(params, requestOptions = {}) {
@@ -219,14 +216,13 @@ function connectOpenAI(client, options = {}) {
     return result;
   }
 
-  // Cancels waiting and running calls and unread streams, records how each
-  // ended, then releases control and sends the buffered events. Nothing is
-  // recorded after that.
+  // Cancels waiting and running calls and streams through the shutdown signal,
+  // waits until each is recorded, then releases control and sends the buffered
+  // events. Nothing is recorded after that.
   function close() {
     closing ||= (async () => {
       shutdown.abort(new ControlError('control_closed', 'This connection was closed'));
       await Promise.allSettled([...pending]);
-      for (const cancel of [...streams]) cancel();
       closed = true;
       control?.close();
       await telemetry.destroy();

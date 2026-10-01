@@ -76,8 +76,14 @@
       "default": "./src/index.js"
     },
     "./openai": {
-      "types": "./openai.d.ts",
-      "default": "./openai.js"
+      "import": {
+        "types": "./openai.d.mts",
+        "default": "./openai.js"
+      },
+      "require": {
+        "types": "./openai.d.ts",
+        "default": "./openai.js"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -130,7 +136,8 @@
     "README.md",
     "LICENSE",
     "openai.js",
-    "openai.d.ts"
+    "openai.d.ts",
+    "openai.d.mts"
   ],
   "jest": {
     "testEnvironment": "node",

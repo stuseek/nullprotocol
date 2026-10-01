@@ -327,6 +327,28 @@ test('leaving a stream early, even before its first chunk, closes the connection
   ]);
 });
 
+test('an unread stream cancelled by its caller or by stop ends at once', async () => {
+  handle = async res => sse(res, [chunk('Ship')], { end: false });
+  const connection = controlled(openai());
+  const caller = new AbortController();
+  await connection.create({ ...params, stream: true }, { signal: caller.signal });
+  caller.abort();
+  await until(() => requests[0].closedEarly);
+  await syncNow();
+  expect(syncs.at(-1).agents[0].activeRuns).toBe(0);
+
+  await connection.create({ ...params, stream: true });
+  await stop();
+  await until(() => requests[1].closedEarly);
+  await syncNow();
+  expect(syncs.at(-1).agents[0].activeRuns).toBe(0);
+  await connection.close();
+  expect(calls()).toEqual([
+    expect.objectContaining({ success: false, errorCode: 'aborted' }),
+    expect.objectContaining({ success: false, errorCode: 'aborted' })
+  ]);
+});
+
 test('close cancels an unread stream, records it, and records nothing after', async () => {
   handle = async res => sse(res, [chunk('Ship')], { end: false });
   const connection = connect(openai());
