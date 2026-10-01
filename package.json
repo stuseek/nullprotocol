@@ -110,6 +110,7 @@
     "examples/managed/starter/setup.js",
     "examples/managed/starter/executor.js",
     "examples/managed/starter/ask.js",
+    "examples/managed/starter/README.md",
     "docs/upgrade-managed.md",
     "sql/session-store.sql",
     "assets/nullprotocol.png",

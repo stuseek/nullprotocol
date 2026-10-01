@@ -69,6 +69,4 @@ Four small scripts that run one order-support Agent with a local model:
 
 If `ask.js` prints `runtime_offline`, `action_unavailable` or `model_unavailable`, it also says which step to fix. `client.agent(id).runtime()` reports the same readiness without starting a run; it reflects what the executor registered, not whether the model endpoint works.
 
-`npm run test:starter` runs these steps end to end against an isolated database and a local model.
-
-On 2026-09-30 this path passed against production (API release v58, cabinet Sites v32) from an empty Space: an owner created both keys in the cabinet, and `node scripts/test-starter.mjs --production` ran every step above with a local `qwen2.5:7b-instruct`, then deleted the Agent and Template it created. The keys were revoked afterwards. A member's view of the cabinet was not checked in a browser.
+In the source repository, `npm run test:starter` runs these steps end to end against an isolated database and a local model.
