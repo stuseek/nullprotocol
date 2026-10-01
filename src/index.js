@@ -1966,7 +1966,7 @@ const validate = (criteria, subject, reference, options) =>
 const summarize = (content, options) => getGlobalInstance().summarize(content, options);
 const decide = (context, actions, options) => getGlobalInstance().decide(context, actions, options);
 const chat = (prompt, options) => getGlobalInstance().chat(prompt, options);
-const execute = decision => getGlobalInstance().execute(decision);
+const execute = (decision, options) => getGlobalInstance().execute(decision, options);
 
 /**
  * Configure global instance

@@ -19,6 +19,18 @@ function createAI(overrides = {}) {
   return ai;
 }
 
+test('the functional execute passes confirmation to an action that requires it', async () => {
+  const ai = AIToolkit.configure({ engines: { openai: 'test-key' } });
+  const handler = jest.fn(async ({ amount }) => ({ refunded: amount }));
+  ai.registerAction('refund', handler, { requiresConfirmation: true });
+  const decision = { action: 'refund', parameters: { amount: 5 } };
+  await expect(AIToolkit.execute(decision, { confirm: async () => true })).resolves.toMatchObject({
+    success: true,
+    result: { refunded: 5 }
+  });
+  expect(handler).toHaveBeenCalledTimes(1);
+});
+
 // ─── Constructor ────────────────────────────────────────────────
 
 describe('Constructor', () => {
