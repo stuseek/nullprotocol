@@ -293,7 +293,30 @@ await ai.telemetry?.destroy(); // flush before shutdown; delivery is best effort
 
 Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events are buffered. `telemetryTimeline: true` adds one metadata event per top-level call with up to 24 model, tool and guard steps.
 
-## Named agents over HTTP
+## Pause and stop from the cabinet
+
+> Not in `nullprotocol@1.1.0`; this is on the `claude/in-app-control` branch.
+
+A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Telemetry → Connections**:
+
+```js
+const ops = new NullProtocol({
+  agentId: 'ops',
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
+  runtimeEndpoint: 'https://api.nullprotocol.ai'
+});
+// ...
+await ops.close(); // on shutdown
+```
+
+- **Pause:** new operations of that agent return `{ success: false, errorCode: 'agent_paused' }` without calling the model, and a stream raises a `ControlError` when read. Running ones finish.
+- **Stop:** pauses and cancels running operations: the model request is aborted, and no retry, repair turn or further tool round starts. A tool callback receives the abort `signal` and must stop its own work; effects already made are not undone.
+- **Connection:** the first operation waits up to 10 seconds for the agent's state and returns `control_unavailable` if it gets none, so a restart cannot skip a pause. After that the last confirmed state holds while the API is unreachable, and new commands apply on reconnect. A refused runtime key returns `control_rejected`.
+- Clients with the same `agentId`, in one process or many, are one agent in the cabinet. With telemetry on, a refused operation is reported with its code.
+
 
 Optional: use this only if you want to expose your agents over HTTP. The primitives above need no server, database or NullProtocol account.
 
