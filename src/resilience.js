@@ -41,7 +41,8 @@ class Resilience {
       const elapsed = Date.now() - cb.tripTime;
 
       if (elapsed >= cb.resetAfterMs) {
-        // Half-open: allow one attempt through
+        // After the cooldown the breaker closes fully: every caller passes, and it
+        // trips again only after `threshold` more consecutive failures.
         this.reset();
       } else {
         cb.totalSkipped++;

@@ -14,7 +14,9 @@ export interface RetryOptions {
 }
 
 export interface CircuitBreakerOptions {
+  /** Consecutive failed requests that open the breaker (default 5). */
   threshold?: number;
+  /** How long it rejects requests before closing again (default 60000). */
   resetAfterMs?: number;
 }
 
