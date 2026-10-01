@@ -7,6 +7,7 @@ const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
 const { Resilience, CircuitBreakerError } = require('./resilience');
 const { validateExtraction: validateSchema, validatorFor } = require('./schema');
 const { parseJSON } = require('./json');
+const { ClientControl, ControlError } = require('./runtime-control');
 const { AsyncLocalStorage } = require('async_hooks');
 const { randomUUID } = require('crypto');
 
@@ -232,17 +233,88 @@ class AIToolkit {
     if (this.config.maxContextLength !== undefined) {
       this.setMaxContextLength(this.config.maxContextLength);
     }
-    // One correlation ID per top-level operation; model usage inherits it.
+    // Control from a Space is opt-in with runtimeKey and runtimeEndpoint, and the
+    // agent it controls needs an explicit agentId.
+    this.control = null;
+    if (this.config.runtimeKey || this.config.runtimeEndpoint) {
+      if (!this.config.runtimeKey || !this.config.runtimeEndpoint) {
+        throw new Error('Runtime control requires both runtimeKey and runtimeEndpoint');
+      }
+      if (this.config.agentId === undefined) {
+        throw new Error('Runtime control requires agentId, the ID this agent has in the cabinet');
+      }
+      this.control = new ClientControl(this.config.runtimeKey, this.config.runtimeEndpoint, {
+        id: this.agentId,
+        mode: this.trackHistory ? 'stateful' : 'stateless',
+        model: this._resolveModel(undefined, this.defaultEngine),
+        operations: ['extract', 'validate', 'summarize', 'decide', 'chat']
+      });
+    }
+    // One correlation ID per top-level operation; model usage and nested calls
+    // inherit it, and with control it also carries the operation's abort signal.
     for (const name of ['extract', 'validate', 'summarize', 'decide', 'chat']) {
       const operation = this[name];
       this[name] = function (...args) {
         if (this.runContext.getStore()?.runId) return operation.apply(this, args);
-        if (name === 'chat' && args[1]?.stream) {
-          return this.runContext.run({ runId: randomUUID() }, () => operation.apply(this, args));
-        }
-        return this._runWithTrace(name, randomUUID(), () => operation.apply(this, args));
+        const stream = name === 'chat' && args[1]?.stream;
+        const start = (extra = {}) => {
+          if (!stream) {
+            return this._runWithTrace(name, randomUUID(), () => operation.apply(this, args), extra);
+          }
+          return this.runContext.run({ ...extra, runId: randomUUID() }, () =>
+            operation.apply(this, args)
+          );
+        };
+        return this.control ? this._controlled(name, start, stream && !args[1]?.collect) : start();
       };
     }
+  }
+
+  // Runs one top-level operation under control: it is refused while the agent is
+  // paused, and its signal is aborted on stop. A stream stays registered until it
+  // is read to the end or closed. A refusal is one telemetry event for the
+  // operation; a stream raises it when read, as streams raise their other errors.
+  async _controlled(name, start, stream) {
+    let run;
+    try {
+      run = await this.control.begin();
+    } catch (error) {
+      if (!(error instanceof ControlError)) throw error;
+      this.telemetry?.track(name, { success: false, duration: 0, errorCode: error.code });
+      if (stream) {
+        return (async function* () {
+          throw error;
+        })();
+      }
+      return { success: false, error: error.message, errorCode: error.code };
+    }
+    let value;
+    try {
+      value = await start({ signal: run.signal });
+    } catch (error) {
+      this.control.end(run);
+      throw error;
+    }
+    if (typeof value?.[Symbol.asyncIterator] !== 'function') {
+      this.control.end(run);
+      if (run.signal.aborted && value?.success === false) value.errorCode = run.signal.reason.code;
+      return value;
+    }
+    const control = this.control;
+    return (async function* () {
+      try {
+        yield* value;
+      } finally {
+        control.end(run);
+      }
+    })();
+  }
+
+  // Releases this client's control connection and flushes its telemetry. Copies
+  // made with withContext or forDomain share the connection, so this closes theirs too.
+  async close() {
+    this.control?.close();
+    await this.telemetry?.destroy();
   }
 
   async _runWithTrace(operation, runId, fn, extra = {}) {
@@ -495,7 +567,9 @@ class AIToolkit {
       ? `${this.basePrompt}\n\n${additionalPrompt}`
       : additionalPrompt;
 
-    return new AIToolkit({ ...configCopy(this.config), basePrompt: newPrompt });
+    const copy = new AIToolkit({ ...configCopy(this.config), basePrompt: newPrompt });
+    copy.control = this.control;
+    return copy;
   }
 
   forDomain(domain) {
@@ -503,7 +577,9 @@ class AIToolkit {
       throw new Error(`Unknown domain: ${domain}. Available: ${Object.keys(PRESETS).join(', ')}`);
     }
 
-    return new AIToolkit({ ...configCopy(this.config), ...PRESETS[domain] });
+    const copy = new AIToolkit({ ...configCopy(this.config), ...PRESETS[domain] });
+    copy.control = this.control;
+    return copy;
   }
 
   // Asks, checks the reply, and when `check` reports a problem shows the model
@@ -808,7 +884,7 @@ class AIToolkit {
               : await options.onToolCall(
                   call.name,
                   call.parameters,
-                  ...(run?.principal
+                  ...(run?.principal || runSignal
                     ? [
                         {
                           principal: run.principal,
@@ -1030,6 +1106,11 @@ class AIToolkit {
     const resolvedModel = this._resolveModel(options.model, engine);
     const history = this._fitContext(system, user, options.includeHistory);
     const controller = new AbortController();
+    // The operation's signal, when it has one, cancels the stream like the timeout.
+    const { signal } = options;
+    signal?.throwIfAborted();
+    const onAbort = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
     const timeout = this.config.timeout ?? 30000;
     let timedOut = false;
     let finished = false;
@@ -1144,12 +1225,16 @@ class AIToolkit {
           throw new Error(`Unknown engine: ${engine}`);
       }
       if (timedOut && !finished) throw timeoutError();
+      // The OpenAI SDK ends an aborted stream quietly instead of throwing.
+      if (signal?.aborted && !finished) throw signal.reason;
     } catch (error) {
       if (finished) return;
       if (timedOut && !finished) throw timeoutError();
+      if (signal?.aborted) throw signal.reason;
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 
@@ -1631,6 +1716,7 @@ class AIToolkit {
         let modelStarted = false;
         const generator = this.makeStreamRequest(messages, {
           ...apiOptions,
+          signal: context?.signal,
           includeHistory: shouldTrack,
           operation: 'chat',
           onModelStart: () => {
@@ -1913,6 +1999,7 @@ module.exports.presets = PRESETS;
 module.exports.Resilience = Resilience;
 module.exports.CircuitBreakerError = CircuitBreakerError;
 module.exports.ConfirmationRequiredError = ConfirmationRequiredError;
+module.exports.ControlError = ControlError;
 module.exports.SpaceContextClient = SpaceContextClient;
 module.exports.SpaceContextError = SpaceContextError;
 module.exports.serve = function (options) {

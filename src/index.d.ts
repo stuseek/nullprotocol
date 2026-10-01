@@ -47,6 +47,15 @@ export interface AIToolkitOptions {
   apiKey?: string;
   /** Required with openai-compatible and only used there, such as http://localhost:11434/v1. */
   baseURL?: string;
+  /**
+   * Runtime key from the cabinet. With runtimeEndpoint it lets the cabinet pause,
+   * resume and stop this client's agent, and then agentId is required. The first
+   * operation waits for one control state; after that the last confirmed state
+   * holds when the endpoint is unreachable.
+   */
+  runtimeKey?: string;
+  /** Origin of the NullProtocol API, such as https://api.nullprotocol.ai. */
+  runtimeEndpoint?: string;
   /** Engines form, without provider: API keys per engine. */
   engines?: {
     openai?: string;
@@ -167,6 +176,25 @@ export interface ChatOptions extends BaseOptions {
   trackHistory?: boolean;
 }
 
+/**
+ * Why a controlled operation did not run or was cut short: refused while the
+ * agent is paused, before its first control state, after the runtime key was
+ * refused or the client closed; cancelled by stop or by close.
+ */
+export type ControlErrorCode =
+  | 'agent_paused'
+  | 'control_unavailable'
+  | 'control_rejected'
+  | 'control_closed'
+  | 'run_cancelled'
+  | 'client_closed';
+
+/** Thrown when a controlled stream is read while its agent cannot run. */
+export declare class ControlError extends Error {
+  name: 'ControlError';
+  code: 'agent_paused' | 'control_unavailable' | 'control_rejected' | 'control_closed';
+}
+
 export interface ExtractResult {
   success: boolean;
   data: any | null;
@@ -177,6 +205,7 @@ export interface ExtractResult {
   /** True when a repair turn turned an unusable reply into an accepted one. */
   repaired?: boolean;
   error?: string;
+  errorCode?: ControlErrorCode;
 }
 
 export interface ValidateResult {
@@ -186,6 +215,7 @@ export interface ValidateResult {
   confidence: number;
   recommendation?: 'pass' | 'fail' | 'conditional';
   error?: string;
+  errorCode?: ControlErrorCode;
 }
 
 export interface SummarizeResult {
@@ -194,6 +224,7 @@ export interface SummarizeResult {
   keyPoints: string[];
   confidence: number;
   error?: string;
+  errorCode?: ControlErrorCode;
 }
 
 export interface DecideResult {
@@ -205,7 +236,7 @@ export interface DecideResult {
   /** Model-selected action when the application guard rejected it. Never execute it. */
   rejectedAction?: string;
   /** Set when an application guard rejects or cannot finish checking a decision. */
-  errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout';
+  errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout' | ControlErrorCode;
   /** Model calls used, including repair turns; also set when the result failed. Each call's tokens are in the trace and model_usage telemetry. */
   attempts?: number;
   /** True when a repair turn turned an unusable reply into an accepted one. */
@@ -219,6 +250,7 @@ export interface ChatResult {
   confidence: number | null;
   toolCalls?: ToolCallResult[];
   error?: string;
+  errorCode?: ControlErrorCode;
 }
 
 export interface ResilienceStats {
@@ -392,6 +424,8 @@ export declare class AIToolkit {
    * Create new instance with additional context
    */
   withContext(additionalPrompt: string): AIToolkit;
+  /** Releases runtime control (shared with copies from withContext and forDomain) and flushes telemetry. */
+  close(): Promise<void>;
 
   /**
    * Create specialized instance for domain
