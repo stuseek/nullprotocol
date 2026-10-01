@@ -427,7 +427,7 @@ class ManagedExecutor {
     this.abortController = null;
     this.loopPromise = null;
     this.heartbeat = null;
-    this.heartbeatBusy = false;
+    this.heartbeatRun = null;
     this.closed = null;
     this._resolveClosed = null;
   }
@@ -472,12 +472,22 @@ class ManagedExecutor {
     return response.executor;
   }
 
-  async _heartbeat() {
-    if (this.heartbeatBusy || !this.running) return;
-    this.heartbeatBusy = true;
+  // One heartbeat at a time. stop() waits for it before deregistering, so a
+  // registration still in flight cannot reach the API after the DELETE.
+  _heartbeat() {
+    if (this.running && !this.heartbeatRun) {
+      this.heartbeatRun = this._renew().finally(() => {
+        this.heartbeatRun = null;
+      });
+    }
+    return this.heartbeatRun;
+  }
+
+  async _renew() {
     try {
       await this.register();
     } catch (error) {
+      if (!this.running) return;
       let currentError = error;
       const unknown = error instanceof PlatformError ? error.details.unknownAgents : null;
       if (error.code === 'invalid_body' && unknown?.length) {
@@ -489,6 +499,7 @@ class ManagedExecutor {
             await this.register();
             return;
           } catch (retryError) {
+            if (!this.running) return;
             currentError = retryError;
             this._report(retryError.code || 'platform_unavailable');
           }
@@ -506,8 +517,6 @@ class ManagedExecutor {
       } else if (currentError instanceof PlatformError && currentError.status === 404) {
         this._halt('platform_unavailable');
       }
-    } finally {
-      this.heartbeatBusy = false;
     }
   }
 
@@ -1446,7 +1455,7 @@ class ManagedExecutor {
     this.running = false;
     clearInterval(this.heartbeat);
     this.abortController.abort();
-    this.loopPromise.then(() => this._resolveClosed({ reason }));
+    Promise.all([this.loopPromise, this.heartbeatRun]).then(() => this._resolveClosed({ reason }));
   }
 
   async start() {
@@ -1479,7 +1488,7 @@ class ManagedExecutor {
     this.started = false;
     clearInterval(this.heartbeat);
     this.abortController.abort();
-    await this.loopPromise;
+    await Promise.all([this.loopPromise, this.heartbeatRun]);
     try {
       await this.transport.request('DELETE', await this._path(''));
     } catch (error) {

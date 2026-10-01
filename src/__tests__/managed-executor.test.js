@@ -398,6 +398,50 @@ describe('executor lifetime', () => {
     await executor.stop();
   });
 
+  test('stop waits for a heartbeat in flight, which then does not register again', async () => {
+    const requests = [];
+    let releaseHeartbeat;
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId, otherAgentId],
+      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      fetchImpl: async (url, options) => {
+        if (url.endsWith('/v1/space')) {
+          return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+        }
+        requests.push(url.endsWith('/claim') ? 'claim' : options.method);
+        if (url.endsWith('/claim')) {
+          return new Promise((resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(options.signal.reason));
+          });
+        }
+        if (options.method === 'DELETE') return new globalThis.Response(null, { status: 204 });
+        if (requests.filter(method => method === 'PUT').length === 2) {
+          // The heartbeat's registration answers only after stop() has begun.
+          await new Promise(resolve => (releaseHeartbeat = resolve));
+          return new globalThis.Response(
+            JSON.stringify({ error: 'invalid_body', unknownAgents: [otherAgentId] }),
+            { status: 400 }
+          );
+        }
+        return new globalThis.Response(JSON.stringify({ executor: { instanceId: 'x' } }));
+      }
+    });
+    await executor.start();
+    void executor._heartbeat();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    let closed = false;
+    executor.closed.then(() => (closed = true));
+    const stopped = executor.stop();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(requests).not.toContain('DELETE');
+    expect(closed).toBe(false);
+    releaseHeartbeat();
+    await stopped;
+    expect(requests.filter(method => method !== 'claim')).toEqual(['PUT', 'PUT', 'DELETE']);
+    await expect(executor.closed).resolves.toEqual({ reason: 'stopped' });
+  });
+
   test('a failed first registration rejects start and leaves nothing to wait on', async () => {
     const executor = lifetimeExecutor(() => ({ status: 401, body: { error: 'unauthorized' } }));
     await expect(executor.start()).rejects.toMatchObject({ code: 'unauthorized' });
