@@ -267,6 +267,30 @@ test('server rejects oversized request bodies', async () => {
   }
 });
 
+test('server answers a request line it cannot parse as a URL instead of crashing', async () => {
+  const net = require('net');
+  const { serve } = require('../server');
+  const server = serve({ port: 0, apiKey: 'secret-token-123', engines: { openai: 'test-key' } });
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const reply = await new Promise((resolve, reject) => {
+      const socket = net.connect(server.address().port, '127.0.0.1');
+      let data = '';
+      socket.on('data', chunk => (data += chunk));
+      socket.on('end', () => resolve(data));
+      socket.on('error', reject);
+      socket.setTimeout(2000, () => socket.destroy(new Error('No reply')));
+      socket.end(
+        'GET http://[ HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer secret-token-123\r\nConnection: close\r\n\r\n'
+      );
+    });
+    expect(reply).toMatch(/^HTTP\/1\.1 400 /);
+    expect(reply).toContain('Invalid request URL');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 describe('Server — with auth', () => {
   let server;
   let port;

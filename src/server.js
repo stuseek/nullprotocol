@@ -132,8 +132,13 @@ function serve(options = {}) {
       return;
     }
 
-    const url = new URL(req.url, 'http://localhost');
-    const path = url.pathname;
+    let path;
+    try {
+      path = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      sendJSON(res, 400, { error: 'Invalid request URL' });
+      return;
+    }
 
     // GET /health
     if (path === '/health' && req.method === 'GET') {
