@@ -2,7 +2,7 @@
 
 # NullProtocol
 
-A Node.js SDK for the AI steps in your application. `extract` validates the model's output against a JSON Schema, and `decide` limits it to the actions you allow and checks it with your guard; every request has retries and timeouts, and `chat` bounds its tool calls. Connected to a NullProtocol Space, a client's calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
+A Node.js SDK for the AI steps in your application. `extract` validates the model's output against a JSON Schema, and `decide` limits it to the actions you allow and checks it with your guard; requests have timeouts and bounded retries where supported (a stream is not retried), and `chat` bounds its tool calls. Connected to a NullProtocol Space, a client's calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
@@ -373,7 +373,7 @@ Optionally, an agent can keep a conversation: give it `mode: 'stateful'` and the
 | Conversation history in one process | `store: new MemorySessionStore()`; history is lost on restart |
 | Shared or persistent sessions across processes | Your PostgreSQL with `new PostgresSessionStore(pool)` |
 
-The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.2.0 nullprotocol-serve --config ./agents.js`.
+The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.2.1 nullprotocol-serve --config ./agents.js`.
 
 <details>
 <summary>Multiple processes and runtime controls</summary>

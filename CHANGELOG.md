@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- Telemetry names the model of every model request and reports its own failure: `timeout`, `rate_limited`, `aborted` or `provider_error`.
+- `extract` and `decide` send their final event also when they fail with an error, coded by where they stopped: the failed request's code, `aborted` for a cancelled request, `config_error` for input that failed before any model request, and `internal` otherwise.
+- The README starts with connecting an application to a Space and reading Activity, and the Named agents over HTTP heading is back.
+
 ## 1.2.0
 
 - A client in your application can be paused, resumed and stopped from the cabinet with `runtimeKey`, `runtimeEndpoint` and an explicit `agentId`. A paused agent's operations return `agent_paused` without calling the model; stop cancels running operations, including streams and tool callbacks, through their abort signal. The first operation waits for the agent's state, and the last confirmed state holds through an outage.
