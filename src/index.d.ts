@@ -1,7 +1,9 @@
 // TypeScript definitions for nullprotocol.
 
 export interface BaseOptions {
+  /** Engines form: which configured engine to call. */
   engine?: 'openai' | 'anthropic';
+  /** Model for this call. With provider, a model name; in the engines form, a name or alias. */
   model?: string;
   temperature?: number;
   maxTokens?: number;
@@ -20,18 +22,32 @@ export interface CircuitBreakerOptions {
   resetAfterMs?: number;
 }
 
+/** Engines form only: the default model per engine, plus any aliases you name. */
 export interface ModelAliases {
   openai?: string;
   anthropic?: string;
-  fast?: string;
-  balanced?: string;
-  powerful?: string;
   [alias: string]: string | undefined;
 }
 
 export interface AIToolkitOptions {
   /** A config file to load, or `false` to skip config files. */
   configFile?: string | false;
+  /**
+   * The model API: 'openai', 'anthropic', or 'openai-compatible' for a server
+   * that speaks the OpenAI chat API, such as Ollama, LM Studio or vLLM.
+   * Cannot be combined with engines, models, defaultEngine or openaiBaseURL.
+   */
+  provider?: 'openai' | 'anthropic' | 'openai-compatible';
+  /** The model name, required with provider. A per-call model is also a name. */
+  model?: string;
+  /**
+   * The model API key. Defaults to OPENAI_API_KEY or ANTHROPIC_API_KEY for those
+   * providers. Optional for openai-compatible, which never reads those variables.
+   */
+  apiKey?: string;
+  /** Required with openai-compatible and only used there, such as http://localhost:11434/v1. */
+  baseURL?: string;
+  /** Engines form, without provider: API keys per engine. */
   engines?: {
     openai?: string;
     anthropic?: string;
@@ -50,7 +66,7 @@ export interface AIToolkitOptions {
    */
   repairAttempts?: number;
   withExecutor?: boolean;
-  /** Base URL for an OpenAI compatible API, including a local server. */
+  /** Engines form: base URL for an OpenAI-compatible API, including a local server. */
   openaiBaseURL?: string;
   token?: string;
   telemetryKey?: string;
@@ -70,7 +86,7 @@ export interface AIToolkitOptions {
   /** Optional label checked against the Space ingest key. */
   environment?: string;
   debug?: boolean;
-  /** Model aliases and per-engine defaults */
+  /** Engines form: per-engine default models and aliases. */
   models?: ModelAliases;
   /** Retry configuration */
   retry?: RetryOptions;
@@ -528,6 +544,7 @@ export declare class PostgresSessionStore implements SessionStore {
 
 export interface AgentServerOptions {
   agents: AgentDefinition[] | Record<string, Omit<AgentDefinition, 'id'>>;
+  /** Bearer key for your HTTP service. A model key goes in each agent definition. */
   apiKey?: string;
   /** Optional Space-scoped key for polling desired pause/stop state. Separate from telemetry. */
   runtimeKey?: string;

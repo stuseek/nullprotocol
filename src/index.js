@@ -1,6 +1,6 @@
 /** Core library for model requests, structured output, and tool calls. */
 
-const { ConfigLoader } = require('./config');
+const { ConfigLoader, configCopy } = require('./config');
 const { TelemetryClient } = require('./telemetry');
 const { SpaceContextClient, SpaceContextError } = require('./space-context');
 const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
@@ -496,11 +496,7 @@ class AIToolkit {
       ? `${this.basePrompt}\n\n${additionalPrompt}`
       : additionalPrompt;
 
-    return new AIToolkit({
-      ...this.config,
-      basePrompt: newPrompt,
-      engines: this.engines
-    });
+    return new AIToolkit({ ...configCopy(this.config), basePrompt: newPrompt });
   }
 
   forDomain(domain) {
@@ -508,11 +504,7 @@ class AIToolkit {
       throw new Error(`Unknown domain: ${domain}. Available: ${Object.keys(PRESETS).join(', ')}`);
     }
 
-    return new AIToolkit({
-      ...this.config,
-      ...PRESETS[domain],
-      engines: this.engines
-    });
+    return new AIToolkit({ ...configCopy(this.config), ...PRESETS[domain] });
   }
 
   // Asks, checks the reply, and when `check` reports a problem shows the model
@@ -575,7 +567,10 @@ class AIToolkit {
   }
 
   initializeClients() {
-    if (this.engines.openai) {
+    // A server that needs no key gets no Authorization header. The OpenAI SDK
+    // needs some key and would otherwise read OPENAI_API_KEY and send it there.
+    const keyless = this.config.provider === 'openai-compatible' && !this.engines.openai;
+    if (this.engines.openai || keyless) {
       if (
         typeof this.engines.openai === 'string' &&
         this.engines.openai.startsWith('np_inf_') &&
@@ -587,9 +582,10 @@ class AIToolkit {
       try {
         const { OpenAI } = require('openai');
         this.clients.openai = new OpenAI({
-          apiKey: this.engines.openai,
+          apiKey: this.engines.openai ?? 'unused',
           baseURL: this.config.openaiBaseURL,
-          maxRetries: 0
+          maxRetries: 0,
+          ...(keyless ? { defaultHeaders: { Authorization: null } } : {})
         });
       } catch {
         console.warn('OpenAI SDK not installed. Run: npm install openai');
@@ -611,6 +607,8 @@ class AIToolkit {
   }
 
   _resolveModel(model, engine) {
+    // With provider, a per-call model is the model's own name, never an alias.
+    if (this.config.provider) return model || this.config.model;
     const defaults = { openai: 'gpt-4', anthropic: 'claude-sonnet-5' };
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
   }

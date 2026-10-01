@@ -3,28 +3,96 @@
 const fs = require('fs');
 const path = require('path');
 
-class ConfigLoader {
-  load(options = {}) {
-    // Start with defaults
-    let config = this.getDefaults();
+// The model settings a constructor takes: `provider` picks the protocol, `model`
+// is the name sent to it. They map onto the engine settings the client already
+// uses, so the rest of the library does not need to know which form was used.
+const PROVIDERS = {
+  openai: { engine: 'openai', keyEnv: 'OPENAI_API_KEY' },
+  anthropic: { engine: 'anthropic', keyEnv: 'ANTHROPIC_API_KEY' },
+  'openai-compatible': { engine: 'openai' }
+};
+const MODEL_FIELDS = ['provider', 'model', 'apiKey', 'baseURL'];
+const ENGINE_FIELDS = ['engines', 'models', 'defaultEngine', 'openaiBaseURL'];
 
-    // Load from config file
-    const fileConfig = this.loadFromFile(options.configFile);
-    if (fileConfig) {
-      config = { ...config, ...fileConfig };
+function modelSettings({ provider, model, apiKey, baseURL }) {
+  const spec = PROVIDERS[provider];
+  if (!spec) {
+    throw new Error(
+      `Unknown provider ${JSON.stringify(provider)}. Use openai, anthropic or openai-compatible.`
+    );
+  }
+  if (typeof model !== 'string' || !model) {
+    throw new Error(`provider ${provider} needs model, the name of the model to call`);
+  }
+  if (spec.keyEnv) {
+    if (baseURL !== undefined) {
+      throw new Error(
+        provider === 'openai'
+          ? 'baseURL is not used with provider openai. For another server that speaks the OpenAI API, use provider openai-compatible.'
+          : 'baseURL is not used with provider anthropic, which always calls the Anthropic API.'
+      );
+    }
+    // A cloud key is read from its own variable only for its own provider.
+    const key = apiKey ?? process.env[spec.keyEnv];
+    if (!key) throw new Error(`provider ${provider} needs apiKey or ${spec.keyEnv}`);
+    return { engine: spec.engine, model, apiKey: key };
+  }
+  let url;
+  try {
+    url = new URL(baseURL);
+  } catch {
+    url = null;
+  }
+  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+    throw new Error(
+      'provider openai-compatible needs baseURL, the http(s) address of your server, such as http://localhost:11434/v1 for Ollama'
+    );
+  }
+  return { engine: spec.engine, model, apiKey, baseURL };
+}
+
+class ConfigLoader {
+  // Precedence, lowest first: defaults, config file, environment, options.
+  // With `provider` (in the file or options) the model settings come only from
+  // provider, model, apiKey and baseURL, plus the provider's own key variable;
+  // the engine settings and their environment variables are not used.
+  load(options = {}) {
+    const fileConfig = this.loadFromFile(options.configFile) || {};
+    const envConfig = this.loadFromEnv();
+    const given = { ...fileConfig, ...options };
+
+    if (given.provider === undefined) {
+      const stray = MODEL_FIELDS.filter(field => given[field] !== undefined);
+      if (stray.length) {
+        throw new Error(
+          `${stray.join(', ')} need provider (openai, anthropic or openai-compatible)`
+        );
+      }
+      const config = { ...this.getDefaults(), ...fileConfig, ...envConfig, ...options };
+      this.processConfig(config);
+      return config;
     }
 
-    // Load from environment variables
-    const envConfig = this.loadFromEnv();
-    config = { ...config, ...envConfig };
-
-    // Apply runtime options (highest priority)
-    config = { ...config, ...options };
-
-    // Handle special cases
-    this.processConfig(config);
-
-    return config;
+    const mixed = ENGINE_FIELDS.filter(field => given[field] !== undefined);
+    if (mixed.length) {
+      throw new Error(
+        `provider cannot be combined with ${mixed.join(', ')}; use provider, model, apiKey and baseURL`
+      );
+    }
+    // The engine settings below replace any that the environment set.
+    const settings = modelSettings(given);
+    return {
+      ...this.getDefaults(),
+      ...fileConfig,
+      ...envConfig,
+      ...options,
+      model: settings.model,
+      apiKey: settings.apiKey,
+      defaultEngine: settings.engine,
+      engines: { [settings.engine]: settings.apiKey },
+      models: { [settings.engine]: settings.model },
+      openaiBaseURL: settings.baseURL
+    };
   }
 
   getDefaults() {
@@ -159,4 +227,12 @@ class ConfigLoader {
   }
 }
 
-module.exports = { ConfigLoader };
+// The effective configuration as options for another client. With provider, the
+// engine settings derived from it are left out so they are derived again.
+function configCopy(config) {
+  const copy = { ...config };
+  if (copy.provider) for (const field of ENGINE_FIELDS) delete copy[field];
+  return copy;
+}
+
+module.exports = { ConfigLoader, configCopy };
