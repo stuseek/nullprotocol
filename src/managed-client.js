@@ -47,7 +47,7 @@ function conversationKey(value) {
   if (normalized === '.' || normalized === '..') {
     throw new Error('conversationKey cannot be "." or ".."');
   }
-  return encodeURIComponent(normalized);
+  return normalized;
 }
 
 function messageSequence(value) {
@@ -78,7 +78,9 @@ function runBody(input, options) {
   if (input === undefined) throw new Error('input is required');
   return {
     input,
-    ...(options.conversation === undefined ? {} : { conversation: options.conversation }),
+    ...(options.conversation === undefined
+      ? {}
+      : { conversation: conversationKey(options.conversation) }),
     ...(options.context === undefined ? {} : { context: options.context }),
     ...(options.subject === undefined ? {} : { subject: options.subject })
   };
@@ -246,21 +248,28 @@ class NullProtocolClient {
         get: (key, query = {}, options = {}) =>
           this._request(
             'GET',
-            queryPath(`${agentPath}/conversations/${conversationKey(key)}`, query),
+            queryPath(
+              `${agentPath}/conversations/${encodeURIComponent(conversationKey(key))}`,
+              query
+            ),
             options
           ),
         delete: (key, options = {}) =>
-          this._request('DELETE', `${agentPath}/conversations/${conversationKey(key)}`, options),
+          this._request(
+            'DELETE',
+            `${agentPath}/conversations/${encodeURIComponent(conversationKey(key))}`,
+            options
+          ),
         deleteMessage: (key, seq, options = {}) =>
           this._request(
             'DELETE',
-            `${agentPath}/conversations/${conversationKey(key)}/messages/${messageSequence(seq)}`,
+            `${agentPath}/conversations/${encodeURIComponent(conversationKey(key))}/messages/${messageSequence(seq)}`,
             options
           ),
         deleteFact: (key, factId, options = {}) =>
           this._request(
             'DELETE',
-            `${agentPath}/conversations/${conversationKey(key)}/facts/${resourceId(factId, 'factId')}`,
+            `${agentPath}/conversations/${encodeURIComponent(conversationKey(key))}/facts/${resourceId(factId, 'factId')}`,
             options
           )
       },

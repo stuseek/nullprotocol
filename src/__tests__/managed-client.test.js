@@ -298,5 +298,9 @@ test('bad run options cannot create a run', async () => {
     'pollIntervalMs'
   );
   await expect(client.agent(AGENT_ID).startRun(undefined)).rejects.toThrow('input is required');
+  // A conversation its key could never address again is not created.
+  await expect(client.agent(AGENT_ID).run('Hello', { conversation: '.' })).rejects.toThrow(
+    'cannot be'
+  );
   expect(api.fetchImpl).not.toHaveBeenCalled();
 });
