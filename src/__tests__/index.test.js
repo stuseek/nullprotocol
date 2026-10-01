@@ -110,6 +110,23 @@ describe('Extract', () => {
     expect(result.confidence).toBe(0);
   });
 
+  test('an invalid schema fails before any model call', async () => {
+    const ai = createAI();
+    const result = await ai.extract('Acme sold a desk', { vendor: 'strng' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Unsupported schema type');
+    expect(result.attempts).toBe(0);
+    expect(ai.makeAIRequest).not.toHaveBeenCalled();
+  });
+
+  test('extracts a shorthand field named items', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(JSON.stringify({ vendor: 'Acme', items: ['desk'] }));
+    const result = await ai.extract('Acme sold a desk', { vendor: 'string', items: 'string[]' });
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ vendor: 'Acme', items: ['desk'] });
+  });
+
   test('handles API error gracefully', async () => {
     const ai = createAI();
     ai.makeAIRequest.mockRejectedValue(new Error('API Error'));

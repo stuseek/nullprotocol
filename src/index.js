@@ -5,7 +5,7 @@ const { TelemetryClient } = require('./telemetry');
 const { SpaceContextClient, SpaceContextError } = require('./space-context');
 const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
 const { Resilience, CircuitBreakerError } = require('./resilience');
-const { validateExtraction: validateSchema } = require('./schema');
+const { validateExtraction: validateSchema, validatorFor } = require('./schema');
 const { parseJSON } = require('./json');
 const { AsyncLocalStorage } = require('async_hooks');
 const { randomUUID } = require('crypto');
@@ -1212,6 +1212,8 @@ class AIToolkit {
     const count = { attempts: 0 };
 
     try {
+      // An invalid schema fails here, before any model call.
+      validatorFor(schema);
       const systemPrompt =
         'Extract structured information according to the schema. Return only valid JSON with double-quoted property names and no Markdown.';
       const userPrompt = `Data: ${JSON.stringify(data)}\n\nSchema: ${JSON.stringify(schema)}\n\nExtract the information and return JSON matching the schema.`;
