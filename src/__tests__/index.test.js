@@ -1336,6 +1336,35 @@ describe('Anthropic requests', () => {
     }
   });
 
+  test('rejects OpenAI replies cut at the token limit or withheld by the content filter', async () => {
+    const ai = new AIToolkit({ engines: { openai: 'test-key' } });
+    for (const finishReason of ['length', 'content_filter']) {
+      const create = jest.fn(async options => {
+        if (!options.stream) {
+          return { choices: [{ finish_reason: finishReason, message: { content: 'partial' } }] };
+        }
+        return (async function* () {
+          yield { choices: [{ delta: { content: 'partial' } }] };
+          yield { choices: [{ delta: {}, finish_reason: finishReason }] };
+        })();
+      });
+      ai.clients.openai = { chat: { completions: { create } } };
+      const plain = await ai.chat('q', { engine: 'openai' });
+      expect(plain.success).toBe(false);
+      expect(plain.error).toContain(finishReason);
+      const withTools = await ai.chat('q', {
+        engine: 'openai',
+        tools: [{ name: 'lookup' }],
+        onToolCall: jest.fn()
+      });
+      expect(withTools.success).toBe(false);
+      expect(withTools.error).toContain(finishReason);
+      const streamed = await ai.chat('q', { engine: 'openai', stream: true, collect: true });
+      expect(streamed.success).toBe(false);
+      expect(streamed.error).toContain(finishReason);
+    }
+  });
+
   test('a reply with only thinking blocks is a failure, not an empty answer', async () => {
     const { ai, create } = withAnthropic('claude-opus-5');
     create.mockResolvedValueOnce({

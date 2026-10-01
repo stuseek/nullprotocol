@@ -40,6 +40,14 @@ function assertAnthropicComplete(stopReason) {
   }
 }
 
+// The same for OpenAI-compatible APIs: "length" is cut at the token limit and
+// "content_filter" is withheld text.
+function assertOpenAIComplete(finishReason) {
+  if (finishReason === 'length' || finishReason === 'content_filter') {
+    throw new Error(`OpenAI reply incomplete: ${finishReason}`);
+  }
+}
+
 // Replies can open with thinking blocks, so join the text blocks instead of
 // taking the first block. A reply with no text (only thinking) is no answer.
 function anthropicText(message) {
@@ -801,6 +809,7 @@ class AIToolkit {
 
       if (engine === 'openai') {
         const choice = currentResponse.choices[0];
+        assertOpenAIComplete(choice.finish_reason);
         if (!choice.message.tool_calls?.length) {
           return { text: choice.message.content || '', toolCalls };
         }
@@ -913,6 +922,7 @@ class AIToolkit {
 
     // The last model response can finish on the final allowed round.
     if (engine === 'openai') {
+      assertOpenAIComplete(currentResponse.choices[0].finish_reason);
       if (!currentResponse.choices[0].message.tool_calls?.length) {
         return { text: currentResponse.choices[0].message.content || '', toolCalls };
       }
@@ -972,6 +982,7 @@ class AIToolkit {
             );
             return { text: result.text, toolCalls: result.toolCalls };
           }
+          assertOpenAIComplete(completion.choices[0].finish_reason);
           return completion.choices[0].message.content;
         }
 
@@ -1116,7 +1127,10 @@ class AIToolkit {
           );
 
           for await (const chunk of stream) {
-            if (chunk.choices?.[0]?.finish_reason && !timedOut) {
+            const finishReason = chunk.choices?.[0]?.finish_reason;
+            if (finishReason && !timedOut) {
+              // Validate before marking success: errors after finished are ignored.
+              assertOpenAIComplete(finishReason);
               finished = true;
             }
             if (chunk.usage && typeof options.onUsage === 'function') {
