@@ -42,6 +42,11 @@ function conversationKey(value) {
   if (!normalized || Buffer.byteLength(normalized, 'utf8') > 256 || /[\p{Cc}]/u.test(normalized)) {
     throw new Error('conversationKey is invalid');
   }
+  // URLs resolve "." and ".." (even percent-encoded) as path steps, so such a key
+  // would address another route.
+  if (normalized === '.' || normalized === '..') {
+    throw new Error('conversationKey cannot be "." or ".."');
+  }
   return encodeURIComponent(normalized);
 }
 

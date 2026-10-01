@@ -220,6 +220,12 @@ test('managed context and conversation content use scoped Agent routes', async (
   ]);
   expect(() => agent.context.get('../profile')).toThrow('contextKey');
   expect(() => agent.conversations.deleteMessage('ticket', 0)).toThrow('sequence');
+  // "." and ".." would resolve as path steps to another route, such as the Agent itself.
+  for (const key of ['.', '..']) {
+    expect(() => agent.conversations.delete(key)).toThrow('cannot be');
+    expect(() => agent.conversations.deleteFact(key, AGENT_ID)).toThrow('cannot be');
+  }
+  expect(requests).toHaveLength(4);
 });
 
 test('an abort signal cancels Space discovery before resource creation', async () => {
