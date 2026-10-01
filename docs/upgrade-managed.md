@@ -18,7 +18,7 @@ The constructor and primitives remain available. There is no automatic conversio
 
 ## Migration sequence
 
-1. Create two Space keys (in the cabinet: **Agents → More → API keys**). The app server needs `templates:write`, `agents:write`, `agents:read`, `runs:create` and `runs:read`. Code that reads or changes Agent Context or memory also needs `context:read` and `context:write`; conversation inspection and deletion need `conversations:read` and `conversations:delete`. The executor needs `runtime:connect` and `runs:execute`. Keep both keys on servers; never put them in a browser bundle.
+1. Create two Space keys (in the cabinet: **Managed agents → More → API keys**). The app server needs `templates:write`, `agents:write`, `agents:read`, `runs:create` and `runs:read`. Code that reads or changes Agent Context or memory also needs `context:read` and `context:write`; conversation inspection and deletion need `conversations:read` and `conversations:delete`. The executor needs `runtime:connect` and `runs:execute`. Keep both keys on servers; never put them in a browser bundle.
 2. Move stable instructions, model choice, action schemas and memory policy into an Agent Template. Publish a new Template version to change them. Existing Agents stay pinned until explicitly repinned.
 3. Create each long-lived Agent explicitly and retain its ID. One executor process can serve many Agent IDs; a process is not spawned per Agent.
 4. Register local action handlers with `defineAction`. Pass the same definition to the Template and `ManagedExecutor`; the SDK publishes only its schema and description. Keep application data, permission checks and idempotent side effects in your code.
