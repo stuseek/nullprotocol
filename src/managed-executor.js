@@ -499,7 +499,6 @@ class ManagedExecutor {
             await this.register();
             return;
           } catch (retryError) {
-            if (!this.running) return;
             currentError = retryError;
             this._report(retryError.code || 'platform_unavailable');
           }
