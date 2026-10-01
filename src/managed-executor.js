@@ -210,7 +210,37 @@ function contextDelta(previous, current) {
   return delta;
 }
 
-function fitTurn(messages, tools, model, entries, credential) {
+// What the model is told about a call whose result no longer fits. It repeats
+// only what this call is known to have done: a refusal keeps its refusal, a
+// handler that returned is "handler completed" with its result omitted (its
+// business outcome, for example a rejected refund, is not known here), and a
+// call with no known outcome says so. It never infers success from the
+// action's effect or name.
+function omittedResult(outcome) {
+  if (outcome?.status === 'refused') {
+    return {
+      error: outcome.reasonCode,
+      message: REFUSALS[outcome.reasonCode],
+      resultOmitted: true
+    };
+  }
+  if (outcome?.status === 'completed') {
+    return {
+      status: 'handler_completed',
+      resultOmitted: true,
+      reason: 'context_budget',
+      note: 'The handler returned, but its result is omitted from this request. Its business outcome is not available here; do not state one.'
+    };
+  }
+  return {
+    status: 'outcome_unavailable',
+    resultOmitted: true,
+    reason: 'context_budget',
+    note: 'The outcome of this call is not available here; do not say whether it happened.'
+  };
+}
+
+function fitTurn(messages, tools, model, entries, credential, callOutcomes = new Map()) {
   const selected = [...tools];
   const truncated = { toolResults: 0, contextUpdates: 0, priorModelOutputs: 0, actions: [] };
   const fits = () => requestBytes(model, messages, selected, credential) <= MAX_REQUEST_BYTES;
@@ -218,26 +248,9 @@ function fitTurn(messages, tools, model, entries, credential) {
 
   // Keep the call/result pairs intact. The step outcome remains in the trace,
   // while the model sees an explicit omission rather than silently losing the call.
-  const writeCalls = new Set(
-    messages.flatMap(message => {
-      if (message.role !== 'assistant' || !Array.isArray(message.tool_calls)) return [];
-      return message.tool_calls
-        .filter(call => entries.get(call.function.name)?.contract.effect === 'write')
-        .map(call => call.id);
-    })
-  );
   for (const message of messages) {
     if (message.role !== 'tool') continue;
-    const replacement = JSON.stringify(
-      writeCalls.has(message.tool_call_id)
-        ? {
-            status: 'succeeded',
-            resultOmitted: true,
-            reason: 'context_budget',
-            note: 'The write completed; do not infer details from its omitted result.'
-          }
-        : { error: 'result_too_large_for_context' }
-    );
+    const replacement = JSON.stringify(omittedResult(callOutcomes.get(message.tool_call_id)));
     if (message.content !== replacement) {
       message.content = replacement;
       truncated.toolResults++;
@@ -309,16 +322,28 @@ function failureCode(error) {
   return 'executor_error';
 }
 
+// A cancellation that arrived before the callback started; the callback never ran.
+class NotStartedError extends ManagedModelError {
+  constructor() {
+    super('run_cancelled');
+    this.notStarted = true;
+  }
+}
+
+// Runs a guard or handler with a deadline and the run's abort signal. If the run
+// was already cancelled, the callback is never called.
 async function invokeBounded(callback, args, parentSignal, timeoutMs) {
+  if (parentSignal?.aborted) throw new NotStartedError();
   const controller = new AbortController();
   const abort = () => controller.abort(parentSignal?.reason);
-  if (parentSignal?.aborted) abort();
-  else parentSignal?.addEventListener('abort', abort, { once: true });
+  parentSignal?.addEventListener('abort', abort, { once: true });
   let timer;
   const cancelled = new Promise((_resolve, reject) => {
-    const fail = () => reject(new ManagedModelError('run_cancelled'));
-    if (controller.signal.aborted) fail();
-    else controller.signal.addEventListener('abort', fail, { once: true });
+    controller.signal.addEventListener(
+      'abort',
+      () => reject(new ManagedModelError('run_cancelled')),
+      { once: true }
+    );
   });
   const timedOut = new Promise((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -326,8 +351,17 @@ async function invokeBounded(callback, args, parentSignal, timeoutMs) {
       controller.abort();
     }, timeoutMs);
   });
+  // Whichever promise loses the race must not surface as an unhandled rejection.
+  cancelled.catch(() => {});
+  timedOut.catch(() => {});
+  let running;
   try {
-    return await Promise.race([callback(...args, controller.signal), cancelled, timedOut]);
+    running = Promise.resolve(callback(...args, controller.signal));
+  } catch (error) {
+    running = Promise.reject(error);
+  }
+  try {
+    return await Promise.race([running, cancelled, timedOut]);
   } finally {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', abort);
@@ -835,6 +869,8 @@ class ManagedExecutor {
         );
       }
       const messages = fitted.messages;
+      // What each call in this run actually did, by the provider's call ID.
+      const callOutcomes = new Map();
       let lastContextSnapshot = {
         space: job.spaceContext,
         agent: job.agentContext,
@@ -871,7 +907,14 @@ class ManagedExecutor {
             !(memoryIncomplete && entries.get(name).contract.effect === 'write')
           );
         });
-        const turnFit = fitTurn(messages, allowedTools, model.model, entries, credential);
+        const turnFit = fitTurn(
+          messages,
+          allowedTools,
+          model.model,
+          entries,
+          credential,
+          callOutcomes
+        );
         if (
           turnFit.truncated.toolResults ||
           turnFit.truncated.contextUpdates ||
@@ -975,6 +1018,7 @@ class ManagedExecutor {
               expiresAt
             );
           }
+          callOutcomes.set(call.providerCallId, { status: 'refused', reasonCode });
           messages.push({
             role: 'tool',
             tool_call_id: call.providerCallId,
@@ -1051,7 +1095,9 @@ class ManagedExecutor {
                   5000
                 )) === true;
               if (!allowed) reasonCode = 'guard_rejected';
-            } catch {
+            } catch (error) {
+              // A cancelled run is not a guard failure; the call never reaches its handler.
+              if (error.code === 'run_cancelled' || controller.signal.aborted) throw error;
               reasonCode = 'guard_error';
             }
             await this._stepWithRetry(
@@ -1111,15 +1157,26 @@ class ManagedExecutor {
             if (entry.contract.effect === 'write') {
               writeOutcomes.push({ name: call.name, callId, status: 'succeeded' });
             }
+            callOutcomes.set(call.providerCallId, { status: 'completed' });
             messages.push({ role: 'tool', tool_call_id: call.providerCallId, content: encoded });
           } catch (error) {
             if (leaseState.lost()) return null;
             const code = failureCode(error);
-            await finishStep(actionStep, entry.contract.effect === 'write' ? 'unknown' : 'failed', {
+            // A handler that never started did nothing. Once it has started, a write's
+            // outcome is unknown, even if the run was cancelled meanwhile.
+            const status = error.notStarted
+              ? 'cancelled'
+              : entry.contract.effect === 'write'
+                ? 'unknown'
+                : leaseState.cancelled()
+                  ? 'cancelled'
+                  : 'failed';
+            await finishStep(actionStep, status, {
               name: call.name,
               effect: entry.contract.effect,
               errorCode: code
             });
+            if (status === 'cancelled') throw new ManagedModelError('run_cancelled');
             throw new ManagedModelError(
               entry.contract.effect === 'write' ? 'action_outcome_unknown' : code
             );

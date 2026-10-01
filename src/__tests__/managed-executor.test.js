@@ -1064,9 +1064,10 @@ test.each([
     ? requests[1].messages.find(message => message.content?.startsWith('Action result:'))
     : requests[1].messages.find(message => message.role === 'tool');
   const toolMessage = resultMessage.content;
-  expect(toolMessage).toContain(
-    effect === 'write' ? '"status":"succeeded"' : 'result_too_large_for_context'
-  );
+  // An omitted result says the handler returned, never that the write succeeded.
+  expect(toolMessage).toContain('"status":"handler_completed"');
+  expect(toolMessage).not.toContain('succeeded');
+  expect(toolMessage).not.toContain('write completed');
   expect(steps).toContainEqual(
     expect.objectContaining({
       kind: 'context',
@@ -1412,4 +1413,329 @@ describe('refused action calls', () => {
     expect(requests).toHaveLength(1);
     expect(handlers.refund).not.toHaveBeenCalled();
   });
+});
+
+describe('what the model is told and what runs after truncation or cancellation', () => {
+  const refund = {
+    name: 'refund',
+    description: 'Refund an order',
+    input: {
+      type: 'object',
+      properties: { orderId: { type: 'string' }, amount: { type: 'number' } },
+      required: ['orderId', 'amount'],
+      additionalProperties: false
+    },
+    output: {
+      type: 'object',
+      properties: { status: { type: 'string' } },
+      required: ['status']
+    },
+    effect: 'write'
+  };
+  const search = {
+    name: 'searchOrders',
+    description: 'Search orders',
+    effect: 'read',
+    input: { type: 'object', properties: {}, additionalProperties: false },
+    output: { type: 'object', properties: { data: { type: 'string' } }, required: ['data'] },
+    maxResultBytes: 65536
+  };
+  const native = (...calls) => ({
+    content: null,
+    tool_calls: calls.map(([id, name, args]) => ({
+      id,
+      type: 'function',
+      function: { name, arguments: JSON.stringify(args) }
+    }))
+  });
+  // Seventy large facts and a large read result push the second model request
+  // over its byte budget, so earlier tool results must be omitted.
+  const heavyConversation = {
+    id: conversationId,
+    version: 1,
+    messages: [],
+    facts: Array.from({ length: 70 }, (_, index) => ({
+      id: `fact-${index}`,
+      value: { data: 'f'.repeat(1300) },
+      sourceSeqs: [index + 1]
+    }))
+  };
+
+  async function run({ replies, guard, refundResult, heavy = false, onStep, onContext }) {
+    const actions = [refund, search];
+    const requests = [];
+    const steps = [];
+    const commits = [];
+    const controller = new AbortController();
+    const state = { cancelled: false };
+    const cancel = () => {
+      state.cancelled = true;
+      controller.abort();
+    };
+    const handlers = {
+      refund: jest.fn(async () => refundResult ?? { status: 'refunded' }),
+      searchOrders: jest.fn(async () => ({ data: 'x'.repeat(60000) }))
+    };
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: {
+        localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' }
+      },
+      actions: [
+        { ...refund, guard, handler: handlers.refund },
+        { ...search, handler: handlers.searchOrders }
+      ],
+      modelFetchImpl: async (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        const message = replies[Math.min(requests.length, replies.length) - 1];
+        return new globalThis.Response(JSON.stringify({ choices: [{ message }] }));
+      }
+    });
+    executor._lease = jest.fn(async () => ({
+      expiresAt: new Date(Date.now() + 30000),
+      disabledActions: []
+    }));
+    executor._context = jest.fn(async () => {
+      await onContext?.(cancel);
+      return { spaceContext: [], agentContext: [], agentMemory: [], disabledActions: [] };
+    });
+    executor._stepWithRetry = jest.fn(async (_run, _token, step) => {
+      steps.push(structuredClone(step));
+      await onStep?.(step, cancel);
+    });
+    executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => {
+      commits.push(body);
+      return { run: body };
+    });
+    const result = await executor._processActionJob(
+      {
+        run: {
+          id: runId,
+          agentId,
+          input: 'Handle these orders.',
+          deadlineAt: new Date(Date.now() + 180000).toISOString()
+        },
+        template: { config: { ...config, actions } },
+        actions: actions.map(action => ({ ...action, contractHash: actionContractHash(action) })),
+        actionManifestHash: hashJson(
+          actions.map(action => ({ name: action.name, contractHash: actionContractHash(action) }))
+        ),
+        spaceContext: [],
+        conversation: heavy ? heavyConversation : { id: conversationId, version: 0, messages: [] }
+      },
+      `np_lease_${'B'.repeat(43)}`,
+      executor.credentials.localModel,
+      controller,
+      {
+        expiresAt: () => Date.now() + 30000,
+        lost: () => false,
+        cancelled: () => state.cancelled,
+        requestCancel: cancel
+      }
+    );
+    return { result, requests, steps, commits, handlers };
+  }
+
+  const toolResults = request =>
+    Object.fromEntries(
+      request.messages
+        .filter(message => message.role === 'tool')
+        .map(message => [message.tool_call_id, message.content])
+    );
+
+  test('omitted results repeat each call’s own outcome and never claim a write completed', async () => {
+    const { result, requests, steps, handlers } = await run({
+      heavy: true,
+      guard: async ({ orderId }) => orderId === '2210',
+      // The handler returns, but the business answer is a rejected refund.
+      refundResult: { status: 'rejected' },
+      replies: [
+        native(
+          ['call-denied', 'refund', { orderId: '3307', amount: 40 }],
+          ['call-allowed', 'refund', { orderId: '2210', amount: 89 }],
+          ['call-invalid', 'refund', { orderId: 2210 }],
+          ['call-read', 'searchOrders', {}]
+        ),
+        { content: 'Done.' }
+      ]
+    });
+    expect(result.run.status).toBe('succeeded');
+    expect(requests).toHaveLength(2);
+    expect(steps).toContainEqual(
+      expect.objectContaining({
+        kind: 'context',
+        payload: expect.objectContaining({
+          truncated: expect.objectContaining({ toolResults: expect.any(Number) })
+        })
+      })
+    );
+    const next = toolResults(requests[1]);
+    expect(Object.keys(next).sort()).toEqual([
+      'call-allowed',
+      'call-denied',
+      'call-invalid',
+      'call-read'
+    ]);
+    expect(JSON.parse(next['call-denied'])).toMatchObject({ error: 'guard_rejected' });
+    expect(JSON.parse(next['call-invalid'])).toMatchObject({ error: 'invalid_action_input' });
+    // The allowed call either keeps its real result or says only that the handler returned.
+    const allowed = JSON.parse(next['call-allowed']);
+    expect(
+      allowed.status === 'rejected' ||
+        (allowed.status === 'handler_completed' && allowed.resultOmitted === true)
+    ).toBe(true);
+    expect(JSON.parse(next['call-read'])).toMatchObject({
+      status: 'handler_completed',
+      resultOmitted: true
+    });
+    for (const content of Object.values(next)) {
+      expect(content).not.toContain('succeeded');
+      expect(content).not.toContain('write completed');
+    }
+    expect(handlers.refund).toHaveBeenCalledTimes(1);
+    expect(handlers.refund.mock.calls[0][0]).toEqual({ orderId: '2210', amount: 89 });
+  });
+
+  test.each([
+    ['during the context refresh before the guard', { onContext: cancel => cancel() }],
+    [
+      'while the guard decision is recorded',
+      { onStep: (step, cancel) => step.kind === 'guard' && cancel() }
+    ],
+    [
+      'while the action step is being started',
+      {
+        onStep: (step, cancel) => step.kind === 'action' && step.status === 'started' && cancel()
+      }
+    ]
+  ])('a cancellation %s never reaches the handler', async (_gap, hooks) => {
+    const guard = jest.fn(async () => true);
+    const { result, steps, handlers } = await run({
+      ...hooks,
+      guard,
+      replies: [native(['call-1', 'refund', { orderId: '2210', amount: 89 }]), { content: 'x' }]
+    });
+    expect(handlers.refund).not.toHaveBeenCalled();
+    expect(result.run.status).toBe('cancelled');
+    expect(result.run.errorCode).toBe('run_cancelled');
+    const actions = steps.filter(step => step.kind === 'action');
+    if (actions.length) expect(actions.at(-1).status).toBe('cancelled');
+    expect(steps.some(step => step.kind === 'action' && step.status === 'unknown')).toBe(false);
+  });
+
+  test('a cancellation while the guard runs is not recorded as a guard error', async () => {
+    let cancelRun;
+    const { result, steps, handlers } = await run({
+      onContext: cancel => {
+        cancelRun = cancel;
+      },
+      guard: async () => {
+        cancelRun();
+        return true;
+      },
+      replies: [native(['call-1', 'refund', { orderId: '2210', amount: 89 }]), { content: 'x' }]
+    });
+    expect(handlers.refund).not.toHaveBeenCalled();
+    expect(result.run.status).toBe('cancelled');
+    expect(steps.some(step => step.payload?.reasonCode === 'guard_error')).toBe(false);
+  });
+
+  test('a cancellation after the handler started leaves the write unknown, without rollback', async () => {
+    const actions = [refund];
+    const steps = [];
+    const controller = new AbortController();
+    const state = { cancelled: false };
+    const cancelRun = () => {
+      state.cancelled = true;
+      controller.abort();
+    };
+    const handler = jest.fn(async () => {
+      cancelRun();
+      return new Promise(() => {});
+    });
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      actions: [{ ...refund, handler }],
+      modelFetchImpl: async () =>
+        new globalThis.Response(
+          JSON.stringify({
+            choices: [{ message: native(['call-1', 'refund', { orderId: '2210', amount: 89 }]) }]
+          })
+        )
+    });
+    executor._lease = jest.fn(async () => ({
+      expiresAt: new Date(Date.now() + 30000),
+      disabledActions: []
+    }));
+    executor._context = jest.fn(async () => ({
+      spaceContext: [],
+      agentContext: [],
+      agentMemory: [],
+      disabledActions: []
+    }));
+    executor._stepWithRetry = jest.fn(async (_run, _token, step) =>
+      steps.push(structuredClone(step))
+    );
+    executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => ({ run: body }));
+    const result = await executor._processActionJob(
+      {
+        run: {
+          id: runId,
+          agentId,
+          input: 'Refund',
+          deadlineAt: new Date(Date.now() + 180000).toISOString()
+        },
+        template: { config: { ...config, actions } },
+        actions: actions.map(action => ({ ...action, contractHash: actionContractHash(action) })),
+        actionManifestHash: hashJson(
+          actions.map(action => ({ name: action.name, contractHash: actionContractHash(action) }))
+        ),
+        spaceContext: [],
+        conversation: { id: conversationId, version: 0, messages: [] }
+      },
+      `np_lease_${'B'.repeat(43)}`,
+      executor.credentials.localModel,
+      controller,
+      {
+        expiresAt: () => Date.now() + 30000,
+        lost: () => false,
+        cancelled: () => state.cancelled,
+        requestCancel: cancelRun
+      }
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(result.run.status).toBe('cancelled');
+    const action = steps.filter(step => step.kind === 'action').at(-1);
+    expect(action.status).toBe('unknown');
+  });
+
+  test.each([
+    ['after the run was cancelled', true],
+    ['in a running run', false]
+  ])(
+    'a guard that throws synchronously %s leaves no unhandled rejection',
+    async (_case, cancelled) => {
+      const unhandled = [];
+      const listener = reason => unhandled.push(reason);
+      process.on('unhandledRejection', listener);
+      try {
+        const { result, handlers } = await run({
+          ...(cancelled ? { onContext: cancel => cancel() } : {}),
+          guard: () => {
+            throw new Error('policy service down');
+          },
+          replies: [native(['call-1', 'refund', { orderId: '2210', amount: 89 }]), { content: 'x' }]
+        });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(result.run.errorCode).toBe(cancelled ? 'run_cancelled' : 'guard_error');
+        expect(handlers.refund).not.toHaveBeenCalled();
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', listener);
+      }
+    }
+  );
 });
