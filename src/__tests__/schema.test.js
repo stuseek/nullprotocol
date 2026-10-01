@@ -56,6 +56,25 @@ describe('extraction schemas', () => {
 });
 
 describe('the validator cache', () => {
+  test('evicting a replaced schema keeps the $id of the schema that replaced it', () => {
+    jest.isolateModules(() => {
+      const { validatorFor } = require('../schema');
+      const id = 'https://example.test/order';
+      const object = idType => ({
+        $id: id,
+        type: 'object',
+        properties: { id: { type: idType } },
+        required: ['id']
+      });
+      validatorFor(object('string'));
+      validatorFor(object('number'));
+      for (let index = 0; index < 99; index++) validatorFor({ [`f${index}`]: 'string' });
+      const byRef = validatorFor({ $ref: id });
+      expect(byRef({ id: 5 })).toBe(true);
+      expect(byRef({ id: 'a' })).toBe(false);
+    });
+  });
+
   test('stays bounded in Ajv, and a schema with $id still compiles after eviction', () => {
     jest.isolateModules(() => {
       const IsolatedAjv = require('ajv');

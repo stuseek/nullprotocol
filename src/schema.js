@@ -64,20 +64,22 @@ function readSchema(value, marks) {
   ) {
     return value;
   }
-  let shorthandError;
   try {
-    const properties = {};
-    for (const [name, descriptor] of Object.entries(value)) {
-      if (typeof descriptor === 'string') properties[name] = typeSchema(descriptor);
-      else if (isPlainObject(descriptor)) properties[name] = readSchema(descriptor, FIELD_MARKS);
-      else throw new Error('Schema fields must be a type name or a JSON Schema object');
-    }
-    return { type: 'object', properties, required: keys };
+    return readShorthand(value);
   } catch (error) {
-    shorthandError = error;
+    if (keys.some(key => KEYWORDS.has(key)) && ajv.validateSchema(value)) return value;
+    throw error;
   }
-  if (keys.some(key => KEYWORDS.has(key)) && ajv.validateSchema(value)) return value;
-  throw shorthandError;
+}
+
+function readShorthand(value) {
+  const properties = {};
+  for (const [name, descriptor] of Object.entries(value)) {
+    if (typeof descriptor === 'string') properties[name] = typeSchema(descriptor);
+    else if (isPlainObject(descriptor)) properties[name] = readSchema(descriptor, FIELD_MARKS);
+    else throw new Error('Schema fields must be a type name or a JSON Schema object');
+  }
+  return { type: 'object', properties, required: Object.keys(value) };
 }
 
 function toJsonSchema(schema) {
@@ -85,21 +87,20 @@ function toJsonSchema(schema) {
   return readSchema(schema, TOP_LEVEL_MARKS);
 }
 
-// Compiled validators, least recently used first. Evicting a validator also
-// removes its schema from Ajv, so Ajv's own cache stays bounded and a schema's
-// $id can be compiled again later.
+// Compiled validators, least recently used first, and which cached schema holds
+// each $id. Ajv registers a schema under its $id, so the cache keeps at most one
+// schema per $id: a new schema with the same $id replaces the old one. Removing
+// a schema from Ajv on eviction then never drops another schema's $id, and
+// Ajv's own cache stays as bounded as this one.
 const MAX_VALIDATORS = 100;
 const validators = new Map();
+const idOwners = new Map();
 
-function compile(jsonSchema) {
-  try {
-    return ajv.compile(jsonSchema);
-  } catch (error) {
-    // Another schema with the same $id is still registered; this one replaces it.
-    if (!jsonSchema.$id || !ajv.getSchema(jsonSchema.$id)) throw error;
-    ajv.removeSchema(jsonSchema.$id);
-    return ajv.compile(jsonSchema);
-  }
+function evict(key) {
+  const entry = validators.get(key);
+  validators.delete(key);
+  if (entry.schema.$id) idOwners.delete(entry.schema.$id);
+  ajv.removeSchema(entry.schema);
 }
 
 // The validator for an extraction schema; throws for an invalid schema, before any model call.
@@ -112,13 +113,12 @@ function validatorFor(schema) {
     validators.set(key, cached);
     return cached.validate;
   }
-  const validate = compile(jsonSchema);
-  if (validators.size >= MAX_VALIDATORS) {
-    const [oldestKey, oldest] = validators.entries().next().value;
-    validators.delete(oldestKey);
-    ajv.removeSchema(oldest.schema);
-  }
+  const owner = jsonSchema.$id && idOwners.get(jsonSchema.$id);
+  if (owner) evict(owner);
+  const validate = ajv.compile(jsonSchema);
+  if (validators.size >= MAX_VALIDATORS) evict(validators.keys().next().value);
   validators.set(key, { schema: jsonSchema, validate });
+  if (jsonSchema.$id) idOwners.set(jsonSchema.$id, key);
   return validate;
 }
 
