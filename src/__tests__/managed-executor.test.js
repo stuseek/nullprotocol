@@ -1461,7 +1461,15 @@ describe('what the model is told and what runs after truncation or cancellation'
     }))
   };
 
-  async function run({ replies, guard, refundResult, heavy = false, onStep, onContext }) {
+  async function run({
+    replies,
+    guard,
+    refundResult,
+    refundHandler,
+    heavy = false,
+    onStep,
+    onContext
+  }) {
     const actions = [refund, search];
     const requests = [];
     const steps = [];
@@ -1473,7 +1481,7 @@ describe('what the model is told and what runs after truncation or cancellation'
       controller.abort();
     };
     const handlers = {
-      refund: jest.fn(async () => refundResult ?? { status: 'refunded' }),
+      refund: jest.fn(refundHandler ?? (async () => refundResult ?? { status: 'refunded' })),
       searchOrders: jest.fn(async () => ({ data: 'x'.repeat(60000) }))
     };
     const executor = new ManagedExecutor({
@@ -1710,6 +1718,21 @@ describe('what the model is told and what runs after truncation or cancellation'
     expect(result.run.status).toBe('cancelled');
     const action = steps.filter(step => step.kind === 'action').at(-1);
     expect(action.status).toBe('unknown');
+  });
+
+  test('a started handler whose own error carries notStarted still leaves the write unknown', async () => {
+    const { result, steps, handlers } = await run({
+      guard: async () => true,
+      refundHandler: async () => {
+        const error = new Error('payment service timed out');
+        error.notStarted = true;
+        throw error;
+      },
+      replies: [native(['call-1', 'refund', { orderId: '2210', amount: 89 }]), { content: 'x' }]
+    });
+    expect(handlers.refund).toHaveBeenCalledTimes(1);
+    expect(steps.filter(step => step.kind === 'action').at(-1).status).toBe('unknown');
+    expect(result.run.errorCode).toBe('action_outcome_unknown');
   });
 
   test.each([

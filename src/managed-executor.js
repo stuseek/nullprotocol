@@ -1097,7 +1097,7 @@ class ManagedExecutor {
               if (!allowed) reasonCode = 'guard_rejected';
             } catch (error) {
               // A cancelled run is not a guard failure; the call never reaches its handler.
-              if (error.code === 'run_cancelled' || controller.signal.aborted) throw error;
+              if (error?.code === 'run_cancelled' || controller.signal.aborted) throw error;
               reasonCode = 'guard_error';
             }
             await this._stepWithRetry(
@@ -1164,13 +1164,14 @@ class ManagedExecutor {
             const code = failureCode(error);
             // A handler that never started did nothing. Once it has started, a write's
             // outcome is unknown, even if the run was cancelled meanwhile.
-            const status = error.notStarted
-              ? 'cancelled'
-              : entry.contract.effect === 'write'
-                ? 'unknown'
-                : leaseState.cancelled()
-                  ? 'cancelled'
-                  : 'failed';
+            const status =
+              error instanceof NotStartedError
+                ? 'cancelled'
+                : entry.contract.effect === 'write'
+                  ? 'unknown'
+                  : leaseState.cancelled()
+                    ? 'cancelled'
+                    : 'failed';
             await finishStep(actionStep, status, {
               name: call.name,
               effect: entry.contract.effect,
