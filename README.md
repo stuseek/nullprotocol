@@ -295,8 +295,6 @@ Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events
 
 ## Pause and stop from the cabinet
 
-> Not in `nullprotocol@1.1.0`; this is on the `claude/in-app-control` branch.
-
 A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Telemetry → Connections**:
 
 ```js
@@ -350,7 +348,7 @@ Optionally, an agent can keep a conversation: give it `mode: 'stateful'` and the
 | Conversation history in one process | `store: new MemorySessionStore()`; history is lost on restart |
 | Shared or persistent sessions across processes | Your PostgreSQL with `new PostgresSessionStore(pool)` |
 
-The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.1.0 nullprotocol-serve --config ./agents.js`.
+The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.2.0 nullprotocol-serve --config ./agents.js`.
 
 <details>
 <summary>Multiple processes and runtime controls</summary>
