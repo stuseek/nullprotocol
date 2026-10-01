@@ -27,8 +27,11 @@ function modelSettings({ provider, model, apiKey, baseURL }) {
     );
   }
   const spec = PROVIDERS[provider];
-  if (typeof model !== 'string' || !model) {
+  if (typeof model !== 'string' || !model.trim()) {
     throw new Error(`provider ${provider} needs model, the name of the model to call`);
+  }
+  if (apiKey !== undefined && (typeof apiKey !== 'string' || !apiKey)) {
+    throw new Error('apiKey must be a nonempty string');
   }
   if (spec.keyEnv) {
     if (baseURL !== undefined) {

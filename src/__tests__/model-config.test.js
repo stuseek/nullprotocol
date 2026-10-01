@@ -148,6 +148,24 @@ describe('cloud providers', () => {
     expect(local.clients.openai.baseURL).toBe('http://localhost:11434/v1');
   });
 
+  test('a missing provider SDK is reported as it is, not as a later missing engine', () => {
+    jest.doMock('@anthropic-ai/sdk', () => {
+      throw Object.assign(new Error("Cannot find module '@anthropic-ai/sdk'"), {
+        code: 'MODULE_NOT_FOUND'
+      });
+    });
+    try {
+      jest.isolateModules(() => {
+        const Isolated = require('../index');
+        expect(() => new Isolated({ provider: 'anthropic', model: 'm', apiKey: 'k' })).toThrow(
+          "Cannot find module '@anthropic-ai/sdk'"
+        );
+      });
+    } finally {
+      jest.dontMock('@anthropic-ai/sdk');
+    }
+  });
+
   test('anthropic reads ANTHROPIC_API_KEY, not the OpenAI key', () => {
     process.env.OPENAI_API_KEY = 'sk-openai';
     expect(() => new NullProtocol({ provider: 'anthropic', model: 'claude-sonnet-5' })).toThrow(
@@ -168,6 +186,11 @@ describe('configuration errors before any request', () => {
       'Unknown provider "constructor"'
     ],
     [{ provider: 'openai-compatible', baseURL: 'http://localhost:11434/v1' }, 'needs model'],
+    [{ provider: 'openai-compatible', baseURL: 'http://x/v1', model: '  ' }, 'needs model'],
+    [
+      { provider: 'openai-compatible', baseURL: 'http://x/v1', model: 'm', apiKey: 17 },
+      'apiKey must be a nonempty string'
+    ],
     [{ provider: 'openai-compatible', model: 'm' }, 'needs baseURL'],
     [{ provider: 'openai-compatible', model: 'm', baseURL: 'localhost:11434' }, 'needs baseURL'],
     [

@@ -587,7 +587,9 @@ class AIToolkit {
           maxRetries: 0,
           ...(keyless ? { defaultHeaders: { Authorization: null } } : {})
         });
-      } catch {
+      } catch (error) {
+        // With provider the client is required, so its own error is the answer.
+        if (this.config.provider) throw error;
         console.warn('OpenAI SDK not installed. Run: npm install openai');
       }
     }
@@ -603,7 +605,8 @@ class AIToolkit {
             : {}),
           maxRetries: 0
         });
-      } catch {
+      } catch (error) {
+        if (this.config.provider) throw error;
         console.warn('Anthropic SDK not installed. Run: npm install @anthropic-ai/sdk');
       }
     }
