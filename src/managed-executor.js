@@ -460,7 +460,7 @@ class ManagedExecutor {
     const path = await this._path('');
     const response = await this.transport.request('PUT', path, {
       body: {
-        sdkVersion: '3.0.0-dev',
+        sdkVersion: require('../package.json').version,
         agents: this.agentIds,
         actions: this.actionRegistry.manifest(),
         models: Object.entries(this.credentials).map(([credentialRef, value]) => ({

@@ -11,7 +11,7 @@ Four small scripts that run one order-support Agent with a local model:
 
 ## Before you start
 
-- Node 18 or later and a clone of this repository with `npm install`. The connected SDK is not published to npm.
+- Node 18 or later and `npm install nullprotocol`. The scripts ship with the package; run them from `node_modules/nullprotocol` (the commands below are relative to it) or from a clone of this repository.
 - A team with managed Agents enabled.
 - An OpenAI-compatible model endpoint. With Ollama: `ollama pull qwen2.5:7b-instruct`, endpoint `http://127.0.0.1:11434/v1`. Managed executors do not call the Anthropic API natively yet.
 

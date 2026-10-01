@@ -37,10 +37,7 @@ for (let i = 0; i < args.length; i++) {
     console.log(`nullprotocol-serve — run model operations as HTTP endpoints
 
 Usage:
-  npx nullprotocol-serve [options]
-
-Install this source release from GitHub before running the command.
-The package is not published to npm yet.
+  npx --package=nullprotocol nullprotocol-serve [options]
 
 Options:
   --port <n>       Port to listen on (default: 3000)

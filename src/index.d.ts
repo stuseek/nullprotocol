@@ -556,7 +556,6 @@ export function defineAgent(options: AgentDefinition): AgentDefinition;
 export function serveAgents(options: AgentServerOptions): AgentServer;
 export function serve(options: AgentServerOptions): AgentServer;
 
-/** Connected Space client under development; the legacy NullProtocol constructor is unchanged in 2.x. */
 export interface ManagedRun {
   id: string;
   agentId: string;
