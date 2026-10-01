@@ -257,23 +257,32 @@ class TelemetryClient {
         }
       };
 
-      const cleanup = () => {
+      let settled = false;
+      const settle = (error, result) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         this.pendingRequests.delete(req);
+        if (error) reject(error);
+        else resolve(result);
       };
       const req = https.request(options, res => {
         let body = '';
         res.on('data', chunk => (body += chunk));
+        res.on('error', error => settle(error));
+        // A response cut off mid-body ends with close but no end.
+        res.on('close', () => {
+          if (!res.complete) settle(new Error('Telemetry response was cut off'));
+        });
         res.on('end', () => {
-          cleanup();
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve({ status: res.statusCode, body });
-          } else {
-            const error = new Error(`Telemetry failed: ${res.statusCode}`);
-            error.status = res.statusCode;
-            error.retryAfter = Number(res.headers['retry-after']) || 0;
-            reject(error);
+            settle(null, { status: res.statusCode, body });
+            return;
           }
+          const error = new Error(`Telemetry failed: ${res.statusCode}`);
+          error.status = res.statusCode;
+          error.retryAfter = Number(res.headers['retry-after']) || 0;
+          settle(error);
         });
       });
 
@@ -281,10 +290,7 @@ class TelemetryClient {
       timer.unref();
 
       this.pendingRequests.add(req);
-      req.on('error', error => {
-        cleanup();
-        reject(error);
-      });
+      req.on('error', error => settle(error));
       req.setTimeout(15000, () => req.destroy(new Error('Telemetry request timed out')));
       req.write(data);
       req.end();

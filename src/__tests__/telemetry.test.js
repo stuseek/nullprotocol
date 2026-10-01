@@ -1,5 +1,6 @@
 const { TelemetryClient } = require('../telemetry');
 const AIToolkit = require('../index');
+const http = require('http');
 const https = require('https');
 const { EventEmitter } = require('events');
 const activeOptions = { token: 'test', endpoint: 'https://test.endpoint' };
@@ -387,6 +388,76 @@ describe('TelemetryClient', () => {
     expect(() => new TelemetryClient({ token: 'test', endpoint: 'http://example.test' })).toThrow(
       'HTTPS'
     );
+  });
+
+  describe('a response cut off mid-body', () => {
+    // A real HTTP server; only the TLS layer is skipped by sending https requests over plain http.
+    async function withServer(handle, run) {
+      jest.useRealTimers();
+      const server = http.createServer(handle);
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address();
+      const requestSpy = jest
+        .spyOn(https, 'request')
+        .mockImplementation((options, onResponse) =>
+          http.request({ ...options, hostname: '127.0.0.1', port }, onResponse)
+        );
+      try {
+        await run();
+      } finally {
+        requestSpy.mockRestore();
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+    }
+
+    test('fails the flush, keeps the events and sends them on retry', async () => {
+      let requests = 0;
+      await withServer(
+        (req, res) => {
+          requests++;
+          req.resume();
+          if (requests === 1) {
+            res.writeHead(200, { 'Content-Length': '100' });
+            res.write('{"acc');
+            setTimeout(() => res.destroy(), 10);
+            return;
+          }
+          res.end('{}');
+        },
+        async () => {
+          client = new TelemetryClient(activeOptions);
+          client.track('chat', { success: true });
+          await client.flush();
+          expect(client.queue).toHaveLength(1);
+          expect(client.failures).toBe(1);
+          expect(client.pendingRequests.size).toBe(0);
+          await client.flush(true);
+          expect(requests).toBe(2);
+          expect(client.queue).toHaveLength(0);
+        }
+      );
+    });
+
+    test('destroy closes a response that stopped sending', async () => {
+      await withServer(
+        (req, res) => {
+          req.resume();
+          res.writeHead(200, { 'Content-Length': '100' });
+          res.write('{"acc');
+        },
+        async () => {
+          client = new TelemetryClient(activeOptions);
+          client.track('chat', { success: true });
+          const flushed = client.flush();
+          await new Promise(resolve => setTimeout(resolve, 30));
+          await client.destroy({ timeoutMs: 20 });
+          await flushed;
+          expect(client.pendingRequests.size).toBe(0);
+          expect(client.flushing).toBeNull();
+        }
+      );
+    });
   });
 
   describe('destroy', () => {
