@@ -1,7 +1,7 @@
 {
   "name": "nullprotocol",
-  "version": "1.2.1",
-  "description": "Reliable Node.js AI building blocks for affordable and local models",
+  "version": "1.3.0",
+  "description": "AI call telemetry, runtime control and primitives for Node.js",
   "main": "src/index.js",
   "scripts": {
     "test": "jest",
@@ -33,7 +33,9 @@
     "llm",
     "gpt",
     "claude",
-    "primitives"
+    "primitives",
+    "telemetry",
+    "observability"
   ],
   "homepage": "https://github.com/stuseek/nullprotocol#readme",
   "repository": {

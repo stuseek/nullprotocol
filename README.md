@@ -2,7 +2,7 @@
 
 # NullProtocol
 
-A Node.js SDK for the AI steps in your application. `extract` validates the model's output against a JSON Schema, and `decide` limits it to the actions you allow and checks it with your guard; requests have timeouts and bounded retries where supported (a stream is not retried), and `chat` bounds its tool calls. Connected to a NullProtocol Space, a client's calls appear in Activity and the cabinet can pause or stop it. The same SDK runs without an account and also connects managed Agents.
+A Node.js SDK that shows your application's AI calls in Activity and lets the cabinet pause or stop them, with your existing OpenAI client or the SDK's own operations. Those operations check model output: `extract` validates it against a JSON Schema, and `decide` limits it to the actions you allow and checks it with your guard; requests have timeouts and bounded retries where supported (a stream is not retried), and `chat` bounds its tool calls. The same SDK runs without an account and also connects managed Agents.
 
 [![CI](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml/badge.svg)](https://github.com/stuseek/nullprotocol/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-205c42)](LICENSE)
 
@@ -14,51 +14,13 @@ The library is MIT licensed. Telemetry, control, shared Space context and manage
 npm install nullprotocol 'openai@^4.104.0'
 ```
 
+With an existing OpenAI client (`openai` 4 to 7), `npm install nullprotocol` is enough: `connectOpenAI` uses your client and installs no second OpenAI SDK.
+
 Node.js 18 or newer is required. The pinned OpenAI SDK works on Node 18; on Node 22 you can install the current one. Install `@anthropic-ai/sdk` instead if you use Anthropic.
 
 ## Connect your application
 
-Give each AI step in your code an `agentId` and connect it to a Space. Its calls then appear in Activity under that ID, and the cabinet can pause or stop it:
-
-```js
-import { NullProtocol } from 'nullprotocol';
-
-const support = new NullProtocol({
-  agentId: 'support',
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct',
-  telemetry: true,
-  telemetryEndpoint: 'https://api.nullprotocol.ai',
-  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY,
-  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
-  runtimeEndpoint: 'https://api.nullprotocol.ai'
-});
-
-try {
-  const result = await support.extract('Order 42: two blue mugs', {
-    orderId: 'number',
-    quantity: 'number',
-    item: 'string'
-  });
-  console.log(result);
-} finally {
-  await support.close(); // sends buffered events and releases the control connection
-}
-```
-
-The ingest and runtime keys come from **Connect** in the cabinet. For `extract` and `decide`, each model request is one `ai_request` event with the model's name, and the operation sends one final event, also when it fails with an error; all share one run ID. `chat` with tools reports one `ai_request` for all its tool rounds. Activity holds metadata only: prompts, replies and the failing field stay in your application's result.
-
-| Activity shows | What happened |
-| --- | --- |
-| `ai_request` failed with `timeout`, `rate_limited` or `provider_error`, and `extract` or `decide` with the same code | The model request failed |
-| `ai_request` succeeded, then `extract` or `decide` with `schema_mismatch` | The model answered and the answer did not pass the check; each attempt, including a repair turn, is its own `ai_request` |
-| `ai_request` succeeded, then `decide` with `guard_rejected` | Your guard refused the model's choice |
-| `extract` or `decide` with `config_error` and no `ai_request` | The input failed before any model request, such as an invalid schema |
-| An operation with `agent_paused` and no `ai_request` | The agent is paused in the cabinet |
-| `ai_request` and `extract` or `decide` with `aborted` | The request was cancelled, for example by Stop in the cabinet |
-
-Without the telemetry and runtime settings the same client runs locally with no account; see [Local primitives](#local-primitives).
+Give each AI step in your code an `agentId` and connect it to a Space: its calls appear in Activity under that ID, and the cabinet can pause or stop it. Create the keys under **Connect** in the cabinet: an ingest key for telemetry and, for pause and stop, a runtime key.
 
 ### An existing OpenAI client
 
@@ -90,13 +52,55 @@ try {
 }
 ```
 
-Create both keys under **Connect** in the cabinet: the ingest key for `telemetryKey` and, if you want pause and stop, a runtime key.
-
 - `create` passes the parameters to your client unchanged, and the request options too except `signal`, which it combines with stop and `close()`. It returns your client's completion, or throws its error, as they are. The client's retries, timeout and defaults stay as you set them.
 - It returns a plain Promise, so `.withResponse()` and `.asResponse()` are not available; call your client directly for those, and that call is not reported.
 - With `stream: true` it returns an async iterable of the SDK's chunks, not the SDK's `Stream`: there is no `controller`, `tee()` or `toReadableStream()`. Leaving the loop early closes the connection.
 - Each call is one `model.call` event in Activity with the requested model, its duration, the token counts the provider reported and, on failure, `aborted`, `rate_limited`, `timeout`, `provider_error` or `internal`. A completed call means the model request completed; nothing checks the reply. No prompt or reply is sent.
 - With a runtime key, a paused agent's `create` throws a `ControlError` without sending a request, and Stop cancels the `create` calls in flight, streams included. It does not stop your code between calls, such as running tools: a loop ends when its next `create` is refused.
+
+### With the SDK's operations
+
+With the SDK's own operations, give each client an `agentId` and the same settings:
+
+```js
+import { NullProtocol } from 'nullprotocol';
+
+const support = new NullProtocol({
+  agentId: 'support',
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  telemetry: true,
+  telemetryEndpoint: 'https://api.nullprotocol.ai',
+  telemetryKey: process.env.NULLPROTOCOL_TELEMETRY_KEY,
+  runtimeKey: process.env.NULLPROTOCOL_RUNTIME_KEY,
+  runtimeEndpoint: 'https://api.nullprotocol.ai'
+});
+
+try {
+  const result = await support.extract('Order 42: two blue mugs', {
+    orderId: 'number',
+    quantity: 'number',
+    item: 'string'
+  });
+  console.log(result);
+} finally {
+  await support.close(); // sends buffered events and releases the control connection
+}
+```
+
+For `extract` and `decide`, each model request is one `ai_request` event with the model's name, and the operation sends one final event, also when it fails with an error; all share one run ID. `chat` with tools reports one `ai_request` for all its tool rounds. Activity holds metadata only: prompts, replies and the failing field stay in your application's result.
+
+| Activity shows | What happened |
+| --- | --- |
+| `ai_request` failed with `timeout`, `rate_limited` or `provider_error`, and `extract` or `decide` with the same code | The model request failed |
+| `ai_request` succeeded, then `extract` or `decide` with `schema_mismatch` | The model answered and the answer did not pass the check; each attempt, including a repair turn, is its own `ai_request` |
+| `ai_request` succeeded, then `decide` with `guard_rejected` | Your guard refused the model's choice |
+| `extract` or `decide` with `config_error` and no `ai_request` | The input failed before any model request, such as an invalid schema |
+| An operation with `agent_paused` and no `ai_request` | The agent is paused in the cabinet |
+| `ai_request` and `extract` or `decide` with `aborted` | The request was cancelled, for example by Stop in the cabinet |
+
+Without the telemetry and runtime settings the same client runs locally with no account; see [Local primitives](#local-primitives).
 
 ## What needs a NullProtocol account
 
@@ -411,7 +415,7 @@ Optionally, an agent can keep a conversation: give it `mode: 'stateful'` and the
 | Conversation history in one process | `store: new MemorySessionStore()`; history is lost on restart |
 | Shared or persistent sessions across processes | Your PostgreSQL with `new PostgresSessionStore(pool)` |
 
-The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.2.1 nullprotocol-serve --config ./agents.js`.
+The CLI runs an exported configuration from a project where the package is installed: `npx --package=nullprotocol@1.3.0 nullprotocol-serve --config ./agents.js`.
 
 <details>
 <summary>Multiple processes and runtime controls</summary>

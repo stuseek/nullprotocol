@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- `connectOpenAI(client, options)` from `nullprotocol/openai` reports an existing OpenAI client's `chat.completions.create` calls to Activity, one `model.call` event each, and with a runtime key lets the cabinet pause and stop them. Parameters, completions and errors stay the SDK's own; a stream comes back as an async iterable of its chunks. Works with `openai` 4 to 7.
+- The package declares its entry points: `nullprotocol`, `nullprotocol/openai` and `nullprotocol/package.json`. Imports of other files inside the package no longer resolve.
+- The README starts with connecting an existing OpenAI client.
+
 ## 1.2.1
 
 - Telemetry names the model of every model request and reports its own failure: `timeout`, `rate_limited`, `aborted` or `provider_error`.
