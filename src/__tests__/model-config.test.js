@@ -11,7 +11,9 @@ const ENV = [
   'ANTHROPIC_API_KEY',
   'AI_DEFAULT_ENGINE',
   'AI_MODEL_OPENAI',
-  'NULLPROTOCOL_OPENAI_BASE_URL'
+  'NULLPROTOCOL_OPENAI_BASE_URL',
+  'OPENAI_BASE_URL',
+  'ANTHROPIC_BASE_URL'
 ];
 let savedEnv;
 beforeEach(() => {
@@ -131,6 +133,21 @@ describe('cloud providers', () => {
     expect(explicit.clients.openai.apiKey).toBe('sk-given');
   });
 
+  test('cloud providers call their own endpoint whatever the SDK variables say', () => {
+    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:9/v1';
+    process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9';
+    const openai = new NullProtocol({ provider: 'openai', model: 'm', apiKey: 'k' });
+    expect(openai.clients.openai.baseURL).toBe('https://api.openai.com/v1');
+    const anthropic = new NullProtocol({ provider: 'anthropic', model: 'm', apiKey: 'k' });
+    expect(anthropic.clients.anthropic.baseURL).toBe('https://api.anthropic.com');
+    const local = new NullProtocol({
+      provider: 'openai-compatible',
+      model: 'm',
+      baseURL: 'http://localhost:11434/v1'
+    });
+    expect(local.clients.openai.baseURL).toBe('http://localhost:11434/v1');
+  });
+
   test('anthropic reads ANTHROPIC_API_KEY, not the OpenAI key', () => {
     process.env.OPENAI_API_KEY = 'sk-openai';
     expect(() => new NullProtocol({ provider: 'anthropic', model: 'claude-sonnet-5' })).toThrow(
@@ -146,6 +163,10 @@ describe('cloud providers', () => {
 describe('configuration errors before any request', () => {
   test.each([
     [{ provider: 'ollama', model: 'm' }, 'Unknown provider "ollama"'],
+    [
+      { provider: 'constructor', model: 'm', baseURL: 'http://x/v1' },
+      'Unknown provider "constructor"'
+    ],
     [{ provider: 'openai-compatible', baseURL: 'http://localhost:11434/v1' }, 'needs model'],
     [{ provider: 'openai-compatible', model: 'm' }, 'needs baseURL'],
     [{ provider: 'openai-compatible', model: 'm', baseURL: 'localhost:11434' }, 'needs baseURL'],
@@ -215,6 +236,19 @@ test('options override the config file field by field', async () => {
 });
 
 describe('copies keep the effective configuration', () => {
+  test('without reading the config file again', () => {
+    const config = writeConfig({
+      provider: 'openai-compatible',
+      baseURL: 'http://localhost:11434/v1',
+      model: 'file-model'
+    });
+    const ai = new NullProtocol({ configFile: config.file });
+    config.remove();
+    const copy = ai.withContext('More.');
+    expect(copy.clients.openai.baseURL).toBe('http://localhost:11434/v1');
+    expect(copy._resolveModel(undefined, 'openai')).toBe('file-model');
+  });
+
   test('with provider', async () => {
     const server = await recorder();
     try {

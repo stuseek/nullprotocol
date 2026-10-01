@@ -1,6 +1,6 @@
 /** Core library for model requests, structured output, and tool calls. */
 
-const { ConfigLoader, configCopy } = require('./config');
+const { ConfigLoader, configCopy, PROVIDERS } = require('./config');
 const { TelemetryClient } = require('./telemetry');
 const { SpaceContextClient, SpaceContextError } = require('./space-context');
 const { ActionExecutor, ConfirmationRequiredError } = require('./executor');
@@ -598,6 +598,9 @@ class AIToolkit {
         const Anthropic = AnthropicModule.default || AnthropicModule;
         this.clients.anthropic = new Anthropic({
           apiKey: this.engines.anthropic,
+          ...(this.config.provider === 'anthropic'
+            ? { baseURL: PROVIDERS.anthropic.endpoint }
+            : {}),
           maxRetries: 0
         });
       } catch {

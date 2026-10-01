@@ -6,21 +6,27 @@ const path = require('path');
 // The model settings a constructor takes: `provider` picks the protocol, `model`
 // is the name sent to it. They map onto the engine settings the client already
 // uses, so the rest of the library does not need to know which form was used.
+// Cloud providers name their endpoint so the SDKs cannot take another one from
+// OPENAI_BASE_URL or ANTHROPIC_BASE_URL.
 const PROVIDERS = {
-  openai: { engine: 'openai', keyEnv: 'OPENAI_API_KEY' },
-  anthropic: { engine: 'anthropic', keyEnv: 'ANTHROPIC_API_KEY' },
+  openai: { engine: 'openai', keyEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1' },
+  anthropic: {
+    engine: 'anthropic',
+    keyEnv: 'ANTHROPIC_API_KEY',
+    endpoint: 'https://api.anthropic.com'
+  },
   'openai-compatible': { engine: 'openai' }
 };
 const MODEL_FIELDS = ['provider', 'model', 'apiKey', 'baseURL'];
 const ENGINE_FIELDS = ['engines', 'models', 'defaultEngine', 'openaiBaseURL'];
 
 function modelSettings({ provider, model, apiKey, baseURL }) {
-  const spec = PROVIDERS[provider];
-  if (!spec) {
+  if (!Object.hasOwn(PROVIDERS, provider)) {
     throw new Error(
       `Unknown provider ${JSON.stringify(provider)}. Use openai, anthropic or openai-compatible.`
     );
   }
+  const spec = PROVIDERS[provider];
   if (typeof model !== 'string' || !model) {
     throw new Error(`provider ${provider} needs model, the name of the model to call`);
   }
@@ -35,7 +41,7 @@ function modelSettings({ provider, model, apiKey, baseURL }) {
     // A cloud key is read from its own variable only for its own provider.
     const key = apiKey ?? process.env[spec.keyEnv];
     if (!key) throw new Error(`provider ${provider} needs apiKey or ${spec.keyEnv}`);
-    return { engine: spec.engine, model, apiKey: key };
+    return { engine: spec.engine, model, apiKey: key, baseURL: spec.endpoint };
   }
   let url;
   try {
@@ -91,7 +97,7 @@ class ConfigLoader {
       defaultEngine: settings.engine,
       engines: { [settings.engine]: settings.apiKey },
       models: { [settings.engine]: settings.model },
-      openaiBaseURL: settings.baseURL
+      openaiBaseURL: settings.engine === 'openai' ? settings.baseURL : undefined
     };
   }
 
@@ -227,12 +233,13 @@ class ConfigLoader {
   }
 }
 
-// The effective configuration as options for another client. With provider, the
-// engine settings derived from it are left out so they are derived again.
+// The effective configuration as options for another client, without reading
+// the config file again. With provider, the engine settings derived from it are
+// left out so they are derived again.
 function configCopy(config) {
-  const copy = { ...config };
+  const copy = { ...config, configFile: false };
   if (copy.provider) for (const field of ENGINE_FIELDS) delete copy[field];
   return copy;
 }
 
-module.exports = { ConfigLoader, configCopy };
+module.exports = { ConfigLoader, configCopy, PROVIDERS };
