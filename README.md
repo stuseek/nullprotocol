@@ -295,7 +295,7 @@ Events go to `/api/telemetry` unless you set `telemetryPath`. Up to 1,000 events
 
 ## Pause and stop from the cabinet
 
-A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Telemetry → Connections**:
+A client in your application can be paused, resumed and stopped from the cabinet. Give it an `agentId` and a runtime key from **Connect → Runtime keys**:
 
 ```js
 const ops = new NullProtocol({
