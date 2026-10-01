@@ -328,7 +328,6 @@ describe('stop', () => {
   };
 
   test('cancels a running request and starts no repair', async () => {
-    let ops;
     const model = await modelApi(async (_body, count) => {
       if (count === 1) {
         await stop(ops);
@@ -336,7 +335,7 @@ describe('stop', () => {
       }
       return { content: '{"orderId": 42}' };
     });
-    ops = client('ops', control, model, key);
+    const ops = client('ops', control, model, key);
     try {
       const result = await ops.extract('Order 42', { orderId: 'number' });
       expect(result).toMatchObject({ success: false, errorCode: 'run_cancelled' });
@@ -348,12 +347,11 @@ describe('stop', () => {
   });
 
   test('a stopped request and its operation are both reported as aborted', async () => {
-    let ops;
     const model = await modelApi(async () => {
       await stop(ops);
       return { content: '{"orderId": 42}' };
     });
-    ops = client('ops', control, model, key, {
+    const ops = client('ops', control, model, key, {
       telemetry: true,
       telemetryKey: 'test',
       telemetryEndpoint: 'https://telemetry.example.test'
@@ -378,14 +376,13 @@ describe('stop', () => {
   });
 
   test('aborts a stream mid-way', async () => {
-    let ops;
     const model = await modelApi(async (_body, _count, res) => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'part' } }] })}\n\n`);
       await stop(ops);
       // Never finishes on its own.
     });
-    ops = client('ops', control, model, key);
+    const ops = client('ops', control, model, key);
     try {
       const chunks = [];
       const stream = await ops.chat('hi', { stream: true });
@@ -403,14 +400,13 @@ describe('stop', () => {
   });
 
   test('a tool callback gets the abort and no further model round starts', async () => {
-    let ops;
     const model = await modelApi(async () => ({
       content: null,
       tool_calls: [
         { id: 'c1', type: 'function', function: { name: 'lookup', arguments: '{"id":42}' } }
       ]
     }));
-    ops = client('ops', control, model, key);
+    const ops = client('ops', control, model, key);
     let callbackAborted = false;
     try {
       const result = await ops.chat('Look up 42', {
