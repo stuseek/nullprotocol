@@ -34,8 +34,24 @@ export interface ConnectedOpenAI {
     params: OpenAI.ChatCompletionCreateParamsStreaming,
     options?: OpenAI.RequestOptions
   ): Promise<AsyncIterable<OpenAI.ChatCompletionChunk>>;
-  /** Cancels calls in flight and unread streams, releases runtime control and sends buffered events. */
+  /** Params whose stream flag is only known at run time. */
+  create(
+    params: OpenAI.ChatCompletionCreateParams,
+    options?: OpenAI.RequestOptions
+  ): Promise<OpenAI.ChatCompletion | AsyncIterable<OpenAI.ChatCompletionChunk>>;
+  /**
+   * Cancels waiting and running calls and unread streams, records how each ended,
+   * releases runtime control and sends buffered events.
+   */
   close(): Promise<void>;
 }
 
-export function connectOpenAI(client: OpenAI, options: ConnectOpenAIOptions): ConnectedOpenAI;
+/** The part of an OpenAI client that connectOpenAI calls; any openai version's client fits. */
+export interface ChatCompletionsClient {
+  chat: { completions: { create(params: any, options?: any): PromiseLike<any> } };
+}
+
+export function connectOpenAI(
+  client: ChatCompletionsClient,
+  options: ConnectOpenAIOptions
+): ConnectedOpenAI;

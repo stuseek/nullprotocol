@@ -30,21 +30,35 @@ function follow(signals) {
   return { controller, release };
 }
 
+// Token counts as the telemetry API accepts them; a missing or invalid count is
+// left out, never sent as zero.
+function count(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : undefined;
+}
+
 function tokens(usage) {
+  const inputTokens = count(usage?.prompt_tokens);
+  const outputTokens = count(usage?.completion_tokens);
   return {
-    ...(Number.isSafeInteger(usage?.prompt_tokens) ? { inputTokens: usage.prompt_tokens } : {}),
-    ...(Number.isSafeInteger(usage?.completion_tokens)
-      ? { outputTokens: usage.completion_tokens }
-      : {})
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {})
   };
 }
 
 // The chunks of a stream as an async iterable that ends the call when the stream
-// ends, fails or is closed. Closing it, also before the first read, closes the
-// connection; the SDK's own stream only does that once reading has started.
-function chunks(stream, controller, end, failure) {
+// ends, fails or is closed. The SDK may stop following the request signal once
+// the answer has started, so cancellation reaches the stream through its own
+// controller; closing the iterable, also before the first read, closes the
+// connection.
+function chunks(stream, controller, end, failure, register) {
   const iterator = stream[Symbol.asyncIterator]();
+  const abortStream = () => stream.controller?.abort();
+  if (controller.signal.aborted) abortStream();
+  else controller.signal.addEventListener('abort', abortStream, { once: true });
   let usage;
+  // Ends the call as cancelled, keeping any usage the stream already reported.
+  const cancelled = () => end({ success: false, errorCode: 'aborted', ...tokens(usage) });
+  register(cancelled);
   return {
     [Symbol.asyncIterator]() {
       return this;
@@ -54,7 +68,7 @@ function chunks(stream, controller, end, failure) {
       try {
         step = await iterator.next();
       } catch (error) {
-        end(failure(error));
+        end({ ...failure(error), ...tokens(usage) });
         throw error;
       }
       if (!step.done) {
@@ -63,7 +77,7 @@ function chunks(stream, controller, end, failure) {
       }
       // The SDK ends an aborted stream quietly; a cut answer is not a short one.
       if (controller.signal.aborted) {
-        end({ success: false, errorCode: 'aborted' });
+        cancelled();
         throw controller.signal.reason;
       }
       end({ success: true, ...tokens(usage) });
@@ -72,7 +86,7 @@ function chunks(stream, controller, end, failure) {
     async return(value) {
       controller.abort(Object.assign(new Error('Stream closed'), { name: 'AbortError' }));
       await iterator.return?.().catch(() => {});
-      end({ success: false, errorCode: 'aborted' });
+      cancelled();
       return { done: true, value };
     }
   };
@@ -110,16 +124,17 @@ function connectOpenAI(client, options = {}) {
     : null;
   // The timeout error class of the SDK the application passed in.
   const Timeout = client.constructor?.APIConnectionTimeoutError;
-  // Cancels each call in flight and each stream not yet ended.
-  const open = new Set();
+  // close() aborts this, which cancels every call that is waiting or running.
+  const shutdown = new AbortController();
+  const pending = new Set();
+  const streams = new Set();
+  let closing = null;
   let closed = false;
 
-  async function create(params, requestOptions = {}) {
-    if (closed) throw new ControlError('control_closed', 'This connection was closed');
+  async function call(params, requestOptions) {
     const runId = randomUUID();
     const started = Date.now();
     const model = modelLabel(params?.model);
-    // One model.call per create, and none once the connection is closed.
     const record = fields => {
       if (closed) return;
       runs.run(runId, () =>
@@ -133,8 +148,9 @@ function connectOpenAI(client, options = {}) {
 
     let run = null;
     if (control) {
+      const waiting = follow([requestOptions.signal, shutdown.signal]);
       try {
-        run = await control.begin(requestOptions.signal);
+        run = await control.begin(waiting.controller.signal);
       } catch (error) {
         // A refusal sends no request; a caller abort while waiting is a cancellation.
         record({
@@ -142,24 +158,23 @@ function connectOpenAI(client, options = {}) {
           errorCode: error instanceof ControlError ? error.code : 'aborted'
         });
         throw error;
+      } finally {
+        waiting.release();
       }
     }
 
-    const { controller, release } = follow([requestOptions.signal, run?.signal]);
+    const { controller, release } = follow([requestOptions.signal, run?.signal, shutdown.signal]);
     let ended = false;
+    let cancelStream = null;
+    // Each call is recorded once, by whichever outcome comes first.
     const end = fields => {
       if (ended) return;
       ended = true;
       release();
-      open.delete(cancel);
+      streams.delete(cancelStream);
       if (run) control.end(run);
       record(fields);
     };
-    const cancel = () => {
-      controller.abort(new ControlError('control_closed', 'This connection was closed'));
-      end({ success: false, errorCode: 'aborted' });
-    };
-    open.add(cancel);
     const failure = error => {
       let errorCode = 'provider_error';
       if (controller.signal.aborted) errorCode = 'aborted';
@@ -182,17 +197,36 @@ function connectOpenAI(client, options = {}) {
       end({ success: true, ...tokens(value?.usage) });
       return value;
     }
-    return chunks(value, controller, end, failure);
+    return chunks(value, controller, end, failure, cancel => {
+      cancelStream = cancel;
+      streams.add(cancel);
+    });
   }
 
-  // Cancels calls in flight and unread streams, releases the control connection
-  // and sends the events recorded so far.
-  async function close() {
-    if (closed) return;
-    closed = true;
-    for (const cancel of [...open]) cancel();
-    control?.close();
-    await telemetry.destroy();
+  function create(params, requestOptions = {}) {
+    if (closing) {
+      return Promise.reject(new ControlError('control_closed', 'This connection was closed'));
+    }
+    const result = call(params, requestOptions);
+    pending.add(result);
+    const settle = () => pending.delete(result);
+    result.then(settle, settle);
+    return result;
+  }
+
+  // Cancels waiting and running calls and unread streams, records how each
+  // ended, then releases control and sends the buffered events. Nothing is
+  // recorded after that.
+  function close() {
+    closing ||= (async () => {
+      shutdown.abort(new ControlError('control_closed', 'This connection was closed'));
+      await Promise.allSettled([...pending]);
+      for (const cancel of [...streams]) cancel();
+      closed = true;
+      control?.close();
+      await telemetry.destroy();
+    })();
+    return closing;
   }
 
   return { create, close };

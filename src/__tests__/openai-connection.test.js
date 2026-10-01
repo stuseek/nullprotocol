@@ -213,17 +213,31 @@ test('a caller abort while waiting for the first state sends nothing and leaves 
   expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'aborted' })]);
 });
 
-test('close while waiting for the first state sends nothing', async () => {
+test('close while waiting for the first state sends nothing and records the call as closed', async () => {
   let release;
   gate = new Promise(resolve => (release = resolve));
   const connection = controlled(openai());
   const pending = connection.create(params);
   await until(() => syncs.length > 0);
-  await connection.close();
-  release();
+  const closing = connection.close();
   await expect(pending).rejects.toMatchObject({ code: 'control_closed' });
+  release();
+  await closing;
   expect(requests).toHaveLength(0);
-  expect(calls()).toEqual([]);
+  expect(calls()).toEqual([
+    expect.objectContaining({ success: false, errorCode: 'control_closed' })
+  ]);
+});
+
+test('close cancels a request in flight and records it before the events are sent', async () => {
+  const connection = connect(openai());
+  handle = async () => {};
+  const pending = connection.create(params);
+  await until(() => requests.length === 1);
+  await connection.close();
+  await expect(pending).rejects.toBeInstanceOf(OpenAI.APIUserAbortError);
+  await until(() => requests[0].closedEarly);
+  expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'aborted' })]);
 });
 
 test('stop cancels a request in flight with the SDK abort error', async () => {
@@ -303,14 +317,45 @@ test('leaving a stream early, even before its first chunk, closes the connection
   ]);
 });
 
-test('close cancels an unread stream and records nothing after it', async () => {
+test('close cancels an unread stream, records it, and records nothing after', async () => {
   handle = async res => sse(res, [chunk('Ship')], { end: false });
   const connection = connect(openai());
   await connection.create({ ...params, stream: true });
   await connection.close();
   await until(() => requests[0].closedEarly);
-  expect(calls()).toEqual([]);
+  expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'aborted' })]);
   await expect(connection.create(params)).rejects.toMatchObject({ code: 'control_closed' });
+});
+
+test('token counts are sent only when the provider reported valid ones, also for a failed stream', async () => {
+  handle = async res =>
+    json(res, 200, { ...completion, usage: { prompt_tokens: -1, completion_tokens: 2e9 } });
+  const connection = connect(openai());
+  await connection.create(params);
+  handle = async res => {
+    sse(res, [{ ...chunk(''), choices: [], usage: { prompt_tokens: 7, completion_tokens: 1 } }], {
+      end: false
+    });
+    // Break the connection after the usage chunk has reached the client.
+    await new Promise(r => setTimeout(r, 50));
+    res.destroy();
+  };
+  const stream = await connection.create({ ...params, stream: true });
+  await expect(
+    (async () => {
+      for await (const item of stream) expect(item).toBeDefined();
+    })()
+  ).rejects.toThrow();
+  await connection.close();
+  const [invalid, failed] = calls();
+  expect(invalid).toEqual(expect.not.objectContaining({ inputTokens: expect.anything() }));
+  expect(invalid).toEqual(expect.not.objectContaining({ outputTokens: expect.anything() }));
+  expect(failed).toMatchObject({
+    success: false,
+    errorCode: 'provider_error',
+    inputTokens: 7,
+    outputTokens: 1
+  });
 });
 
 test('an existing tool loop keeps its own messages, and each create is its own run', async () => {
