@@ -956,7 +956,8 @@ class ManagedExecutor {
         messages.push(response.assistantMessage);
         // A refused call is recorded and answered with an error instead of
         // failing the run, so the model can still reply; the action never runs.
-        const refuse = async (call, reasonCode, recorded = false) => {
+        // Its steps carry the call's ID so a check can be traced to its call.
+        const refuse = async (call, callId, reasonCode, recorded = false) => {
           if (!recorded) {
             const now = new Date().toISOString();
             await this._stepWithRetry(
@@ -966,7 +967,7 @@ class ManagedExecutor {
                 ordinal: ordinal++,
                 kind: 'validate',
                 status: 'failed',
-                callId: null,
+                callId,
                 startedAt: now,
                 finishedAt: now,
                 payload: { ...(ACTION_NAME.test(call.name) ? { name: call.name } : {}), reasonCode }
@@ -982,17 +983,20 @@ class ManagedExecutor {
         };
         for (const call of response.toolCalls) {
           if (++actionCalls > 8) throw new ManagedModelError('tool_limit');
+          // One ID per call attempt, shared by its checks, its action step,
+          // the handler context and the idempotency key.
+          const callId = randomUUID();
           const entry = entries.get(call.name);
           if (!entry || !offeredNames.has(call.name)) {
-            await refuse(call, 'action_not_allowed');
+            await refuse(call, callId, 'action_not_allowed');
             continue;
           }
           if (memoryIncomplete && entry.contract.effect === 'write') {
-            await refuse(call, 'write_unavailable');
+            await refuse(call, callId, 'write_unavailable');
             continue;
           }
           if (!entry.validateInput(call.args)) {
-            await refuse(call, 'invalid_action_input');
+            await refuse(call, callId, 'invalid_action_input');
             continue;
           }
           if (
@@ -1005,7 +1009,7 @@ class ManagedExecutor {
           if (lease.cancelRequested) leaseState.requestCancel();
           if (leaseState.cancelled()) throw new ManagedModelError('run_cancelled');
           if (lease.disabledActions?.includes(call.name)) {
-            await refuse(call, 'action_not_allowed');
+            await refuse(call, callId, 'action_not_allowed');
             continue;
           }
           if (entry.contract.effect === 'write') {
@@ -1018,11 +1022,10 @@ class ManagedExecutor {
             job.agentMemory = refreshed.agentMemory;
             job.disabledActions = refreshed.disabledActions || [];
             if (refreshed.disabledActions?.includes(call.name)) {
-              await refuse(call, 'action_not_allowed');
+              await refuse(call, callId, 'action_not_allowed');
               continue;
             }
           }
-          const callId = randomUUID();
           const context = {
             runId: run.id,
             agentId: run.agentId,
@@ -1058,7 +1061,7 @@ class ManagedExecutor {
                 ordinal: ordinal++,
                 kind: 'guard',
                 status: reasonCode === 'guard_error' ? 'failed' : 'succeeded',
-                callId: null,
+                callId,
                 startedAt: new Date().toISOString(),
                 finishedAt: new Date().toISOString(),
                 payload: { name: call.name, allowed, ...(reasonCode ? { reasonCode } : {}) }
@@ -1067,7 +1070,7 @@ class ManagedExecutor {
             );
             if (reasonCode === 'guard_error') throw new ManagedModelError(reasonCode);
             if (!allowed) {
-              await refuse(call, reasonCode, true);
+              await refuse(call, callId, reasonCode, true);
               continue;
             }
           }

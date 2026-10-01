@@ -1113,7 +1113,14 @@ describe('refused action calls', () => {
 
   // Runs one job against stubbed platform calls; `replies` are the model's
   // messages in order, the last one repeating.
-  async function run({ replies, text = false, guard = async () => false, lease, lost = false }) {
+  async function run({
+    replies,
+    text = false,
+    guard = async () => false,
+    lease,
+    lost = false,
+    flakySteps = false
+  }) {
     const actions = [getOrder, refund];
     const actionConfig = { ...config, actions };
     const requests = [];
@@ -1153,7 +1160,19 @@ describe('refused action calls', () => {
       agentMemory: [],
       disabledActions: []
     }));
-    executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+    const sent = [];
+    if (flakySteps) {
+      // Each step's first write fails as unavailable and is retried as-is.
+      executor._step = jest.fn(async (_run, _token, step) => {
+        sent.push(structuredClone(step));
+        if (sent.filter(item => item.ordinal === step.ordinal).length === 1) {
+          throw new PlatformError('unavailable', 503, {}, 0);
+        }
+        steps.push(step);
+      });
+    } else {
+      executor._stepWithRetry = jest.fn(async (_run, _token, step) => steps.push(step));
+    }
     executor._commitWithMemoryFallback = jest.fn(async (_run, _token, body) => {
       commits.push(body);
       return { run: body };
@@ -1186,8 +1205,10 @@ describe('refused action calls', () => {
         }
       }
     );
-    return { result, requests, steps, commits, handlers };
+    return { result, requests, steps, commits, handlers, sent };
   }
+
+  const uuid = /^[0-9a-f-]{36}$/;
 
   test.each([
     ['guard', 'native', native(['call-1', 'refund', { orderId: '3307', amount: 40 }])],
@@ -1226,6 +1247,7 @@ describe('refused action calls', () => {
         reasonCode
       });
       expect(steps.some(step => step.kind === 'action')).toBe(false);
+      expect(steps.find(step => step.payload?.reasonCode === reasonCode).callId).toMatch(uuid);
       expect(JSON.stringify(requests[1].messages)).toContain(reasonCode);
     }
   );
@@ -1245,6 +1267,81 @@ describe('refused action calls', () => {
     expect(steps.map(step => `${step.kind}:${step.status}`)).toEqual(
       expect.arrayContaining(['validate:failed', 'guard:succeeded', 'action:succeeded'])
     );
+  });
+
+  test('an allowed call shares one call ID across its guard, action, handler and idempotency key', async () => {
+    const { steps, handlers } = await run({
+      guard: async () => true,
+      replies: [native(['call-1', 'refund', { orderId: '2210', amount: 89 }]), answer('Refunded.')]
+    });
+    const guard = steps.find(step => step.kind === 'guard');
+    const action = steps.find(step => step.kind === 'action');
+    expect(guard.callId).toMatch(uuid);
+    expect(action.callId).toBe(guard.callId);
+    const metadata = handlers.refund.mock.calls[0][1];
+    expect(metadata.callId).toBe(guard.callId);
+    expect(metadata.idempotencyKey).toBe(`${runId}:${guard.callId}`);
+  });
+
+  test.each(['native', 'text'])(
+    'two calls with one name over %s get their own IDs; only the allowed one runs',
+    async protocol => {
+      const text = protocol === 'text';
+      const { steps, handlers } = await run({
+        text,
+        guard: async ({ orderId }) => orderId === '2210',
+        replies: text
+          ? [
+              { content: '{"action":"refund","parameters":{"orderId":"3307","amount":40}}' },
+              { content: '{"action":"refund","parameters":{"orderId":"2210","amount":89}}' },
+              { content: '{"answer":"Refunded 2210 only."}' }
+            ]
+          : [
+              native(
+                ['call-1', 'refund', { orderId: '3307', amount: 40 }],
+                ['call-2', 'refund', { orderId: '2210', amount: 89 }]
+              ),
+              answer('Refunded 2210 only.')
+            ]
+      });
+      const guards = steps.filter(step => step.kind === 'guard');
+      const actions = steps.filter(step => step.kind === 'action');
+      expect(guards.map(step => step.payload.allowed)).toEqual([false, true]);
+      expect(guards[0].callId).not.toBe(guards[1].callId);
+      expect(actions.every(step => step.callId === guards[1].callId)).toBe(true);
+      expect(handlers.refund).toHaveBeenCalledTimes(1);
+      expect(handlers.refund.mock.calls[0][1].callId).toBe(guards[1].callId);
+    }
+  );
+
+  test('a corrected attempt after invalid input is a new call with a new ID', async () => {
+    const { steps } = await run({
+      guard: async () => true,
+      replies: [
+        native(['call-1', 'refund', { orderId: 2210 }]),
+        native(['call-2', 'refund', { orderId: '2210', amount: 89 }]),
+        answer('Refunded $89.')
+      ]
+    });
+    const validate = steps.find(step => step.kind === 'validate');
+    const guard = steps.find(step => step.kind === 'guard');
+    expect(validate.callId).toMatch(uuid);
+    expect(guard.callId).not.toBe(validate.callId);
+    expect(
+      steps.filter(step => step.kind === 'action').every(step => step.callId === guard.callId)
+    ).toBe(true);
+  });
+
+  test('a retried step write resends the same call ID; a refused call runs no handler', async () => {
+    const { sent, handlers } = await run({
+      flakySteps: true,
+      replies: [native(['call-1', 'refund', { orderId: '3307', amount: 40 }]), answer('No refund.')]
+    });
+    const guardWrites = sent.filter(step => step.kind === 'guard');
+    expect(guardWrites).toHaveLength(2);
+    expect(guardWrites[1]).toEqual(guardWrites[0]);
+    expect(guardWrites[0].callId).toMatch(uuid);
+    expect(handlers.refund).toHaveBeenCalledTimes(0);
   });
 
   test('repeated denied calls stop at the turn limit with no effect', async () => {
