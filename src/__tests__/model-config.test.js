@@ -6,6 +6,13 @@ const NullProtocol = require('../index');
 const { serve } = require('../server');
 const { serveAgents } = require('../agent-server');
 
+// Node 18's close waits for idle keep-alive connections; later versions close them.
+const close = server =>
+  new Promise(resolve => {
+    server.close(resolve);
+    server.closeIdleConnections();
+  });
+
 const ENV = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
@@ -47,7 +54,7 @@ async function recorder() {
   return {
     requests,
     baseURL: `http://127.0.0.1:${server.address().port}/v1`,
-    close: () => new Promise(resolve => server.close(resolve))
+    close: () => close(server)
   };
 }
 
@@ -365,7 +372,7 @@ describe('HTTP services', () => {
       expect(upstream.requests).toHaveLength(1);
       expect(upstream.requests[0].authorization).toBeUndefined();
     } finally {
-      await new Promise(resolve => server.close(resolve));
+      await close(server);
       await upstream.close();
     }
   });

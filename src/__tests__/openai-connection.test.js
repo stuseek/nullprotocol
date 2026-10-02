@@ -1,6 +1,9 @@
+const { execFile } = require('child_process');
 const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
+const path = require('path');
+const { promisify } = require('util');
 const OpenAI = require('openai');
 const { connectOpenAI } = require('../../openai');
 const { controlLink } = require('../runtime-control');
@@ -182,12 +185,26 @@ test('an exception before any request is internal, not a provider failure', asyn
 });
 
 test('a client timeout is the SDK timeout error and is reported as timeout', async () => {
-  const connection = connect(openai({ timeout: 50 }));
-  handle = async res => {
-    await new Promise(r => setTimeout(r, 300));
-    if (!res.destroyed) json(res, 200, completion);
-  };
-  await expect(connection.create(params)).rejects.toBeInstanceOf(OpenAI.APIConnectionTimeoutError);
+  // Outside Jest; the fixture says why.
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [path.join(__dirname, 'fixtures', 'openai-timeout.js')],
+    { timeout: 4000 }
+  );
+  expect(JSON.parse(stdout)).toEqual({
+    error: 'APIConnectionTimeoutError',
+    timeoutError: true,
+    modelClosedEarly: true,
+    calls: [{ event: 'model.call', success: false, errorCode: 'timeout' }]
+  });
+});
+
+test('the SDK timeout error reaches the caller unchanged and is reported as timeout', async () => {
+  const client = openai();
+  const timeout = new OpenAI.APIConnectionTimeoutError();
+  jest.spyOn(client.chat.completions, 'create').mockRejectedValue(timeout);
+  const connection = connect(client);
+  await expect(connection.create(params)).rejects.toBe(timeout);
   await connection.close();
   expect(calls()).toEqual([expect.objectContaining({ success: false, errorCode: 'timeout' })]);
 });

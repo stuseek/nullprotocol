@@ -3,7 +3,25 @@ const crypto = require('crypto');
 const { serveAgents } = require('../index');
 
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const close = server => new Promise(resolve => server.close(resolve));
+// Node 18's close waits for idle keep-alive connections; later versions close them.
+const close = server =>
+  new Promise(resolve => {
+    server.close(resolve);
+    server.closeIdleConnections();
+  });
+// A sync may join the acknowledgement that a previous change scheduled and return
+// the state that request carried, so sync until the agent shows `state`, a few
+// attempts at most, then sync once more to take up the acknowledgement this change
+// scheduled before the test changes what the control API answers.
+const confirm = async (server, state) => {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    expect(await server.syncControl()).toBe(true);
+    const agent = server.agents.get('worker');
+    if (Object.entries(state).every(([key, value]) => agent[key] === value)) break;
+  }
+  expect(server.agents.get('worker')).toMatchObject(state);
+  expect(await server.syncControl()).toBe(true);
+};
 
 test('one runtime sync controls pause, resume and stop without changing local credentials', async () => {
   const runtimeKey = `np_runtime_${crypto.randomBytes(32).toString('base64url')}`;
@@ -66,7 +84,7 @@ test('one runtime sync controls pause, resume and stop without changing local cr
       body: JSON.stringify({ operation: 'chat', input: { prompt: 'hello' } })
     });
   try {
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 0, controlPaused: false });
     expect(lastManifest.agents).toHaveLength(1);
     expect(lastManifest.agents[0]).toMatchObject({
       id: 'worker',
@@ -75,17 +93,17 @@ test('one runtime sync controls pause, resume and stop without changing local cr
     });
     expect(JSON.stringify(lastManifest)).not.toContain('local-model-key');
     desired = { ...desired, revision: 1, paused: true };
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 1, controlPaused: true });
     expect((await post('/v1/agents/worker/invoke')).status).toBe(409);
     // The process-local enable route cannot override the Space pause.
     expect((await post('/v1/agents/worker/enable')).status).toBe(200);
     expect((await post('/v1/agents/worker/invoke')).status).toBe(409);
     desired = { ...desired, revision: 2, paused: false };
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 2, controlPaused: false });
     const pending = post('/v1/agents/worker/invoke');
     await modelStarted;
     desired = { ...desired, revision: 3, paused: true, stop_epoch: 1 };
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 3, controlStopEpoch: 1 });
     releaseModel();
     const cancelled = await pending;
     expect(cancelled.status).toBe(409);
@@ -98,10 +116,10 @@ test('one runtime sync controls pause, resume and stop without changing local cr
     expect(await server.syncControl()).toBe(true);
     expect(lastManifest.agents[0]).toMatchObject({ observedRevision: 3, observedStopEpoch: 1 });
     desired = { ...desired, revision: 4, stop_epoch: 2, blocked: true };
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 4, controlBlocked: true });
     expect(server.agents.get('worker').controlBlocked).toBe(true);
     desired = { agent_id: 'worker', revision: 4, paused: true, stop_epoch: 2 };
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlBlocked: false, controlPaused: true });
     expect(server.agents.get('worker')).toMatchObject({
       controlBlocked: false,
       controlPaused: true
@@ -244,14 +262,15 @@ test('a stale control connection pauses and cancels an active run', async () => 
   });
   await new Promise(resolve => server.once('listening', resolve));
   try {
-    expect(await server.syncControl()).toBe(true);
+    await confirm(server, { controlRevision: 0, controlPaused: false });
+    // The outage starts once state is confirmed; only the clock moves after the run starts.
+    unavailable = true;
     const pending = fetch(`http://127.0.0.1:${server.address().port}/v1/agents/worker/invoke`, {
       method: 'POST',
       headers: { Authorization: 'Bearer test-local-key', 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation: 'chat', input: { prompt: 'hello' } })
     });
     await started;
-    unavailable = true;
     const realNow = Date.now();
     const now = jest.spyOn(Date, 'now').mockReturnValue(realNow + 46000);
     try {
