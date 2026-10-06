@@ -106,6 +106,27 @@ Schemas, options, retries, streaming and history are in [Operations and configur
 
 One run per task on synthetic tasks. [Tasks, method, limits and raw results](bench/README.md).
 
+A flow is short. This is the refund one: the model says whether the item was used, the policy stays in your code.
+
+```js
+const read = await ai.extract(message, {
+  type: 'object',
+  required: ['evidence', 'condition'],
+  properties: {
+    evidence: { type: 'string', description: "The customer's exact words about the state of the item" },
+    condition: { type: 'string', enum: ['untouched', 'used'] }
+  }
+});
+if (!read.success) return escalate(ticket, read.error);
+
+const days = daysSince(order.delivered);
+if (days > (order.category === 'electronics' ? 14 : 30)) return deny(ticket);
+const amount = read.data.condition === 'used' ? order.price * 0.85 : order.price;
+return amount > 200 ? escalate(ticket) : refund(ticket, amount);
+```
+
+Three runnable flows, each one command on a local model: [examples/flows](examples/flows/README.md).
+
 ## Connect to the dashboard
 
 Optional. Give each AI step an `agentId` and connect it to a Space in the [dashboard](https://app.nullprotocol.ai): its calls appear in Activity, and you can pause or stop it. Only metadata is sent (model, duration, token counts, outcome), never prompts or replies.
@@ -171,7 +192,7 @@ Access requires an allowlisted team. Setup, the executor, what a run guarantees 
 - [Managed Agents](docs/managed-agents.md) and the [upgrade guide](docs/upgrade-managed.md)
 - [Named agents over HTTP](docs/http-server.md): `serveAgents`, sessions, the CLI
 - [Shared Space context](docs/space-context.md)
-- [Benchmark](bench/README.md)
+- [Benchmark](bench/README.md) and [runnable flows](examples/flows/README.md)
 - [Changelog](CHANGELOG.md)
 
 Coming from `@stuseek/ai-toolkit`? Install this package and change the import; `AIToolkit` remains an export alias. The old token-only cloud mode reports a configuration error.
