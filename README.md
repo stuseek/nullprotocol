@@ -140,7 +140,7 @@ function decide() {
   return amount > 200 ? { action: 'escalate' } : { action: 'refund', amount };
 }
 
-console.log(read.data); // { evidence: 'I used it twice and do not like it.', condition: 'used' }
+console.log(read.data); // condition: 'used', with the customer's own words as evidence
 console.log(decide()); // { action: 'refund', amount: 102 }
 ```
 
