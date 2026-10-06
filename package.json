@@ -1,6 +1,6 @@
 {
   "name": "nullprotocol",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Build focused AI agents around your data, rules and models: checked LLM output for Node.js, with OpenAI, Anthropic or a local model",
   "main": "src/index.js",
   "scripts": {

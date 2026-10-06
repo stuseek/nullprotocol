@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
 
 - Every operation's result has `usage: { inputTokens, outputTokens }`, summed over its model requests, when the provider reports token counts for all of them. `serveAgents` returns it in `output`.
 - `validate` accepts its one result object wrapped in an array, as `decide` already does; small models answer this way when the subject is a list.
