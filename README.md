@@ -106,23 +106,42 @@ Schemas, options, retries, streaming and history are in [Operations and configur
 
 One run per task on synthetic tasks. [Tasks, method, limits and raw results](bench/README.md).
 
-A flow is short. This is the refund one: the model says whether the item was used, the policy stays in your code.
+A flow is short. Save this as `refund.mjs` and run it with `node refund.mjs`: the model says what state the item is in, and the policy stays in your code.
 
 ```js
+import { NullProtocol } from 'nullprotocol';
+
+const ai = new NullProtocol({
+  provider: 'openai-compatible',
+  baseURL: 'http://localhost:11434/v1',
+  model: 'qwen2.5:3b-instruct',
+  timeout: 120000
+});
+
+const order = { category: 'kitchen', price: 120, delivered: '2026-09-12' }; // from your order system
+const today = '2026-10-06';
+const message = 'Order 6642: the blender came on 12 September. I used it twice and do not like it. Refund please.';
+
 const read = await ai.extract(message, {
   type: 'object',
   required: ['evidence', 'condition'],
   properties: {
-    evidence: { type: 'string', description: "The customer's exact words about the state of the item" },
-    condition: { type: 'string', enum: ['untouched', 'used'] }
+    evidence: { type: 'string', description: "The customer's exact words about the state of the item. An empty string if the message does not say." },
+    condition: { type: 'string', enum: ['untouched', 'used', 'unknown'], description: 'unknown: the message does not say; do not guess.' }
   }
 });
-if (!read.success) return escalate(ticket, read.error);
 
-const days = daysSince(order.delivered);
-if (days > (order.category === 'electronics' ? 14 : 30)) return deny(ticket);
-const amount = read.data.condition === 'used' ? order.price * 0.85 : order.price;
-return amount > 200 ? escalate(ticket) : refund(ticket, amount);
+// 30 days to return, 15% fee on a used item, above $200 a person decides.
+// A failed read or an unknown state also goes to a person.
+function decide() {
+  if (!read.success || read.data.condition === 'unknown' || !read.data.evidence.trim()) return { action: 'escalate' };
+  if ((Date.parse(today) - Date.parse(order.delivered)) / 86400000 > 30) return { action: 'deny' };
+  const amount = read.data.condition === 'used' ? order.price * 0.85 : order.price;
+  return amount > 200 ? { action: 'escalate' } : { action: 'refund', amount };
+}
+
+console.log(read.data); // { evidence: 'I used it twice and do not like it.', condition: 'used' }
+console.log(decide()); // { action: 'refund', amount: 102 }
 ```
 
 Three runnable flows, each one command on a local model: [examples/flows](examples/flows/README.md).

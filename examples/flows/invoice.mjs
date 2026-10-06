@@ -57,4 +57,6 @@ const subtotal = cents(
 const total = cents(
   subtotal * (1 - terms.data.discountPercent / 100) * (1 + terms.data.taxPercent / 100)
 );
-console.log({ subtotal, total }); // { subtotal: 285.83, total: 279.11 }
+console.log(invoice);
+console.log('Read:', lines.data.items, terms.data); // three items, { discountPercent: 10, taxPercent: 8.5 }
+console.log('Result:', { subtotal, total }); // { subtotal: 285.83, total: 279.11 }
