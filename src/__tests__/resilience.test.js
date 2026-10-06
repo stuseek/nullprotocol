@@ -295,6 +295,30 @@ describe('Resilience', () => {
       expect(r.isTripped()).toBe(true);
     });
 
+    test.each([
+      ['succeeds', finish => finish.resolve('late')],
+      ['fails', finish => finish.reject(Object.assign(new Error('late'), { status: 503 }))]
+    ])('a probe that outlives a reset changes nothing when it %s', async (_, end) => {
+      const r = new Resilience({ circuitBreakerThreshold: 1, maxRetries: 0, timeout: 0 });
+      r.circuitBreaker.tripped = true;
+      r.circuitBreaker.tripTime = Date.now() - 61000;
+      const finish = {};
+      const probe = r.execute(
+        () => new Promise((resolve, reject) => Object.assign(finish, { resolve, reject }))
+      );
+      await new Promise(resolve => setTimeout(resolve, 0));
+      r.reset();
+      const down = () => Promise.reject(Object.assign(new Error('down'), { status: 503 }));
+      await expect(r.execute(down)).rejects.toThrow('down');
+      const tripTime = r.circuitBreaker.tripTime;
+      const generation = r.circuitBreaker.generation;
+
+      end(finish);
+      await probe.catch(() => {});
+      expect(r.isTripped()).toBe(true);
+      expect(r.circuitBreaker).toMatchObject({ tripTime, generation, probing: false });
+    });
+
     test('a cancelled probe leaves the next request to probe', async () => {
       const r = new Resilience({ circuitBreakerThreshold: 1, maxRetries: 0, timeout: 0 });
       r.circuitBreaker.tripped = true;

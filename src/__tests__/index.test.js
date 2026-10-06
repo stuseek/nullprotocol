@@ -1600,6 +1600,36 @@ describe('Repair accounting and provider requests', () => {
     }
   });
 
+  test('a failed or uncounted repair request leaves the result without usage', async () => {
+    const counted = { prompt_tokens: 12, completion_tokens: 3 };
+    const reply = (content, usage) => ({
+      choices: [{ message: { content }, finish_reason: 'stop' }],
+      usage
+    });
+    const timeout = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+
+    let create = jest
+      .fn()
+      .mockResolvedValueOnce(reply('{"workspace":17}', counted))
+      .mockRejectedValueOnce(timeout);
+    let result = await traced('openai', create).extract('Workspace w-12', workspaceSchema);
+    expect(result).toMatchObject({ success: false, attempts: 2 });
+    expect(result).not.toHaveProperty('usage');
+
+    for (const usages of [
+      [counted, undefined],
+      [undefined, counted]
+    ]) {
+      create = jest
+        .fn()
+        .mockResolvedValueOnce(reply('{"workspace":17}', usages[0]))
+        .mockResolvedValueOnce(reply('{"workspace":"w-12"}', usages[1]));
+      result = await traced('openai', create).extract('Workspace w-12', workspaceSchema);
+      expect(result).toMatchObject({ success: true, attempts: 2, repaired: true });
+      expect(result).not.toHaveProperty('usage');
+    }
+  });
+
   test('OpenAI: the repair request is the original turn, the reply and the feedback', async () => {
     const replies = ['{"workspace":"Workspace w-12"}', '{"workspace":"w-12"}'];
     const create = jest.fn(async () => ({

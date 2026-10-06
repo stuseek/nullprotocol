@@ -108,23 +108,24 @@ class Resilience {
   }
 
   // Called without arguments it records an outcome for the breaker's current state.
-  // A request's own outcome counts only if no trip or recovery happened since it
-  // started, unless it is the probe.
+  // A request's outcome, the probe's included, counts only if no trip, recovery or
+  // reset happened since it started.
   recordSuccess(generation = this.circuitBreaker.generation, probe = this.circuitBreaker.tripped) {
     const cb = this.circuitBreaker;
+    if (generation !== cb.generation) return;
     if (probe) this.reset();
-    else if (generation === cb.generation) cb.failures = 0;
+    else cb.failures = 0;
   }
 
   recordFailure(generation = this.circuitBreaker.generation, probe = false) {
     const cb = this.circuitBreaker;
+    if (generation !== cb.generation) return;
     if (probe) {
       cb.tripTime = Date.now();
       cb.probing = false;
       cb.generation++;
       return;
     }
-    if (generation !== cb.generation) return;
     cb.failures++;
     if (cb.failures >= cb.threshold) {
       cb.tripped = true;

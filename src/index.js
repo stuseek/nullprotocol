@@ -740,6 +740,9 @@ class AIToolkit {
       this.engines.openai.startsWith('np_inf_')
         ? randomUUID()
         : null;
+    // Counted before the request, so one that fails leaves the operation's usage incomplete.
+    const total = this.runContext.getStore()?.usage;
+    if (total) total.requests++;
     let response;
     try {
       response = await this.resilience.execute(
@@ -789,11 +792,9 @@ class AIToolkit {
         ? { outputTokens: usage.completion_tokens ?? usage.output_tokens }
         : {})
     });
-    const total = this.runContext.getStore()?.usage;
     if (total) {
       const input = usage?.prompt_tokens ?? usage?.input_tokens;
       const output = usage?.completion_tokens ?? usage?.output_tokens;
-      total.requests++;
       if (Number.isSafeInteger(input) && Number.isSafeInteger(output)) {
         total.inputTokens += input;
         total.outputTokens += output;
