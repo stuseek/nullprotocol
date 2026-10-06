@@ -8,7 +8,8 @@ import { NullProtocol } from 'nullprotocol';
 const ai = new NullProtocol({
   provider: 'openai-compatible',
   baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct'
+  model: 'qwen2.5:3b-instruct',
+  timeout: 120000 // a local model can take longer than the 30-second default
 });
 
 const result = await ai.extract('Order 42: two blue mugs', {
@@ -52,7 +53,7 @@ Any call can use another model of the same provider by its name: `ai.extract(tex
 | `apiKey` | The model API key | For `openai` and `anthropic`, unless set in the environment | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
 | `temperature` | Sampling temperature | No | `0.3` (not sent to Claude 4.7 and later) |
 | `maxTokens` | Reply length limit | No | `1000` |
-| `timeout` | Milliseconds per model request | No | `30000`; `120000` with `openai-compatible`, since a local server is often slower |
+| `timeout` | Milliseconds per model request | No | `30000`; raise it for a local model, which can take longer |
 | `retry` | `{ maxRetries }` for transient errors | No | `{ maxRetries: 2 }` |
 | `repairAttempts` | Extra turns to fix an unusable reply, 0 to 3 | No | `1` |
 | `basePrompt` | Instructions added to every call | No | — |
@@ -91,7 +92,7 @@ The rest belong to one operation:
 | `decide` | `guard`, `guardTimeoutMs`, `repairAttempts` |
 | `chat` | `systemPrompt`, `tools` with `onToolCall`, `stream`, `collect`, `trackHistory` |
 
-Results carry `usage: { inputTokens, outputTokens }`, the sum over every model request the call made, when the provider reports token counts. A stream and a call made inside another operation have none.
+Results carry `usage: { inputTokens, outputTokens }`, the sum over every model request the call made, when the provider reports token counts for all of them. A stream and a call made inside another operation have none.
 
 Operations return `{ success, ... }`; model and validation failures are `{ success: false, error }`, so check `success` before acting. A refused, truncated or content-filtered reply is a failure, never partial text. Validation catches malformed output; it cannot prove the extracted facts are true.
 

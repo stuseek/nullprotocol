@@ -1586,6 +1586,20 @@ describe('Repair accounting and provider requests', () => {
     return ai;
   }
 
+  test('a request without token counts leaves the result without usage', async () => {
+    const replies = [{}, undefined, { prompt_tokens: 40 }];
+    const create = jest.fn(async () => ({
+      choices: [{ message: { content: '{"workspace":"w-12"}' }, finish_reason: 'stop' }],
+      usage: replies.shift()
+    }));
+    const ai = traced('openai', create);
+    for (let i = 0; i < 3; i++) {
+      const result = await ai.extract('Workspace w-12', workspaceSchema);
+      expect(result.success).toBe(true);
+      expect(result).not.toHaveProperty('usage');
+    }
+  });
+
   test('OpenAI: the repair request is the original turn, the reply and the feedback', async () => {
     const replies = ['{"workspace":"Workspace w-12"}', '{"workspace":"w-12"}'];
     const create = jest.fn(async () => ({

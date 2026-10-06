@@ -26,6 +26,10 @@ class Resilience {
       failures: 0,
       tripped: false,
       tripTime: null,
+      // After the cooldown one request probes the provider while the rest are still refused.
+      probing: false,
+      // Counts trips and recoveries, so a request that started before one cannot undo it.
+      generation: 0,
       totalSkipped: 0
     };
   }
@@ -35,23 +39,29 @@ class Resilience {
    */
   async execute(fn, options = {}) {
     if (options.signal?.aborted) throw cancellationError(options.signal);
-    // Check circuit breaker
-    if (this.isTripped()) {
-      const cb = this.circuitBreaker;
-      const elapsed = Date.now() - cb.tripTime;
-
-      if (elapsed >= cb.resetAfterMs) {
-        // After the cooldown the breaker is half open: callers pass again, a success
-        // closes it, and the next failure trips it at once.
-        cb.tripped = false;
-        cb.tripTime = null;
-        cb.failures = cb.threshold - 1;
-      } else {
+    const cb = this.circuitBreaker;
+    let probe = false;
+    if (cb.tripped) {
+      if (cb.probing || Date.now() - cb.tripTime < cb.resetAfterMs) {
         cb.totalSkipped++;
         throw new CircuitBreakerError(cb.failures, cb.totalSkipped);
       }
+      // Half open: this request alone tests the provider. Its success closes the
+      // breaker and its failure starts a new cooldown.
+      cb.probing = true;
+      probe = true;
     }
+    const generation = cb.generation;
+    try {
+      return await this._attempts(fn, options, generation, probe);
+    } finally {
+      // A probe that ended without a verdict (cancelled, or refused as a client
+      // error) leaves the next request to probe.
+      if (probe && cb.generation === generation) cb.probing = false;
+    }
+  }
 
+  async _attempts(fn, options, generation, probe) {
     let lastError;
 
     const maxRetries = options.maxRetries ?? this.maxRetries;
@@ -59,7 +69,7 @@ class Resilience {
       if (options.signal?.aborted) throw cancellationError(options.signal);
       try {
         const result = await this._withTimeout(fn, options.timeout ?? this.timeout, options.signal);
-        this.recordSuccess();
+        this.recordSuccess(generation, probe);
         return result;
       } catch (error) {
         if (options.signal?.aborted) throw cancellationError(options.signal);
@@ -67,7 +77,7 @@ class Resilience {
 
         // Don't retry non-retryable errors
         if (!this._isRetryable(error)) {
-          if (this._countsAsFailure(error)) this.recordFailure();
+          if (this._countsAsFailure(error)) this.recordFailure(generation, probe);
           throw error;
         }
 
@@ -80,7 +90,7 @@ class Resilience {
     }
 
     // All retries exhausted
-    this.recordFailure();
+    this.recordFailure(generation, probe);
     throw lastError;
   }
 
@@ -89,26 +99,37 @@ class Resilience {
   }
 
   reset() {
-    this.circuitBreaker.failures = 0;
-    this.circuitBreaker.tripped = false;
-    this.circuitBreaker.tripTime = null;
-  }
-
-  recordSuccess() {
-    this.circuitBreaker.failures = 0;
-    if (this.circuitBreaker.tripped) {
-      this.circuitBreaker.tripped = false;
-      this.circuitBreaker.tripTime = null;
-    }
-  }
-
-  recordFailure() {
     const cb = this.circuitBreaker;
-    cb.failures++;
+    cb.failures = 0;
+    cb.tripped = false;
+    cb.tripTime = null;
+    cb.probing = false;
+    cb.generation++;
+  }
 
-    if (cb.failures >= cb.threshold && !cb.tripped) {
+  // Called without arguments it records an outcome for the breaker's current state.
+  // A request's own outcome counts only if no trip or recovery happened since it
+  // started, unless it is the probe.
+  recordSuccess(generation = this.circuitBreaker.generation, probe = this.circuitBreaker.tripped) {
+    const cb = this.circuitBreaker;
+    if (probe) this.reset();
+    else if (generation === cb.generation) cb.failures = 0;
+  }
+
+  recordFailure(generation = this.circuitBreaker.generation, probe = false) {
+    const cb = this.circuitBreaker;
+    if (probe) {
+      cb.tripTime = Date.now();
+      cb.probing = false;
+      cb.generation++;
+      return;
+    }
+    if (generation !== cb.generation) return;
+    cb.failures++;
+    if (cb.failures >= cb.threshold) {
       cb.tripped = true;
       cb.tripTime = Date.now();
+      cb.generation++;
     }
   }
 

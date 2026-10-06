@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-- Every operation's result has `usage: { inputTokens, outputTokens }`, summed over its model requests, when the provider reports token counts.
+- Every operation's result has `usage: { inputTokens, outputTokens }`, summed over its model requests, when the provider reports token counts for all of them. `serveAgents` returns it in `output`.
 - `validate` accepts its one result object wrapped in an array, as `decide` already does; small models answer this way when the subject is a list.
-- With `provider: 'openai-compatible'` the default request timeout is 120 seconds instead of 30, since a local server is often slower. An explicit `timeout` is unchanged.
-- After its cooldown the circuit breaker is half open: one failed request opens it again, where before it took a full run of failures.
+- After its cooldown the circuit breaker lets one request through to test the provider: its success closes the breaker and its failure starts a new cooldown. A request that began before a trip can no longer close or reopen it.
 
 ## 1.3.0
 

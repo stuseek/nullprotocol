@@ -269,6 +269,45 @@ describe('Resilience', () => {
       expect(r.isTripped()).toBe(false);
     });
 
+    test('after the cooldown one request probes and the others are still refused', async () => {
+      const r = new Resilience({ circuitBreakerThreshold: 1, maxRetries: 0, timeout: 0 });
+      r.circuitBreaker.tripped = true;
+      r.circuitBreaker.tripTime = Date.now() - 61000;
+      let finishProbe;
+      const probe = r.execute(() => new Promise(resolve => (finishProbe = resolve)));
+      await expect(r.execute(() => Promise.resolve('second'))).rejects.toThrow(CircuitBreakerError);
+      finishProbe('up');
+      await expect(probe).resolves.toBe('up');
+      expect(r.isTripped()).toBe(false);
+      await expect(r.execute(() => Promise.resolve('third'))).resolves.toBe('third');
+    });
+
+    test('a request that started before a trip does not close the breaker when it succeeds', async () => {
+      const r = new Resilience({ circuitBreakerThreshold: 1, maxRetries: 0, timeout: 0 });
+      let finishSlow;
+      const slow = r.execute(() => new Promise(resolve => (finishSlow = resolve)));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const down = () => Promise.reject(Object.assign(new Error('down'), { status: 503 }));
+      await expect(r.execute(down)).rejects.toThrow('down');
+      expect(r.isTripped()).toBe(true);
+      finishSlow('late');
+      await expect(slow).resolves.toBe('late');
+      expect(r.isTripped()).toBe(true);
+    });
+
+    test('a cancelled probe leaves the next request to probe', async () => {
+      const r = new Resilience({ circuitBreakerThreshold: 1, maxRetries: 0, timeout: 0 });
+      r.circuitBreaker.tripped = true;
+      r.circuitBreaker.tripTime = Date.now() - 61000;
+      const controller = new AbortController();
+      const cancelled = r.execute(() => new Promise(() => {}), { signal: controller.signal });
+      controller.abort();
+      await expect(cancelled).rejects.toThrow('Run cancelled');
+      expect(r.isTripped()).toBe(true);
+      await expect(r.execute(() => Promise.resolve('up'))).resolves.toBe('up');
+      expect(r.isTripped()).toBe(false);
+    });
+
     test('client errors do not trip the shared breaker', async () => {
       const r = new Resilience({ maxRetries: 0, circuitBreakerThreshold: 2, timeout: 0 });
       const providerFailure = Object.assign(new Error('provider down'), { status: 503 });

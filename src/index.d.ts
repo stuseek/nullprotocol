@@ -99,7 +99,7 @@ export interface AIToolkitOptions {
   models?: ModelAliases;
   /** Retry configuration */
   retry?: RetryOptions;
-  /** Request timeout in milliseconds (default 30000; 120000 with provider 'openai-compatible') */
+  /** Request timeout in milliseconds (default 30000) */
   timeout?: number;
   /** Circuit breaker configuration */
   circuitBreaker?: CircuitBreakerOptions;
@@ -197,7 +197,7 @@ export declare class ControlError extends Error {
 
 export interface ExtractResult {
   success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
   usage?: { inputTokens: number; outputTokens: number };
   data: any | null;
   confidence: number;
@@ -212,7 +212,7 @@ export interface ExtractResult {
 
 export interface ValidateResult {
   success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
   usage?: { inputTokens: number; outputTokens: number };
   score: number;
   reasoning: string;
@@ -224,7 +224,7 @@ export interface ValidateResult {
 
 export interface SummarizeResult {
   success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
   usage?: { inputTokens: number; outputTokens: number };
   summary: string;
   keyPoints: string[];
@@ -235,7 +235,7 @@ export interface SummarizeResult {
 
 export interface DecideResult {
   success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
   usage?: { inputTokens: number; outputTokens: number };
   action: string | null;
   reasoning: string;
@@ -254,7 +254,7 @@ export interface DecideResult {
 
 export interface ChatResult {
   success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
   usage?: { inputTokens: number; outputTokens: number };
   message: string | null;
   confidence: number | null;

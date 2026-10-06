@@ -607,6 +607,35 @@ test('stop signals a running tool and reports that the callback started', async 
   }
 });
 
+test('the output of an invoke carries the token usage of its model request', async () => {
+  const isolated = serveAgents({
+    port: 0,
+    handleSignals: false,
+    apiKey: 'test-key',
+    agents: [{ id: 'review', mode: 'stateless', operations: ['chat'], engines: { openai: 'k' } }]
+  });
+  await new Promise(resolve => isolated.once('listening', resolve));
+  isolated.agents.get('review').base.clients.openai = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{ message: { content: 'Looks fine.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 12, completion_tokens: 3 }
+        })
+      }
+    }
+  };
+  try {
+    const response = await global.fetch(
+      `http://127.0.0.1:${isolated.address().port}/v1/agents/review/invoke`,
+      { method: 'POST', headers: auth, body: JSON.stringify({ input: { prompt: 'Review' } }) }
+    );
+    expect((await response.json()).output.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
+  } finally {
+    await isolated.shutdown();
+  }
+});
+
 test('another principal cannot cancel an active session turn', async () => {
   const isolated = serveAgents({
     port: 0,

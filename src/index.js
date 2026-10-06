@@ -224,7 +224,7 @@ class AIToolkit {
     const retryOpts = this.config.retry || {};
     this.resilience = new Resilience({
       maxRetries: retryOpts.maxRetries ?? 2,
-      timeout: this._timeout(),
+      timeout: this.config.timeout ?? 30000,
       circuitBreakerThreshold: this.config.circuitBreaker?.threshold ?? 5,
       circuitBreakerResetMs: this.config.circuitBreaker?.resetAfterMs ?? 60000
     });
@@ -338,15 +338,23 @@ class AIToolkit {
     const started = Date.now();
     const trace =
       this.telemetryTimeline && this.telemetry ? { started, steps: [], total: 0 } : null;
-    const usage = { inputTokens: 0, outputTokens: 0, reported: false };
+    const usage = { inputTokens: 0, outputTokens: 0, requests: 0, counted: 0 };
     return this.runContext.run({ ...extra, runId, trace, usage }, async () => {
       let status = 'completed';
       let report = true;
       try {
         const value = await fn();
-        // Tokens of every model request the operation made, repair turns and tool rounds included.
-        if (usage.reported && value && typeof value === 'object') {
-          value.usage = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+        // Tokens of every model request the operation made, repair turns and tool rounds
+        // included, and only when the provider counted all of them. The HTTP service
+        // wraps the operation's result with its session state.
+        const result = value?.result ?? value;
+        if (
+          usage.requests &&
+          usage.counted === usage.requests &&
+          result &&
+          typeof result === 'object'
+        ) {
+          result.usage = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
         }
         if (value?.invalid) report = false;
         if (value?.success === false || value?.result?.success === false) status = 'failed';
@@ -723,11 +731,6 @@ class AIToolkit {
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
   }
 
-  // A local or self-hosted server is often slower than a hosted API, so it gets a longer default.
-  _timeout() {
-    return this.config.timeout ?? (this.config.provider === 'openai-compatible' ? 120000 : 30000);
-  }
-
   async _requestModel(engine, client, params) {
     const started = Date.now();
     const runSignal = this.runContext.getStore()?.signal;
@@ -787,10 +790,15 @@ class AIToolkit {
         : {})
     });
     const total = this.runContext.getStore()?.usage;
-    if (total && usage) {
-      total.inputTokens += usage.prompt_tokens ?? usage.input_tokens ?? 0;
-      total.outputTokens += usage.completion_tokens ?? usage.output_tokens ?? 0;
-      total.reported = true;
+    if (total) {
+      const input = usage?.prompt_tokens ?? usage?.input_tokens;
+      const output = usage?.completion_tokens ?? usage?.output_tokens;
+      total.requests++;
+      if (Number.isSafeInteger(input) && Number.isSafeInteger(output)) {
+        total.inputTokens += input;
+        total.outputTokens += output;
+        total.counted++;
+      }
     }
     if (this.telemetry && usage) {
       this.telemetry.track('model_usage', {
@@ -1161,7 +1169,7 @@ class AIToolkit {
     signal?.throwIfAborted();
     const onAbort = () => controller.abort(signal.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
-    const timeout = this._timeout();
+    const timeout = this.config.timeout ?? 30000;
     let timedOut = false;
     let finished = false;
     let remaining = timeout;

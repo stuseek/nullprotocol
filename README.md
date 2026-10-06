@@ -35,7 +35,8 @@ import { NullProtocol } from 'nullprotocol';
 const ai = new NullProtocol({
   provider: 'openai-compatible',
   baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct'
+  model: 'qwen2.5:3b-instruct',
+  timeout: 120000 // a local model can take longer than the 30-second default
 });
 
 const order = await ai.extract('Order 42: two blue mugs', {
