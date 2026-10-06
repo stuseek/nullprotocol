@@ -324,7 +324,7 @@ Configurations written for `nullprotocol@1.0.0` keep working without `provider`:
 NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
 ```
 
-This calls Ollama's OpenAI-compatible endpoint once per operation and once with a tool. It checks format, not model quality. `npm test` never calls paid model APIs; set `NULLPROTOCOL_LIVE_TESTS=1` with provider keys to run the live suite. Benchmark runs with local 3B and 7B models are in [bench](bench/README.md), with the [frozen 48-task result](bench/published/frozen-qwen-2026-09-24.md) and other [published results](bench/published).
+This calls Ollama's OpenAI-compatible endpoint once per operation and once with a tool. It checks format, not model quality. `npm test` never calls paid model APIs; set `NULLPROTOCOL_LIVE_TESTS=1` with provider keys to run the live suite. A [48-task workflow benchmark](bench/README.md) compares one direct prompt with a flow built on `extract`, on local 3B and 7B models and a hosted one, with the [raw results](bench/published).
 
 ## Managed Agents (allowlisted beta)
 
