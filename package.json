@@ -1,7 +1,7 @@
 {
   "name": "nullprotocol",
   "version": "1.3.0",
-  "description": "AI call telemetry, runtime control and primitives for Node.js",
+  "description": "Build focused AI agents around your data, rules and models: checked LLM output for Node.js, with OpenAI, Anthropic or a local model",
   "main": "src/index.js",
   "scripts": {
     "test": "jest",
@@ -32,9 +32,17 @@
     "claude",
     "primitives",
     "telemetry",
-    "observability"
+    "observability",
+    "agents",
+    "ai-agents",
+    "structured-output",
+    "json-schema",
+    "openai",
+    "anthropic",
+    "ollama",
+    "local-llm"
   ],
-  "homepage": "https://github.com/stuseek/nullprotocol#readme",
+  "homepage": "https://nullprotocol.ai",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/stuseek/nullprotocol.git"
@@ -124,6 +132,11 @@
     "examples/managed/starter/executor.js",
     "examples/managed/starter/ask.js",
     "examples/managed/starter/README.md",
+    "docs/operations.md",
+    "docs/dashboard.md",
+    "docs/managed-agents.md",
+    "docs/http-server.md",
+    "docs/space-context.md",
     "docs/upgrade-managed.md",
     "sql/session-store.sql",
     "assets/nullprotocol.png",
