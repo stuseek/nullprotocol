@@ -38,7 +38,7 @@ Both direct arms and the flow see the same task text. Local models run at temper
 - The refund policy and the business-hours rule are written by hand in the flow. A task whose rule cannot be put in code is outside this benchmark.
 - Each task ran once per arm. The tasks are synthetic and share patterns, so these are counts on this set, not a general measure of any model.
 - The first Qwen 7B flow run scored 40/48: eight queue tasks hit the SDK's 30-second request timeout on the test machine. The published run uses a 180-second timeout.
-- `extract` does not report token usage, so the flow arm records calls and time only.
+- The published flow rows predate token reporting in `extract`, so they list calls and time only; a new run records tokens too.
 
 ## Run it
 

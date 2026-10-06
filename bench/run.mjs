@@ -97,6 +97,8 @@ const ai =
 const extract = async (text, schema) => {
   usage.calls += 1;
   const r = await ai.extract(text, schema);
+  usage.input += r.usage?.inputTokens ?? 0;
+  usage.output += r.usage?.outputTokens ?? 0;
   if (!r.success) throw new Error(r.error);
   return r.data;
 };

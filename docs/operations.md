@@ -52,7 +52,7 @@ Any call can use another model of the same provider by its name: `ai.extract(tex
 | `apiKey` | The model API key | For `openai` and `anthropic`, unless set in the environment | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
 | `temperature` | Sampling temperature | No | `0.3` (not sent to Claude 4.7 and later) |
 | `maxTokens` | Reply length limit | No | `1000` |
-| `timeout` | Milliseconds per model request | No | `30000` |
+| `timeout` | Milliseconds per model request | No | `30000`; `120000` with `openai-compatible`, since a local server is often slower |
 | `retry` | `{ maxRetries }` for transient errors | No | `{ maxRetries: 2 }` |
 | `repairAttempts` | Extra turns to fix an unusable reply, 0 to 3 | No | `1` |
 | `basePrompt` | Instructions added to every call | No | — |
@@ -90,6 +90,8 @@ The rest belong to one operation:
 | `summarize` | `maxLength` (characters, default 200), `focus` |
 | `decide` | `guard`, `guardTimeoutMs`, `repairAttempts` |
 | `chat` | `systemPrompt`, `tools` with `onToolCall`, `stream`, `collect`, `trackHistory` |
+
+Results carry `usage: { inputTokens, outputTokens }`, the sum over every model request the call made, when the provider reports token counts. A stream and a call made inside another operation have none.
 
 Operations return `{ success, ... }`; model and validation failures are `{ success: false, error }`, so check `success` before acting. A refused, truncated or content-filtered reply is a failure, never partial text. Validation catches malformed output; it cannot prove the extracted facts are true.
 

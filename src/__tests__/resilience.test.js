@@ -251,6 +251,24 @@ describe('Resilience', () => {
       expect(r.isTripped()).toBe(true);
     });
 
+    test('after the cooldown one failure trips it again and a success closes it', async () => {
+      const r = new Resilience({ circuitBreakerThreshold: 3, maxRetries: 0, timeout: 0 });
+      const down = () => Promise.reject(Object.assign(new Error('down'), { status: 503 }));
+      for (let i = 0; i < 3; i++) await expect(r.execute(down)).rejects.toThrow('down');
+      expect(r.isTripped()).toBe(true);
+
+      r.circuitBreaker.tripTime = Date.now() - 61000;
+      await expect(r.execute(down)).rejects.toThrow('down');
+      expect(r.isTripped()).toBe(true);
+      await expect(r.execute(down)).rejects.toThrow(CircuitBreakerError);
+
+      r.circuitBreaker.tripTime = Date.now() - 61000;
+      await expect(r.execute(() => Promise.resolve('up'))).resolves.toBe('up');
+      expect(r.circuitBreaker.failures).toBe(0);
+      await expect(r.execute(down)).rejects.toThrow('down');
+      expect(r.isTripped()).toBe(false);
+    });
+
     test('client errors do not trip the shared breaker', async () => {
       const r = new Resilience({ maxRetries: 0, circuitBreakerThreshold: 2, timeout: 0 });
       const providerFailure = Object.assign(new Error('provider down'), { status: 503 });

@@ -188,6 +188,18 @@ describe('Validate', () => {
     expect(messages.user).toContain('"conditional"');
   });
 
+  test('accepts the one result object wrapped in an array', async () => {
+    const ai = createAI();
+    ai.makeAIRequest.mockResolvedValue(
+      JSON.stringify([{ score: 0.5, reasoning: 'One line is missing', recommendation: 'fail' }])
+    );
+    expect(await ai.validate('Every line is listed', [{ name: 'Pens' }])).toMatchObject({
+      success: true,
+      score: 0.5,
+      recommendation: 'fail'
+    });
+  });
+
   test('rejects a recommendation outside the contract', async () => {
     const ai = createAI();
     ai.makeAIRequest.mockResolvedValue(
@@ -1583,6 +1595,8 @@ describe('Repair accounting and provider requests', () => {
     const ai = traced('openai', create);
     const result = await ai.extract('Workspace w-12', workspaceSchema);
     expect(result).toMatchObject({ success: true, attempts: 2, repaired: true });
+    // Both requests, the first reply and its repair, count toward the result's usage.
+    expect(result.usage).toEqual({ inputTokens: 80, outputTokens: 12 });
     const second = create.mock.calls[1][0];
     expect(second).toMatchObject({ model: 'gpt-test', max_tokens: 300 });
     expect(second.messages.map(message => message.role)).toEqual([

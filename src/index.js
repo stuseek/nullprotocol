@@ -224,7 +224,7 @@ class AIToolkit {
     const retryOpts = this.config.retry || {};
     this.resilience = new Resilience({
       maxRetries: retryOpts.maxRetries ?? 2,
-      timeout: this.config.timeout ?? 30000,
+      timeout: this._timeout(),
       circuitBreakerThreshold: this.config.circuitBreaker?.threshold ?? 5,
       circuitBreakerResetMs: this.config.circuitBreaker?.resetAfterMs ?? 60000
     });
@@ -338,11 +338,16 @@ class AIToolkit {
     const started = Date.now();
     const trace =
       this.telemetryTimeline && this.telemetry ? { started, steps: [], total: 0 } : null;
-    return this.runContext.run({ ...extra, runId, trace }, async () => {
+    const usage = { inputTokens: 0, outputTokens: 0, reported: false };
+    return this.runContext.run({ ...extra, runId, trace, usage }, async () => {
       let status = 'completed';
       let report = true;
       try {
         const value = await fn();
+        // Tokens of every model request the operation made, repair turns and tool rounds included.
+        if (usage.reported && value && typeof value === 'object') {
+          value.usage = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+        }
         if (value?.invalid) report = false;
         if (value?.success === false || value?.result?.success === false) status = 'failed';
         return value;
@@ -718,6 +723,11 @@ class AIToolkit {
     return this.config.models?.[model] || model || this.config.models?.[engine] || defaults[engine];
   }
 
+  // A local or self-hosted server is often slower than a hosted API, so it gets a longer default.
+  _timeout() {
+    return this.config.timeout ?? (this.config.provider === 'openai-compatible' ? 120000 : 30000);
+  }
+
   async _requestModel(engine, client, params) {
     const started = Date.now();
     const runSignal = this.runContext.getStore()?.signal;
@@ -776,6 +786,12 @@ class AIToolkit {
         ? { outputTokens: usage.completion_tokens ?? usage.output_tokens }
         : {})
     });
+    const total = this.runContext.getStore()?.usage;
+    if (total && usage) {
+      total.inputTokens += usage.prompt_tokens ?? usage.input_tokens ?? 0;
+      total.outputTokens += usage.completion_tokens ?? usage.output_tokens ?? 0;
+      total.reported = true;
+    }
     if (this.telemetry && usage) {
       this.telemetry.track('model_usage', {
         engine,
@@ -1145,7 +1161,7 @@ class AIToolkit {
     signal?.throwIfAborted();
     const onAbort = () => controller.abort(signal.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
-    const timeout = this.config.timeout ?? 30000;
+    const timeout = this._timeout();
     let timedOut = false;
     let finished = false;
     let remaining = timeout;
@@ -1390,7 +1406,9 @@ class AIToolkit {
         operation: 'validate'
       });
 
-      const validation = this.parseJSON(response);
+      // Small models sometimes wrap the one object in an array, most often when the subject is a list.
+      const parsed = this.parseJSON(response);
+      const validation = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed;
 
       const valid =
         validation &&

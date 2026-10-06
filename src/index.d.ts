@@ -99,7 +99,7 @@ export interface AIToolkitOptions {
   models?: ModelAliases;
   /** Retry configuration */
   retry?: RetryOptions;
-  /** Request timeout in milliseconds (default 30000) */
+  /** Request timeout in milliseconds (default 30000; 120000 with provider 'openai-compatible') */
   timeout?: number;
   /** Circuit breaker configuration */
   circuitBreaker?: CircuitBreakerOptions;
@@ -197,10 +197,12 @@ export declare class ControlError extends Error {
 
 export interface ExtractResult {
   success: boolean;
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  usage?: { inputTokens: number; outputTokens: number };
   data: any | null;
   confidence: number;
   validation?: any;
-  /** Model calls used, including repair turns; also set when the result failed. Each call's tokens are in the trace and model_usage telemetry. */
+  /** Model calls used, including repair turns; also set when the result failed. The tokens of all of them are in `usage`. */
   attempts?: number;
   /** True when a repair turn turned an unusable reply into an accepted one. */
   repaired?: boolean;
@@ -210,6 +212,8 @@ export interface ExtractResult {
 
 export interface ValidateResult {
   success: boolean;
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  usage?: { inputTokens: number; outputTokens: number };
   score: number;
   reasoning: string;
   confidence: number;
@@ -220,6 +224,8 @@ export interface ValidateResult {
 
 export interface SummarizeResult {
   success: boolean;
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  usage?: { inputTokens: number; outputTokens: number };
   summary: string;
   keyPoints: string[];
   confidence: number;
@@ -229,6 +235,8 @@ export interface SummarizeResult {
 
 export interface DecideResult {
   success: boolean;
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  usage?: { inputTokens: number; outputTokens: number };
   action: string | null;
   reasoning: string;
   confidence: number;
@@ -237,7 +245,7 @@ export interface DecideResult {
   rejectedAction?: string;
   /** Set when an application guard rejects or cannot finish checking a decision. */
   errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout' | ControlErrorCode;
-  /** Model calls used, including repair turns; also set when the result failed. Each call's tokens are in the trace and model_usage telemetry. */
+  /** Model calls used, including repair turns; also set when the result failed. The tokens of all of them are in `usage`. */
   attempts?: number;
   /** True when a repair turn turned an unusable reply into an accepted one. */
   repaired?: boolean;
@@ -246,6 +254,8 @@ export interface DecideResult {
 
 export interface ChatResult {
   success: boolean;
+  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent when the provider reported none, for a stream, and for a call made inside another operation. */
+  usage?: { inputTokens: number; outputTokens: number };
   message: string | null;
   confidence: number | null;
   toolCalls?: ToolCallResult[];

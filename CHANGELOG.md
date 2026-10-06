@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Every operation's result has `usage: { inputTokens, outputTokens }`, summed over its model requests, when the provider reports token counts.
+- `validate` accepts its one result object wrapped in an array, as `decide` already does; small models answer this way when the subject is a list.
+- With `provider: 'openai-compatible'` the default request timeout is 120 seconds instead of 30, since a local server is often slower. An explicit `timeout` is unchanged.
+- After its cooldown the circuit breaker is half open: one failed request opens it again, where before it took a full run of failures.
+
 ## 1.3.0
 
 - `connectOpenAI(client, options)` from `nullprotocol/openai` reports an existing OpenAI client's `chat.completions.create` calls to Activity, one `model.call` event each, and with a runtime key lets the cabinet pause and stop them. Parameters, completions and errors stay the SDK's own; a stream comes back as an async iterable of its chunks. Works with `openai` 4 to 7.

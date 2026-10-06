@@ -126,6 +126,14 @@ describe('provider openai-compatible', () => {
   });
 });
 
+test('a compatible server gets a longer default request timeout than a cloud provider', () => {
+  const local = { provider: 'openai-compatible', baseURL: 'http://127.0.0.1:1/v1', model: 'm' };
+  expect(new NullProtocol(local).resilience.timeout).toBe(120000);
+  expect(new NullProtocol({ ...local, timeout: 5000 }).resilience.timeout).toBe(5000);
+  const cloud = new NullProtocol({ provider: 'openai', model: 'gpt-4.1-mini', apiKey: 'sk-x' });
+  expect(cloud.resilience.timeout).toBe(30000);
+});
+
 describe('cloud providers', () => {
   test('openai takes an explicit key over OPENAI_API_KEY and uses the OpenAI endpoint', () => {
     process.env.OPENAI_API_KEY = 'sk-from-env';
