@@ -63,7 +63,7 @@ test('without a key the Agent lives in the process and only the model is called'
   // An entry sent with every operation and the notes are there; a selected entry only when named.
   expect(systemOf(0)).toContain('You work for Mugs & Co.');
   expect(systemOf(0)).toContain('{"region":"EU"}');
-  expect(systemOf(0)).toContain('[brand]\nMugs & Co');
+  expect(systemOf(0)).toContain('brand:\nMugs & Co');
   expect(systemOf(0)).not.toContain('World');
   expect(systemOf(0)).toContain('The customer is Dana.');
   expect(systemOf(0)).not.toContain('45 days');
