@@ -11,15 +11,22 @@ beforeAll(async () => {
     let body = '';
     request.on('data', chunk => (body += chunk));
     request.on('end', () => {
-      requests.push(JSON.parse(body));
+      requests.push({ ...JSON.parse(body), bytes: Buffer.byteLength(body) });
       const reply = replies.shift();
       response.setHeader('Content-Type', 'application/json');
-      response.end(
+      if (reply.status) {
+        response.statusCode = reply.status;
+        return response.end('{}');
+      }
+      const { content = reply, usage = { prompt_tokens: 10, completion_tokens: 5 } } = reply;
+      return response.end(
         JSON.stringify({
           choices: [
-            { message: { content: typeof reply === 'string' ? reply : JSON.stringify(reply) } }
+            {
+              message: { content: typeof content === 'string' ? content : JSON.stringify(content) }
+            }
           ],
-          usage: { prompt_tokens: 10, completion_tokens: 5 }
+          ...(usage ? { usage } : {})
         })
       );
     });
@@ -213,3 +220,56 @@ test('chat is an action a decision chooses, answered by the same model', async (
   expect(systemOf(1)).toContain('Be kind.');
   expect(agent.chat).toBeUndefined();
 });
+
+test('a saved Agent records what really went to the model', async () => {
+  // A Space that serves one Agent and keeps what the SDK reports.
+  const recorded = [];
+  const space = http.createServer((request, response) => {
+    let body = '';
+    request.on('data', chunk => (body += chunk));
+    request.on('end', () => {
+      if (request.method === 'POST') recorded.push(JSON.parse(body));
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          agent: { provider: 'openai-compatible', model: 'test', instructions: '', revision: 3 },
+          entries: [{ key: 'policy', value: 'Returns within 45 days.', version: 'v1' }],
+          notes: [],
+          missing: []
+        })
+      );
+    });
+  });
+  await new Promise(resolve => space.listen(0, '127.0.0.1', resolve));
+  const load = maxPromptBytes =>
+    NullProtocol.load({
+      key: 'np_space_test',
+      endpoint: `http://127.0.0.1:${space.address().port}`,
+      agentId: 'support',
+      credentials: { 'openai-compatible': { baseURL } },
+      maxPromptBytes
+    });
+
+  // A retried request is two requests; a provider that does not count tokens reports none.
+  replies.push({ status: 503 }, { content: { days: 45 }, usage: null });
+  const result = await (await load(4096)).extract('How long?', { days: 'number' });
+  expect(result).toMatchObject({ success: true, data: { days: 45 } });
+  expect(result.usage).toBeUndefined();
+  expect(recorded[0]).toMatchObject({
+    operation: 'extract',
+    revision: 3,
+    modelCalls: 2,
+    requestBytes: requests[0].bytes + requests[1].bytes,
+    context: [{ key: 'policy', version: 'v1' }],
+    reference: expect.stringContaining('45 days')
+  });
+
+  // The budget is the size of the request as it is sent; one byte over is not sent.
+  const tight = await load(requests[0].bytes - 1);
+  expect(await tight.extract('How long?', { days: 'number' })).toMatchObject({
+    errorCode: 'model_context_too_large'
+  });
+  expect(recorded[1]).toMatchObject({ success: false, modelCalls: 0, requestBytes: 0 });
+  expect(requests).toHaveLength(2);
+  await new Promise(resolve => space.close(resolve));
+}, 20000);

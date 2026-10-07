@@ -163,8 +163,12 @@ class Agent {
         meter.modelCalls++;
         meter.requestBytes += size;
       });
-      meter.usage.inputTokens += reply.inputTokens;
-      meter.usage.outputTokens += reply.outputTokens;
+      // Tokens are reported only when the provider counted every request.
+      if (reply.inputTokens === null || reply.outputTokens === null) meter.usage = null;
+      if (meter.usage) {
+        meter.usage.inputTokens += reply.inputTokens;
+        meter.usage.outputTokens += reply.outputTokens;
+      }
       return reply.text;
     };
     return meter;
@@ -173,14 +177,16 @@ class Agent {
   // Everything one operation runs with, read once when it starts.
   async turn(contextKeys = []) {
     const { settings, entries, notes, missing } = await this.store.turn(contextKeys);
+    const meter = this.meter(settings);
     const turn = {
       settings,
       instructions: settings.instructions,
       reference: referenceText(entries, notes),
       sent: entries.map(({ key, version }) => ({ key, version })),
       repairAttempts: this.call.repairAttempts ?? 1,
-      ...this.meter(settings)
+      meter
     };
+    turn.ask = meter.ask;
     if (settings.paused) {
       turn.refusal = new AgentError(
         'agent_paused',
@@ -208,7 +214,7 @@ class Agent {
       turn = await this.turn(options.contextKeys);
       if (turn.refusal) throw turn.refusal;
       result = await operations[name](turn, ...input, options);
-      result.usage = turn.usage;
+      if (turn.meter.usage) result.usage = turn.meter.usage;
     } catch (error) {
       result = { success: false, error: error.message, errorCode: error.code ?? 'failed' };
       if (!turn) return result;
@@ -237,8 +243,8 @@ class Agent {
         revision: turn.settings.revision,
         instructions: turn.instructions,
         reference: turn.reference,
-        modelCalls: turn.modelCalls,
-        requestBytes: turn.requestBytes,
+        modelCalls: turn.meter.modelCalls,
+        requestBytes: turn.meter.requestBytes,
         context: turn.sent,
         input: Object.fromEntries(names.map((argument, index) => [argument, input[index]])),
         result,
@@ -343,7 +349,7 @@ class Agent {
         errorCode: outcome.errorCode,
         modelCalls: meter.modelCalls,
         requestBytes: meter.requestBytes,
-        usage: meter.usage,
+        usage: meter.usage ?? undefined,
         durationMs: Date.now() - started
       })
       .catch(error => {
