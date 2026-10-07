@@ -100,6 +100,15 @@ test('each operation checks the reply and lets the model repair it once', async 
       summary: 'Paid on Monday.'
     }
   );
+  // A score that is not a number is no score, however the model spells it.
+  replies.push(
+    { score: '0.9', reasoning: 'Clear.', recommendation: 'pass' },
+    { score: null, reasoning: 'Clear.', recommendation: 'pass' }
+  );
+  expect(await agent.validate('Is it polite?', 'Thank you!')).toMatchObject({
+    success: false,
+    errorCode: 'invalid_reply'
+  });
   replies.push({ score: 0.9, reasoning: 'Clear.', recommendation: 'pass' });
   expect(await agent.validate('Is it polite?', 'Thank you!')).toMatchObject({
     success: true,
@@ -166,10 +175,15 @@ test('execute runs the handler of a decision once, after the schema and the guar
   });
   expect(refund).not.toHaveBeenCalled();
 
+  // What runs is the decision as it was made, on the settings it was made with.
   const decision = await decide({ orderId: 42 });
+  decision.parameters.orderId = 13;
+  decision.action = 'chat';
+  await agent.update({ model: 'another' });
   const runs = await Promise.all([agent.execute(decision), agent.execute(decision)]);
   expect(runs.map(run => run.errorCode ?? run.outcome)).toEqual(['completed', 'already_executed']);
   expect(refund).toHaveBeenCalledTimes(1);
+  expect(refund.mock.calls[0][0]).toEqual({ orderId: 42 });
 
   await agent.update({ paused: true });
   expect(await agent.extract('x', { days: 'number' })).toMatchObject({ errorCode: 'agent_paused' });

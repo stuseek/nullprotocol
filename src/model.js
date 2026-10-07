@@ -57,11 +57,11 @@ function failed(code, message, status) {
   return Object.assign(new Error(message), { code, ...(status ? { status } : {}) });
 }
 
-async function post(url, headers, body, signal) {
+async function post({ url, headers, body }, signal) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(body),
+    body,
     signal
   });
   const text = await response.text();
@@ -85,76 +85,80 @@ async function post(url, headers, body, signal) {
 
 const count = value => (Number.isSafeInteger(value) ? value : null);
 
-// A refused or cut-off reply is not an answer; the operations are bounded
-// single calls, so they reject it instead of returning partial text.
-async function openaiTurn(settings, options, system, turns, signal) {
-  const hosted = settings.provider === 'openai';
-  const temperature = options.temperature ?? (hosted ? undefined : 0.3);
-  const reply = await post(
-    `${settings.baseURL}/chat/completions`,
-    settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {},
-    {
-      model: settings.model,
-      messages: [{ role: 'system', content: system }, ...turns],
-      // OpenAI's own API names the limit max_completion_tokens; servers that
-      // copy the older API know only max_tokens.
-      [hosted ? 'max_completion_tokens' : 'max_tokens']: options.maxTokens ?? 1000,
-      ...(temperature === undefined ? {} : { temperature })
-    },
-    signal
-  );
-  const choice = reply.choices?.[0];
-  if (choice?.finish_reason === 'length' || choice?.finish_reason === 'content_filter') {
-    throw failed('provider_error', `The model's reply is incomplete: ${choice.finish_reason}`);
+// Each provider has a request to send and a way to read the reply. A refused
+// or cut-off reply is not an answer; the operations are bounded single calls,
+// so they reject it instead of returning partial text.
+const openai = {
+  request(settings, options, system, turns) {
+    const hosted = settings.provider === 'openai';
+    const temperature = options.temperature ?? (hosted ? undefined : 0.3);
+    return {
+      url: `${settings.baseURL}/chat/completions`,
+      headers: settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {},
+      body: {
+        model: settings.model,
+        messages: [{ role: 'system', content: system }, ...turns],
+        // OpenAI's own API names the limit max_completion_tokens; servers that
+        // copy the older API know only max_tokens.
+        [hosted ? 'max_completion_tokens' : 'max_tokens']: options.maxTokens ?? 1000,
+        ...(temperature === undefined ? {} : { temperature })
+      }
+    };
+  },
+  read(reply) {
+    const choice = reply.choices?.[0];
+    if (choice?.finish_reason === 'length' || choice?.finish_reason === 'content_filter') {
+      throw failed('provider_error', `The model's reply is incomplete: ${choice.finish_reason}`);
+    }
+    return {
+      text: choice?.message?.content,
+      inputTokens: count(reply.usage?.prompt_tokens),
+      outputTokens: count(reply.usage?.completion_tokens)
+    };
   }
-  const text = choice?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) {
-    throw failed('provider_error', "The model's reply has no text");
-  }
-  return {
-    text,
-    inputTokens: count(reply.usage?.prompt_tokens),
-    outputTokens: count(reply.usage?.completion_tokens)
-  };
-}
+};
 
-async function anthropicTurn(settings, options, system, turns, signal) {
-  const reply = await post(
-    `${settings.baseURL}/messages`,
-    { 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' },
-    {
-      model: settings.model,
-      system,
-      messages: turns,
-      max_tokens: options.maxTokens ?? 1000,
-      ...(SAMPLING_MODELS.test(settings.model) ? { temperature: options.temperature ?? 0.3 } : {})
-    },
-    signal
-  );
-  if (
-    ['refusal', 'max_tokens', 'model_context_window_exceeded', 'pause_turn'].includes(
-      reply.stop_reason
-    )
-  ) {
-    throw failed('provider_error', `The model's reply is incomplete: ${reply.stop_reason}`);
+const anthropic = {
+  request(settings, options, system, turns) {
+    return {
+      url: `${settings.baseURL}/messages`,
+      headers: { 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' },
+      body: {
+        model: settings.model,
+        system,
+        messages: turns,
+        max_tokens: options.maxTokens ?? 1000,
+        ...(SAMPLING_MODELS.test(settings.model) ? { temperature: options.temperature ?? 0.3 } : {})
+      }
+    };
+  },
+  read(reply) {
+    if (
+      ['refusal', 'max_tokens', 'model_context_window_exceeded', 'pause_turn'].includes(
+        reply.stop_reason
+      )
+    ) {
+      throw failed('provider_error', `The model's reply is incomplete: ${reply.stop_reason}`);
+    }
+    return {
+      // A reply can open with thinking blocks, so the text blocks are joined.
+      text: (reply.content || [])
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join(''),
+      inputTokens: count(reply.usage?.input_tokens),
+      outputTokens: count(reply.usage?.output_tokens)
+    };
   }
-  // A reply can open with thinking blocks, so the text blocks are joined.
-  const text = (reply.content || [])
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
-    .join('');
-  if (!text.trim()) throw failed('provider_error', "The model's reply has no text");
-  return {
-    text,
-    inputTokens: count(reply.usage?.input_tokens),
-    outputTokens: count(reply.usage?.output_tokens)
-  };
-}
+};
 
 /**
- * A model to ask: `complete(system, turns)` returns the reply text and its
- * token counts. `given` holds provider, model and that provider's credentials;
- * `options` the call settings: timeout, retry, circuitBreaker, temperature, maxTokens.
+ * A model to ask. `complete(system, turns, limit)` sends one request, retried
+ * on transient failures, and returns the reply text and its token counts.
+ * `limit` is the largest request body in bytes; a larger one is not sent.
+ * `sent` is called for every request that goes out, with its size.
+ * `given` holds provider, model and that provider's credentials; `options` the
+ * call settings: timeout, retry, circuitBreaker, temperature, maxTokens.
  */
 function createModel(given, options = {}) {
   const settings = modelSettings(given);
@@ -164,12 +168,29 @@ function createModel(given, options = {}) {
     circuitBreakerThreshold: options.circuitBreaker?.threshold ?? 5,
     circuitBreakerResetMs: options.circuitBreaker?.resetAfterMs ?? 60000
   });
-  const turn = settings.provider === 'anthropic' ? anthropicTurn : openaiTurn;
+  const provider = settings.provider === 'anthropic' ? anthropic : openai;
   return {
-    provider: settings.provider,
-    model: settings.model,
-    complete: (system, turns) =>
-      resilience.execute(signal => turn(settings, options, system, turns, signal))
+    async complete(system, turns, limit, sent) {
+      const request = provider.request(settings, options, system, turns);
+      const body = JSON.stringify(request.body);
+      const size = Buffer.byteLength(body, 'utf8');
+      if (size > limit) {
+        throw failed(
+          'model_context_too_large',
+          `The request takes ${size} bytes and the budget is ${limit}. Nothing was left out and the model was not called. Mark large context entries "selected" or shorten them.`
+        );
+      }
+      const reply = provider.read(
+        await resilience.execute(signal => {
+          sent(size);
+          return post({ ...request, body }, signal);
+        })
+      );
+      if (typeof reply.text !== 'string' || !reply.text.trim()) {
+        throw failed('provider_error', "The model's reply has no text");
+      }
+      return reply;
+    }
   };
 }
 

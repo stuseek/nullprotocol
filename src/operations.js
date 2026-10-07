@@ -63,7 +63,8 @@ async function validate(turn, criteria, subject, reference) {
     `Criteria: ${JSON.stringify(criteria)}\n\nSubject: ${JSON.stringify(subject)}${reference ? `\n\nReference: ${JSON.stringify(reference)}` : ''}\n\nReturn one JSON object with score (number from 0 to 1), reasoning (string), and recommendation (exactly "pass", "fail", or "conditional"). Assess the subject; do not use default values.`,
     reply => {
       const usable =
-        reply?.score >= 0 &&
+        typeof reply?.score === 'number' &&
+        reply.score >= 0 &&
         reply.score <= 1 &&
         typeof reply.reasoning === 'string' &&
         ['pass', 'fail', 'conditional'].includes(reply.recommendation);
