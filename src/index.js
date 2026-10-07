@@ -92,7 +92,7 @@ function localStore(settings) {
 // What the model is told besides the operation's own input.
 function referenceText(entries, notes) {
   const data = entries.map(
-    ({ key, value }) => `[${key}]\n${typeof value === 'string' ? value : JSON.stringify(value)}`
+    ({ key, value }) => `${key}:\n${typeof value === 'string' ? value : JSON.stringify(value)}`
   );
   return [
     data.length &&

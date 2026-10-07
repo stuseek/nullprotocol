@@ -29,7 +29,8 @@ async function answer(turn, task, request, check) {
       value = single(reply);
       problem = check(value);
     } catch {
-      problem = 'The reply was not valid JSON.';
+      problem =
+        'The reply was not valid JSON. Return one JSON object that starts with { and ends with }.';
     }
     if (!problem) return { value, attempts, repaired: attempts > 1 };
     if (attempts > turn.repairAttempts) return { problem, attempts, repaired: false };
@@ -119,7 +120,6 @@ async function decide(turn, context, actions, { guard } = {}) {
       if (!allowed.includes(reply?.action)) {
         return `"${reply?.action}" is not an available action. Choose exactly one of: ${allowed.join(', ')}.`;
       }
-      if (typeof reply.reasoning !== 'string') return 'reasoning must be a string.';
       const { parameters } = reply;
       return parameters === undefined ||
         (parameters && typeof parameters === 'object' && !Array.isArray(parameters))
@@ -142,7 +142,7 @@ async function decide(turn, context, actions, { guard } = {}) {
     success: true,
     action: value.action,
     parameters: value.parameters ?? {},
-    reasoning: value.reasoning,
+    reasoning: typeof value.reasoning === 'string' ? value.reasoning : '',
     attempts,
     repaired
   };
