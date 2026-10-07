@@ -137,7 +137,7 @@ await agent.memory.list();
 await agent.memory.delete(id);
 ```
 
-Notes are short facts the Agent keeps in mind in every operation. An object bound to a conversation adds notes to that conversation and sees the Agent's and its own. Nothing is added to memory on its own: an operation does not remember the one before it.
+Notes are short facts the Agent keeps in mind in every operation. An object bound to a conversation adds notes to that conversation and sees the Agent's and its own. With a key each scope, the Agent's own and each conversation's, holds up to 200 notes of 4 KiB. Nothing is added to memory on its own: an operation does not remember the one before it.
 
 ## Settings
 
