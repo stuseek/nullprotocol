@@ -199,8 +199,10 @@ function fitPrompt(job, tools, model, entries, credential) {
 
 // The JSON size of each part of the prompt as it was kept, in bytes.
 function promptParts(job) {
-  const size = value =>
-    value === undefined || value === null ? 0 : Buffer.byteLength(JSON.stringify(value));
+  const size = value => {
+    if (value === undefined || value === null) return 0;
+    return Buffer.byteLength(JSON.stringify(value));
+  };
   const conversation = job.conversation;
   return {
     instructions: size(job.template.config.instructions),

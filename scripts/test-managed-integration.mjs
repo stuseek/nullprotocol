@@ -256,10 +256,10 @@ try {
   assert.ok(!modelRequests.slice(0, sentBefore).some(mentionsPolicy));
   assert.ok(modelRequests.slice(sentBefore).some(mentionsPolicy));
   assert.deepEqual(
-    (await caller.agent(agent.id).getRun(fifth.id)).contextRefs.map(ref => [ref.key, ref.state]),
+    (await caller.agent(agent.id).getRun(fifth.id)).contextRefs.map(ref => [ref.key, ref.delivery, ref.state]),
     [
-      ['policy', 'current'],
-      ['region', 'current']
+      ['policy', 'sent', 'current'],
+      ['region', 'sent', 'current']
     ]
   );
   const compactedConversation = await content.agent(agent.id).conversations.get('ticket-124');
