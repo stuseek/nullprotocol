@@ -10,6 +10,7 @@ const { parseJSON } = require('./json');
 const { ClientControl, ControlError } = require('./runtime-control');
 const { AsyncLocalStorage } = require('async_hooks');
 const { randomUUID } = require('crypto');
+const agents = require('./agent');
 
 // Global instance for functional usage
 let globalInstance = null;
@@ -164,10 +165,22 @@ class AIToolkit {
     }
 
     // Context store for stateful mode
-    this.context = new Map();
+    this._context = new Map();
+    const given = options;
+    // A saved Agent's model and instructions live in its Space, not here.
+    if (options.key !== undefined) {
+      for (const name of ['provider', 'model', 'instructions', 'apiKey', 'baseURL']) {
+        if (options[name] !== undefined) {
+          throw new Error(
+            `With key, ${name} is not a constructor option: the saved Agent holds its model and instructions. Use NullProtocol.create or NullProtocol.load.`
+          );
+        }
+      }
+      options = { ...options, configFile: false };
+    }
     // Load configuration
     this.config = new ConfigLoader().load(options);
-    this.basePrompt = this.config.basePrompt || null;
+    this.basePrompt = this.config.instructions || this.config.basePrompt || null;
     this.agentId = this.config.agentId || 'default-agent';
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.agentId)) {
       throw new Error('agentId must be a stable lowercase slug (up to 64 characters)');
@@ -272,6 +285,17 @@ class AIToolkit {
         return this.control ? this._controlled(name, start, stream && !args[1]?.collect) : start();
       };
     }
+    agents.install(this, given);
+  }
+
+  /** Creates an Agent: in this process without `key`, saved in the Space with it. */
+  static create(options) {
+    return agents.create(this, options);
+  }
+
+  /** Loads a saved Agent by `agentId`; needs `key`. */
+  static load(options) {
+    return agents.load(this, options);
   }
 
   // Runs one top-level operation under control: it is refused while the agent is
@@ -479,17 +503,17 @@ class AIToolkit {
   }
 
   addContext(key, value) {
-    this.context.set(key, value);
+    this._context.set(key, value);
     return this;
   }
 
   removeContext(key) {
-    this.context.delete(key);
+    this._context.delete(key);
     return this;
   }
 
   clearContext() {
-    this.context.clear();
+    this._context.clear();
     return this;
   }
 
@@ -588,12 +612,12 @@ class AIToolkit {
   }
 
   getContextString() {
-    if (this.context.size === 0) {
+    if (this._context.size === 0) {
       return '';
     }
 
     const contextParts = [];
-    for (const [key, value] of this.context) {
+    for (const [key, value] of this._context) {
       contextParts.push(`${key}: ${JSON.stringify(value)}`);
     }
     return `\nContext:\n${contextParts.join('\n')}`;
@@ -651,9 +675,12 @@ class AIToolkit {
   }
 
   buildMessages(systemPrompt, userPrompt, additionalContext = null) {
-    let finalSystemPrompt = this.basePrompt
-      ? `${this.basePrompt}\n\n${systemPrompt}`
-      : systemPrompt;
+    // Inside an Agent operation the instructions and reference data are the
+    // ones that operation started with.
+    const turn = this._turn.getStore();
+    const instructions = turn ? turn.instructions : this.basePrompt;
+    let finalSystemPrompt = instructions ? `${instructions}\n\n${systemPrompt}` : systemPrompt;
+    if (turn?.reference) finalSystemPrompt += `\n\n${turn.reference}`;
 
     // Add stored context for stateful mode
     const contextString = this.getContextString();

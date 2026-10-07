@@ -226,7 +226,8 @@ class ConfigLoader {
     }
 
     // Check if at least one engine is configured
-    if (!config.engines.openai && !config.engines.anthropic) {
+    // A saved Agent gets its model from its Space, so it has none here.
+    if (!config.key && !config.engines.openai && !config.engines.anthropic) {
       console.warn(
         'No AI engine configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, or pass engines to AIToolkit.'
       );
