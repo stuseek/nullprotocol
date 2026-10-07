@@ -34,7 +34,8 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     return query.size ? `?${query}` : '';
   };
 
-  async function request(method, path, body) {
+  // A Space that answers 503 is busy and did nothing, so the request is sent again.
+  async function request(method, path, body, attempt = 1) {
     let response;
     try {
       response = await fetch(base + path, {
@@ -51,6 +52,10 @@ function savedStore({ key, endpoint, agentId, conversation }) {
         'platform_unavailable',
         `NullProtocol could not be reached: ${error.message}`
       );
+    }
+    if (response.status === 503 && attempt < 4) {
+      await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+      return request(method, path, body, attempt + 1);
     }
     const result = await response.json().catch(() => ({}));
     if (response.ok) return result;
