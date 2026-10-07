@@ -15,6 +15,6 @@ ollama pull qwen2.5:3b-instruct
 node examples/flows/refund.mjs
 ```
 
-`NULLPROTOCOL_MODEL` and `NULLPROTOCOL_MODEL_URL` choose another model or server; [model.mjs](model.mjs) holds the one client all three share. In your own project, import from `nullprotocol` the same way.
+`NULLPROTOCOL_MODEL` and `NULLPROTOCOL_MODEL_URL` choose another model or server; [model.mjs](model.mjs) holds the one Agent all three share. In your own project, import from `nullprotocol` the same way.
 
 A schema check catches a malformed reply, not a wrong reading: on the benchmark's invoices a 3B model misread one line in twelve. Check amounts that matter against a second source.

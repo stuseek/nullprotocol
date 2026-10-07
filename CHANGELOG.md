@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.0
+
+A new SDK. Nothing from 1.x is kept for compatibility.
+
+- One object: an Agent with a model, instructions, context and memory. `NullProtocol.create(options)` makes one and `NullProtocol.load({ key, agentId })` loads a saved one. The constructor is gone.
+- Four operations with checked results: `extract`, `summarize`, `validate`, `decide`. `validate(criteria, subject, { reference })` takes its reference in options. A failed result is always `{ success: false, error, errorCode }`.
+- `chat` is no longer a method. It is a built-in action: `decide` may choose it and `execute` answers with the same model.
+- `registerAction` and `execute`: an action's JSON Schema and guard run before its handler, one decision runs once, and a paused Agent or a disabled action stops it.
+- `agent.context`, `agent.space` and `agent.memory` replace `addContext` and the Space context client. A selected entry holds a document of up to 64 KiB.
+- Without a key everything lives in the process and nothing is sent to NullProtocol. With an SDK key the same calls read and write the saved Agent, shared by every process, and each operation is recorded with its texts.
+- One request budget, `maxPromptBytes`, measured on the request as it is sent. A request that does not fit fails with `model_context_too_large`; nothing is dropped.
+- OpenAI, Anthropic and OpenAI-compatible servers are called directly. The `openai` and `@anthropic-ai/sdk` packages are no longer needed.
+- Removed: `connectOpenAI` and `nullprotocol/openai`, `NullProtocolClient`, `ManagedExecutor`, `defineAction`, telemetry and runtime keys, `serve`, `serveAgents` and the CLI, session stores, presets, `configure` and the functional exports, chaining through the last result, conversation history, streaming and tool calls in `chat`.
+
 ## 1.4.0 — 2026-10-07
 
 - Managed Agents: an Agent Context entry can be `inclusion: 'selected'`, sent only to the runs that name its key in `contextKeys`. A selected entry holds up to 64 KiB.

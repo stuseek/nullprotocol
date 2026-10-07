@@ -1,175 +1,152 @@
-# Operations and configuration
+# Operations
 
-With a local model server you need no account and no key. Save this example as `example.mjs`:
+Everything an Agent does, with its options and error codes. The [README](../README.md) has the short path.
+
+## Creating and loading
 
 ```js
 import { NullProtocol } from 'nullprotocol';
 
-const ai = new NullProtocol({
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
-  model: 'qwen2.5:3b-instruct',
-  timeout: 120000 // a local model can take longer than the 30-second default
-});
-
-const result = await ai.extract('Order 42: two blue mugs', {
-  orderId: 'number',
-  quantity: 'number',
-  item: 'string'
-});
-if (result.success) console.log(result.data);
-else console.error(result.error); // ask again, use a stronger model, or send for review
+const agent = await NullProtocol.create({ provider, model, instructions, key, agentId, name, ...call });
+const same = await NullProtocol.load({ key, agentId, ...call });
 ```
 
-For Ollama, pull the model and run the example:
+| Option | Meaning |
+| --- | --- |
+| `provider`, `model` | The model. `provider` is `openai`, `anthropic` or `openai-compatible`. `create` only: a loaded Agent's model comes from its Space. |
+| `instructions` | Who the Agent is, what it is for and the rules it follows. `create` only. |
+| `apiKey`, `baseURL` | Credentials for `provider` in `create`. |
+| `credentials` | Credentials by provider, for the models this process may be asked to call: `{ openai: { apiKey }, 'openai-compatible': { baseURL, apiKey } }`. |
+| `key` | An SDK key of a Space. `create` saves the Agent there; without it the Agent lives in the process. `load` needs it and fails with `key_required` otherwise. |
+| `endpoint` | Another NullProtocol API address. Default `https://api.nullprotocol.ai`, or `NULLPROTOCOL_API_URL`. |
+| `agentId` | The Agent's ID. `create` issues one when it is left out and fails with `agent_exists` when it is taken. |
+| `conversation` | Binds the object to one conversation: its `context` and `memory` are then that conversation's own, on top of the Agent's. |
+| `label` | A name for this process, such as `backend` or `worker`. It only filters history. |
+| `timeout`, `retry`, `circuitBreaker` | 30000 ms, `{ maxRetries: 2 }`, `{ threshold: 5, resetAfterMs: 60000 }` by default. |
+| `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
+| `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
+| `maxPromptBytes` | The largest request body sent to a model. Default and maximum 131072. Set it lower for a model with a small window; it is bytes, not tokens. |
 
-```sh
-ollama pull qwen2.5:3b-instruct
-node example.mjs
-```
+`create` and `load` throw an `AgentError` with a `code`: `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
 
-The same client with a cloud model:
+Every object has an `instanceId`, issued when it is made. History records it, so the operations of one process can be told apart; nothing is stored under it.
+
+## Results
+
+Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and, when the provider counted tokens for every request, `usage: { inputTokens, outputTokens }`. With a key, `historyError` is set when the operation ran but could not be recorded.
+
+| `errorCode` | Meaning |
+| --- | --- |
+| `invalid_reply` | The model answered, but no reply passed the check. |
+| `guard_rejected` | The guard passed to `decide` did not return `true`; `rejectedAction` names the action. |
+| `agent_paused` | The Agent is paused. |
+| `action_disabled` | Every action offered to `decide` is disabled in the Agent's settings. |
+| `context_key_not_found` | `contextKeys` names an entry the Agent does not have. |
+| `model_context_too_large` | The request is larger than `maxPromptBytes`. Nothing was left out and the model was not called. |
+| `model_unavailable` | This process has no credentials for the Agent's provider. |
+| `rate_limited`, `provider_error` | The provider refused or failed, also after retries, or its reply was cut off or empty. |
+| `key_refused`, `platform_unavailable` | With a key: the Space could not be read, so the operation did not run. |
+
+## extract
 
 ```js
-const openai = new NullProtocol({ provider: 'openai', model: 'gpt-4.1-mini' }); // reads OPENAI_API_KEY
-const claude = new NullProtocol({ provider: 'anthropic', model: 'claude-sonnet-5' }); // reads ANTHROPIC_API_KEY
+const result = await agent.extract(data, schema, { contextKeys });
+// { success: true, data }
 ```
-
-With `openai`, every request sends `temperature` and `max_tokens`. OpenAI reasoning models that reject these parameters, such as `gpt-5-mini`, are not supported by this client yet; use a chat model such as `gpt-4.1-mini`.
-
-Any call can use another model of the same provider by its name: `ai.extract(text, schema, { model: 'qwen2.5:7b-instruct' })`.
-
-| `provider` | Calls | Key |
-| --- | --- | --- |
-| `'openai-compatible'` | Any server that speaks the OpenAI chat API at `baseURL`: Ollama, LM Studio, vLLM, a proxy | `apiKey` if the server needs one; cloud key variables are never read |
-| `'openai'` | The OpenAI API | `apiKey`, or `OPENAI_API_KEY` |
-| `'anthropic'` | The Anthropic Messages API | `apiKey`, or `ANTHROPIC_API_KEY`; needs `@anthropic-ai/sdk` |
-
-| Constructor field | What to put | Required | Default |
-| --- | --- | --- | --- |
-| `provider` | One of the values above | Yes | — |
-| `model` | The model name the provider knows, such as `qwen2.5:3b-instruct` | Yes | — |
-| `baseURL` | Server address, such as `http://localhost:11434/v1` | With `openai-compatible` only | — |
-| `apiKey` | The model API key | For `openai` and `anthropic`, unless set in the environment | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
-| `temperature` | Sampling temperature | No | `0.3` (not sent to Claude 4.7 and later) |
-| `maxTokens` | Reply length limit | No | `1000` |
-| `timeout` | Milliseconds per model request | No | `30000`; raise it for a local model, which can take longer |
-| `retry` | `{ maxRetries }` for transient errors | No | `{ maxRetries: 2 }` |
-| `repairAttempts` | Extra turns to fix an unusable reply, 0 to 3 | No | `1` |
-| `basePrompt` | Instructions added to every call | No | — |
-| `trackHistory` | Keep `chat` history in this instance | No | `false` |
-| `maxContextLength` | Character budget for a request | No | none |
-| `telemetry` | `true` to send usage metadata, see [Optional telemetry](dashboard.md#optional-telemetry) | No | `false` |
-| `telemetryEndpoint` | `https://api.nullprotocol.ai` for the hosted API | With `telemetry` | — |
-| `telemetryKey` | Space ingest key from the cabinet | With `telemetry` | — |
-
-Settings come from a config file (`nullprotocol.config.json`, or `configFile`), then from options, which win field by field. A configuration error, such as a missing `model` or a `baseURL` with `openai`, is thrown by the constructor before any request. `provider` cannot be combined with the engines form; with `provider` set, the engines form's environment variables are not used.
-
-| Operation | Result | Local check |
-| --- | --- | --- |
-| `extract(data, schema)` | Structured data | JSON Schema validation |
-| `validate(criteria, subject)` | Score and reasoning | Score and confidence ranges, recommendation enum |
-| `summarize(content)` | Summary and key points | Response shape, length, confidence range |
-| `decide(context, actions)` | Selected action | Membership in the allowed list, confidence range |
-| `chat(prompt)` | Text or tool calls | Nonempty response, tool allowlist |
-
-Every operation takes these in its options:
-
-| Option | What to put | Default |
-| --- | --- | --- |
-| `model` | Another model name of the same provider | The constructor's `model` |
-| `temperature` | Sampling temperature for this call | The constructor's `temperature` |
-| `maxTokens` | Reply length limit for this call | The constructor's `maxTokens` |
-| `additionalContext` | Extra text or an object sent with this call | none |
-
-The rest belong to one operation:
-
-| Operation | Its own options |
-| --- | --- |
-| `extract` | `repairAttempts`, `validate` (include the validation details in the result) |
-| `validate` | none; the score is the model's judgment, checked only for range and shape |
-| `summarize` | `maxLength` (characters, default 200), `focus` |
-| `decide` | `guard`, `guardTimeoutMs`, `repairAttempts` |
-| `chat` | `systemPrompt`, `tools` with `onToolCall`, `stream`, `collect`, `trackHistory` |
-
-Results carry `usage: { inputTokens, outputTokens }`, the sum over every model request the call made, when the provider reports token counts for all of them. A stream and a call made inside another operation have none.
-
-Operations return `{ success, ... }`; model and validation failures are `{ success: false, error }`, so check `success` before acting. A refused, truncated or content-filtered reply is a failure, never partial text. Validation catches malformed output; it cannot prove the extracted facts are true.
-
-When `extract` gets invalid JSON or a schema mismatch, or `decide` gets an action outside the list, the model is shown the exact problem and asked once more. Set `repairAttempts` (0 to 3, default 1) on the constructor or per call. Results report `attempts` and `repaired`. A repair fixes the reply's form, not its facts.
-
-### Extraction schemas
 
 A schema is shorthand or JSON Schema:
 
 ```js
 // Shorthand: every key is a required field, so this has a field named "items".
-await ai.extract(text, { vendor: 'string', items: 'string[]' });
+await agent.extract(text, { vendor: 'string', items: 'string[]' });
 
-// JSON Schema is used as is.
-await ai.extract(text, {
+// JSON Schema is used as is. A field that may be missing says so, and the model returns null instead of inventing.
+await agent.extract(text, {
   type: 'object',
-  properties: { id: { type: 'string' }, note: { type: 'string' } },
-  required: ['id']
+  properties: { id: { type: 'string' }, days: { type: ['number', 'null'] } },
+  required: ['id', 'days']
 });
 
-// A nested object made only of schema keywords is JSON Schema: here address is a string.
-await ai.extract(text, { address: { type: 'string' } });
+// A list is a list, also of one item.
+await agent.extract(text, { type: 'array', items: { type: 'object', properties: { sku: { type: 'string' } } } });
 ```
 
-To name a single nested field `type`, write that object as JSON Schema. An invalid schema fails before the model is called.
+A nested object made only of schema keywords is JSON Schema: `{ address: { type: 'string' } }` makes `address` a string. An invalid schema fails before the model is called.
 
-### Decisions with hard rules
-
-The action list checks the shape of a model's choice, not whether it is right. For rules, pass an application-owned `guard`; only `true` accepts the decision, and a rejected one has `action: null` and is not retried.
+## summarize
 
 ```js
-const metrics = { errorRatePercent: 35 }; // from your monitoring, not from model input
-const decision = await ai.decide({ ...metrics, logLine }, ['inspect_logs', 'monitor'], {
-  guard: ({ action }) => action === (metrics.errorRatePercent > 20 ? 'inspect_logs' : 'monitor')
-});
+const result = await agent.summarize(content, { maxLength: 200, focus: 'key_insights', contextKeys });
+// { success: true, summary, keyPoints }
 ```
 
-Asynchronous guards have a 30-second deadline (`guardTimeoutMs`) and receive an abort `signal`.
+A summary longer than `maxLength` characters is not accepted.
 
-### Tool calls and actions
+## validate
 
 ```js
-const response = await ai.chat('Look up order 42', {
-  tools: [{
-    name: 'get_order',
-    description: 'Read an order by ID',
-    parameters: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }
-  }],
-  onToolCall: async (name, params) => orderStore.get(params.id)
-});
+const result = await agent.validate(criteria, subject, { reference, contextKeys });
+// { success: true, score, recommendation, reasoning }
 ```
 
-Only offered tool names reach `onToolCall`, for at most ten rounds. Retries apply to each model request, so a transient error does not rerun a tool. Validate parameters and permissions in your callback before side effects.
+`score` is from 0 to 1 and `recommendation` is `pass`, `fail` or `conditional`. `reference` is what to compare the subject with, if anything. The verdict is the model's judgement: use it to sort and to flag, and keep hard rules in code.
 
-Registered actions can require confirmation from your application:
+## decide
 
 ```js
-ai.registerAction('send_email', sendEmail, { requiresConfirmation: true });
-await ai.execute(decision, { confirm: async (action, parameters) => askUserToApprove(action, parameters) });
+const result = await agent.decide(context, actions, { guard, contextKeys });
+// { success: true, action, parameters, reasoning }
 ```
 
-Without an approving callback, `execute` throws `ConfirmationRequiredError` and the handler is not called.
+`actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. `guard(decision)` is your own check of the choice and must return `true`.
 
-### History and context size
+## Actions
 
-With `trackHistory: true`, `chat` keeps history per instance, so use one instance per conversation. `{ stream: true }` returns an async generator; add `collect: true` for a normal result. `maxContextLength` (characters) drops the oldest chat turns before a request and fails if the system text and current input alone do not fit.
-
-Claude 4.7 and later accept no sampling parameters, so `temperature` is sent only to older Claude models.
-
-### Engines form
-
-Configurations written for `nullprotocol@1.0.0` keep working without `provider`: `engines` holds a key per engine (`{ openai, anthropic }`), `defaultEngine` picks one, `openaiBaseURL` points the OpenAI engine at another server, and `models` sets each engine's model (default `gpt-4` and `claude-sonnet-5`) plus aliases you can pass as a per-call `model`. In this form the environment can also set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_DEFAULT_ENGINE`, `AI_MODEL_OPENAI`, `AI_MODEL_ANTHROPIC` and `NULLPROTOCOL_OPENAI_BASE_URL`, and `OPENAI_API_KEY` is sent to `openaiBaseURL` when no other key is given.
-
-### Checking a local model
-
-```sh
-NULLPROTOCOL_MODEL=qwen2.5:7b-instruct npm run smoke:local
+```js
+agent.registerAction(name, handler, { input, guard });
+const run = await agent.execute(decision);
+// { success: true, outcome: 'completed', action, result }
+// { success: false, outcome: 'refused' | 'failed', action, error, errorCode }
 ```
 
-This calls Ollama's OpenAI-compatible endpoint once per operation and once with a tool. It checks format, not model quality. `npm test` never calls paid model APIs; set `NULLPROTOCOL_LIVE_TESTS=1` with provider keys to run the live suite. A [48-task workflow benchmark](../bench/README.md) compares one direct prompt with a flow built on `extract`, on local 3B and 7B models and a hosted one, with the [raw results](../bench/published).
+`execute` takes the successful result of this object's `decide` and runs what was decided, whatever happened to the returned object since. Before the handler: the Agent must not be paused, the action must be registered and not disabled, `parameters` must match `input` (a JSON Schema), and `guard(parameters, decision)` must return `true`. A guard that throws refuses. One decision runs once: a second `execute` is refused with `already_executed`.
+
+The handler receives `(parameters, { decision, input, reply })`. `reply(message)` asks the decision's own model for a plain-text answer; the built-in `chat` action is `({ message }, { reply, input }) => reply(message ?? input)`.
+
+## Context
+
+```js
+await agent.context.set(key, value, { inclusion, ifVersion });
+await agent.context.get(key);
+await agent.context.list();
+await agent.context.delete(key);
+```
+
+`value` is text or JSON. `inclusion: 'always'` (the default) sends the entry with every operation and holds 8 KiB; `'selected'` sends it only with operations that name its key in `contextKeys`, and holds 64 KiB. An Agent has up to 50 entries in each scope.
+
+With a key, `ifVersion` guards concurrent writers: `null` creates only, a version replaces only that version, and without it the entry is overwritten. `agent.space` has the same four calls for context shared by every Agent of the Space.
+
+An operation receives the entries of the Space, the Agent and its conversation. Under one key the narrowest scope wins, and then that entry's `inclusion` decides whether the operation gets it.
+
+## Memory
+
+```js
+await agent.memory.add(text);
+await agent.memory.list();
+await agent.memory.delete(id);
+```
+
+Notes are short facts the Agent keeps in mind in every operation. An object bound to a conversation adds notes to that conversation and sees the Agent's and its own. Nothing is added to memory on its own: an operation does not remember the one before it.
+
+## Settings
+
+```js
+await agent.settings(); // { provider, model, instructions, paused, disabledActions, ... }
+await agent.update({ model: 'gpt-4.1', paused: true, disabledActions: ['refund'] });
+```
+
+`update` changes `provider`, `model`, `instructions`, `name`, `paused` and `disabledActions`. With a key it changes the saved Agent, and so does the cabinet; either applies from the next operation of every process. An operation already running keeps the settings it started with, and so does the `execute` of a decision already made, except that a pause or a disabled action stops it.
+
+## What is sent where
+
+To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of requests and bytes sent to it, token counts, and each action's parameters, outcome and result. Model keys are never sent.
