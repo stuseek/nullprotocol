@@ -1,24 +1,16 @@
 {
   "name": "nullprotocol",
-  "version": "1.4.0",
-  "description": "Build focused AI agents around your data, rules and models: checked LLM output for Node.js, with OpenAI, Anthropic or a local model",
+  "version": "2.0.0",
+  "description": "Agents with a model, instructions, context and memory, and four operations whose replies are checked in code",
   "main": "src/index.js",
   "scripts": {
     "test": "jest",
-    "test:managed-integration": "node --env-file-if-exists=../api/.env scripts/test-managed-integration.mjs",
-    "test:starter": "node --env-file-if-exists=../api/.env scripts/test-starter.mjs",
-    "test:starter:packed": "node --env-file-if-exists=../api/.env scripts/test-starter.mjs --packed",
-    "test:coverage": "jest --coverage",
-    "test:watch": "jest --watch",
-    "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "lint": "eslint \"src/**/*.js\" \"examples/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
-    "lint:fix": "eslint \"src/**/*.js\" \"examples/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\" --fix",
-    "format": "prettier --write \"src/**/*.js\" \"examples/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
-    "format:check": "prettier --check \"src/**/*.js\" \"examples/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
+    "lint": "eslint \"src/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
+    "lint:fix": "eslint \"src/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\" --fix",
+    "format": "prettier --write \"src/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"examples/**/*.mjs\" \"bench/**/*.mjs\"",
     "validate": "npm run lint && npm run format:check && npm test",
-    "smoke:local": "node examples/local-smoke.js",
-    "bench": "node --env-file-if-exists=.env bench/run.mjs",
-    "serve": "node bin/serve.js"
+    "bench": "node --env-file-if-exists=.env bench/run.mjs"
   },
   "keywords": [
     "ai",
@@ -31,8 +23,6 @@
     "gpt",
     "claude",
     "primitives",
-    "telemetry",
-    "observability",
     "agents",
     "ai-agents",
     "structured-output",
@@ -52,29 +42,14 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.129.0",
     "eslint": "^9.0.0",
     "jest": "^29.7.0",
-    "pg": "^8.23.0",
-    "prettier": "^3.2.5"
-  },
-  "peerDependencies": {
-    "@anthropic-ai/sdk": ">=0.20.9 <1",
-    "openai": "^4.104.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
-  },
-  "peerDependenciesMeta": {
-    "openai": {
-      "optional": true
-    },
-    "@anthropic-ai/sdk": {
-      "optional": true
-    }
+    "prettier": "^3.2.5",
+    "@anthropic-ai/sdk": "^0.129.0",
+    "openai": "^4.104.0"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "bin": {
-    "nullprotocol-serve": "./bin/serve.js"
   },
   "types": "./src/index.d.ts",
   "exports": {
@@ -82,74 +57,16 @@
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
     },
-    "./openai": {
-      "import": {
-        "types": "./openai.d.mts",
-        "default": "./openai.js"
-      },
-      "require": {
-        "types": "./openai.d.ts",
-        "default": "./openai.js"
-      }
-    },
     "./package.json": "./package.json"
   },
   "files": [
-    "src/index.js",
-    "src/config.js",
-    "src/telemetry.js",
-    "src/space-context.js",
-    "src/managed-client.js",
-    "src/managed-http.js",
-    "src/managed-canonical.js",
-    "src/managed-actions.js",
-    "src/managed-compaction.js",
-    "src/managed-model.js",
-    "src/managed-executor.js",
-    "src/executor.js",
-    "src/resilience.js",
-    "src/schema.js",
-    "src/json.js",
-    "src/runtime-control.js",
-    "src/openai-connection.js",
-    "src/server.js",
-    "src/agent-server.js",
-    "src/session-store.js",
+    "src/*.js",
     "src/index.d.ts",
-    "bench/README.md",
-    "bench/run.mjs",
-    "bench/tasks.mjs",
-    "bench/modelfiles/qwen3b.Modelfile",
-    "bench/modelfiles/qwen7b.Modelfile",
-    "bin/serve.js",
-    "examples/local-smoke.js",
-    "examples/flows/README.md",
-    "examples/flows/model.mjs",
-    "examples/flows/refund.mjs",
-    "examples/flows/invoice.mjs",
-    "examples/flows/sla.mjs",
-    "examples/managed/common.js",
-    "examples/managed/support.js",
-    "examples/managed/game.js",
-    "examples/managed/devops.js",
-    "examples/managed/starter/agent.js",
-    "examples/managed/starter/setup.js",
-    "examples/managed/starter/executor.js",
-    "examples/managed/starter/ask.js",
-    "examples/managed/starter/README.md",
-    "docs/operations.md",
-    "docs/dashboard.md",
-    "docs/managed-agents.md",
-    "docs/http-server.md",
-    "docs/space-context.md",
-    "docs/upgrade-managed.md",
-    "sql/session-store.sql",
-    "assets/nullprotocol.png",
+    "docs",
+    "examples",
     "README.md",
-    "LICENSE",
-    "openai.js",
-    "openai.d.ts",
-    "openai.d.mts"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "jest": {
     "testEnvironment": "node",

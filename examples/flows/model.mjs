@@ -1,7 +1,7 @@
 import { NullProtocol } from 'nullprotocol';
 
-// A local model through Ollama. Any provider works: see docs/operations.md.
-export const ai = new NullProtocol({
+// An Agent on a local model through Ollama. Any provider works: see docs/operations.md.
+export const ai = await NullProtocol.create({
   provider: 'openai-compatible',
   baseURL: process.env.NULLPROTOCOL_MODEL_URL || 'http://localhost:11434/v1',
   model: process.env.NULLPROTOCOL_MODEL || 'qwen2.5:3b-instruct',

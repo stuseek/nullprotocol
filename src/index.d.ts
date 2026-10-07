@@ -1,790 +1,199 @@
-// TypeScript definitions for nullprotocol.
+export type Provider = 'openai' | 'anthropic' | 'openai-compatible';
 
-export interface BaseOptions {
-  /** Engines form: which configured engine to call. */
-  engine?: 'openai' | 'anthropic';
-  /** Model for this call. With provider, a model name; in the engines form, a name or alias. */
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-  /** Additional context for a single call (string or arbitrary object) */
-  additionalContext?: string | Record<string, unknown>;
-}
-
-export interface RetryOptions {
-  maxRetries?: number;
-}
-
-export interface CircuitBreakerOptions {
-  /** Consecutive failed requests that open the breaker (default 5). */
-  threshold?: number;
-  /** How long it rejects requests before closing again (default 60000). */
-  resetAfterMs?: number;
-}
-
-/** Engines form only: the default model per engine, plus any aliases you name. */
-export interface ModelAliases {
-  openai?: string;
-  anthropic?: string;
-  [alias: string]: string | undefined;
-}
-
-export interface AIToolkitOptions {
-  /** A config file to load, or `false` to skip config files. */
-  configFile?: string | false;
-  /**
-   * The model API: 'openai', 'anthropic', or 'openai-compatible' for a server
-   * that speaks the OpenAI chat API, such as Ollama, LM Studio or vLLM.
-   * Cannot be combined with engines, models, defaultEngine or openaiBaseURL.
-   */
-  provider?: 'openai' | 'anthropic' | 'openai-compatible';
-  /** The model name, required with provider. A per-call model is also a name. */
-  model?: string;
-  /**
-   * The model API key. Defaults to OPENAI_API_KEY or ANTHROPIC_API_KEY for those
-   * providers. Optional for openai-compatible, which never reads those variables.
-   */
+/** What a process needs to call one provider. Cloud keys default to OPENAI_API_KEY and ANTHROPIC_API_KEY. */
+export interface Credentials {
   apiKey?: string;
-  /** Required with openai-compatible and only used there, such as http://localhost:11434/v1. */
+  /** The address of an OpenAI-compatible server, such as http://localhost:11434/v1. */
   baseURL?: string;
-  /**
-   * Runtime key from the cabinet. With runtimeEndpoint it lets the cabinet pause,
-   * resume and stop this client's agent, and then agentId is required. The first
-   * operation waits for one control state; after that the last confirmed state
-   * holds when the endpoint is unreachable.
-   */
-  runtimeKey?: string;
-  /** Origin of the NullProtocol API, such as https://api.nullprotocol.ai. */
-  runtimeEndpoint?: string;
-  /** Engines form, without provider: API keys per engine. */
-  engines?: {
-    openai?: string;
-    anthropic?: string;
-  };
-  defaultEngine?: 'openai' | 'anthropic';
-  basePrompt?: string;
-  preset?: 'security' | 'devops' | 'customer_support' | 'financial' | 'medical' | 'legal' | 'marketing' | 'engineering';
+}
+
+/** How this object calls the model. */
+export interface CallOptions {
+  /** Credentials by provider, for the models this process may be asked to call. */
+  credentials?: Partial<Record<Provider, Credentials>>;
+  timeout?: number;
+  retry?: { maxRetries?: number };
+  circuitBreaker?: { threshold?: number; resetAfterMs?: number };
   temperature?: number;
   maxTokens?: number;
-  validateOutputs?: boolean;
-  /**
-   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
-   * schema mismatch, or an action that is not offered. The model sees its
-   * reply and the exact problem. 0 to 3; default 1 (constructor option).
-   * A schema-valid but wrong value is not detected or repaired.
-   */
+  /** Extra turns the model gets to fix an unusable reply. Default 1. */
   repairAttempts?: number;
-  withExecutor?: boolean;
-  /** Engines form: base URL for an OpenAI-compatible API, including a local server. */
-  openaiBaseURL?: string;
-  token?: string;
-  telemetryKey?: string;
-  /** HTTPS service origin; any path in this URL is ignored. */
-  telemetryEndpoint?: string;
-  /** Optional ingest path on telemetryEndpoint (default /api/telemetry). */
-  telemetryPath?: string;
-  telemetry?: boolean;
-  /** Opt-in Team run timeline: one metadata event per eligible call or consumed stream, including failures and cancellations. Counts toward the Space's daily event limit. */
-  telemetryTimeline?: boolean;
-  /** Separate Space-scoped key for explicit shared context reads and writes. */
-  spaceContextKey?: string;
-  /** HTTPS origin of the NullProtocol API. */
-  spaceContextEndpoint?: string;
-  /** Stable identity in telemetry. Calls and sessions do not create new agents. */
+  /** The largest request, in bytes, this object sends to a model. Default 131072. */
+  maxPromptBytes?: number;
+  /** A name for this process, such as backend or worker. It only filters history. */
+  label?: string;
+  /**
+   * Binds the object to one conversation, such as a customer or a chat. Its
+   * context and memory are then that conversation's own, on top of the Agent's.
+   */
+  conversation?: string;
+}
+
+export interface CreateOptions extends CallOptions, Credentials {
+  /** The SDK key of a Space. With it the Agent is saved there; without it the Agent lives in this process. */
+  key?: string;
+  endpoint?: string;
+  /** Issued when left out. */
   agentId?: string;
-  /** Optional label checked against the Space ingest key. */
-  environment?: string;
-  debug?: boolean;
-  /** Engines form: per-engine default models and aliases. */
-  models?: ModelAliases;
-  /** Retry configuration */
-  retry?: RetryOptions;
-  /** Request timeout in milliseconds (default 30000) */
-  timeout?: number;
-  /** Circuit breaker configuration */
-  circuitBreaker?: CircuitBreakerOptions;
-  /** Enable automatic conversation history tracking for chat() */
-  trackHistory?: boolean;
-  /** Max tokens to keep in conversation history (default 50000) */
-  maxHistoryTokens?: number;
-  /** Character budget for system text, current input, tool definitions, and included history. */
-  maxContextLength?: number;
+  name?: string;
+  provider: Provider;
+  model: string;
+  /** Who the Agent is, what it is for and the rules it follows. */
+  instructions?: string;
 }
 
-export interface ToolDefinition {
-  name: string;
-  description?: string;
-  parameters?: Record<string, any>;
+export interface LoadOptions extends CallOptions {
+  key: string;
+  endpoint?: string;
+  agentId: string;
 }
 
-export interface ToolCallResult {
-  name: string;
-  parameters: Record<string, any>;
-  result: any;
+export interface Settings {
+  provider: Provider;
+  model: string;
+  instructions: string;
+  paused?: boolean;
+  name?: string;
+  revision?: number;
 }
 
-export interface ExtractOptions extends BaseOptions {
-  validate?: boolean;
-  /**
-   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
-   * schema mismatch, or an action that is not offered. The model sees its
-   * reply and the exact problem. 0 to 3; default 1 (constructor option).
-   * A schema-valid but wrong value is not detected or repaired.
-   */
-  repairAttempts?: number;
-}
-
-export interface ValidateOptions extends BaseOptions {}
-
-export interface SummarizeOptions extends BaseOptions {
-  maxLength?: number;
-  focus?: string;
-}
-
-export type DecisionAction = string | { action: string; [key: string]: unknown };
-
-export interface DecideOptions extends BaseOptions {
-  /** Application-owned check. Only true accepts a structurally valid model decision. Treat input.context as untrusted for HTTP agents. */
-  guard?: (
-    decision: DecideResult,
-    input: { context: any; actions: DecisionAction[] },
-    runtime: { principal?: string; agentId?: string; sessionId?: string; runId?: string; signal: AbortSignal }
-  ) => boolean | Promise<boolean>;
-  /** Guard timeout in milliseconds (default 30000, maximum 120000). */
-  guardTimeoutMs?: number;
-  /**
-   * Extra model turns allowed to fix an unusable reply: invalid JSON, a
-   * schema mismatch, or an action that is not offered. The model sees its
-   * reply and the exact problem. 0 to 3; default 1 (constructor option).
-   * A schema-valid but wrong value is not detected or repaired.
-   */
-  repairAttempts?: number;
-}
-
-export interface ChatOptions extends BaseOptions {
-  /** Custom system prompt for the conversation */
-  systemPrompt?: string;
-  /** Tools available for the AI to call */
-  tools?: ToolDefinition[];
-  /** Callback invoked when the AI makes a tool call */
-  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
-  /** Enable streaming mode — returns async generator */
-  stream?: boolean;
-  /** When streaming, collect all chunks and return a ChatResult instead of a generator */
-  collect?: boolean;
-  /** Override constructor-level trackHistory for this call */
-  trackHistory?: boolean;
-}
-
-/**
- * Why a controlled operation did not run or was cut short: refused while the
- * agent is paused, before its first control state, after the runtime key was
- * refused or the client closed; cancelled by stop or by close.
- */
-export type ControlErrorCode =
-  | 'agent_paused'
-  | 'control_unavailable'
-  | 'control_rejected'
-  | 'control_closed'
-  | 'run_cancelled'
-  | 'client_closed';
-
-/** Thrown when a controlled stream is read while its agent cannot run. */
-export declare class ControlError extends Error {
-  name: 'ControlError';
-  code: 'agent_paused' | 'control_unavailable' | 'control_rejected' | 'control_closed';
-}
-
-export interface ExtractResult {
-  success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
-  usage?: { inputTokens: number; outputTokens: number };
-  data: any | null;
-  confidence: number;
-  validation?: any;
-  /** Model calls used, including repair turns; also set when the result failed. The tokens of all of them are in `usage`. */
-  attempts?: number;
-  /** True when a repair turn turned an unusable reply into an accepted one. */
-  repaired?: boolean;
-  error?: string;
-  errorCode?: ControlErrorCode;
-}
-
-export interface ValidateResult {
-  success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
-  usage?: { inputTokens: number; outputTokens: number };
-  score: number;
-  reasoning: string;
-  confidence: number;
-  recommendation?: 'pass' | 'fail' | 'conditional';
-  error?: string;
-  errorCode?: ControlErrorCode;
-}
-
-export interface SummarizeResult {
-  success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
-  usage?: { inputTokens: number; outputTokens: number };
-  summary: string;
-  keyPoints: string[];
-  confidence: number;
-  error?: string;
-  errorCode?: ControlErrorCode;
-}
-
-export interface DecideResult {
-  success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
-  usage?: { inputTokens: number; outputTokens: number };
-  action: string | null;
-  reasoning: string;
-  confidence: number;
-  parameters: Record<string, any>;
-  /** Model-selected action when the application guard rejected it. Never execute it. */
-  rejectedAction?: string;
-  /** Set when an application guard rejects or cannot finish checking a decision. */
-  errorCode?: 'guard_rejected' | 'guard_error' | 'guard_timeout' | ControlErrorCode;
-  /** Model calls used, including repair turns; also set when the result failed. The tokens of all of them are in `usage`. */
-  attempts?: number;
-  /** True when a repair turn turned an unusable reply into an accepted one. */
-  repaired?: boolean;
-  error?: string;
-}
-
-export interface ChatResult {
-  success: boolean;
-  /** Tokens of every model request this call made, repair turns and tool rounds included. Absent unless the provider counted every one of them, for a stream, and for a call made inside another operation. */
-  usage?: { inputTokens: number; outputTokens: number };
-  message: string | null;
-  confidence: number | null;
-  toolCalls?: ToolCallResult[];
-  error?: string;
-  errorCode?: ControlErrorCode;
-}
-
-export interface ResilienceStats {
-  failures: number;
-  tripped: boolean;
-  totalSkipped: number;
-  tripTime: number | null;
-}
-
-export declare class CircuitBreakerError extends Error {
-  name: 'CircuitBreakerError';
-  failures: number;
-  totalSkipped: number;
-}
-
-export declare class ConfirmationRequiredError extends Error {
-  name: 'ConfirmationRequiredError';
-  action: string;
-}
-
-export interface SpaceContextDocument<T = unknown> {
-  value: T;
+export interface ContextEntry {
+  key: string;
+  value: unknown;
+  /** `always` is sent with every operation, `selected` only with those that name its key. */
+  inclusion: 'always' | 'selected';
   version: string;
-  expires_at: string | null;
-  updated_at: string;
+  conversation?: string | null;
 }
 
-export declare class SpaceContextError extends Error {
-  status: number;
+export interface Note {
+  id: string;
+  text: string;
+  conversation?: string | null;
+}
+
+interface Outcome {
+  success: boolean;
+  error?: string;
+  errorCode?: string;
+  attempts?: number;
+  repaired?: boolean;
+  usage?: { inputTokens: number; outputTokens: number };
+  /** Set when the operation ran but could not be written to history. */
+  historyError?: string;
+}
+
+export interface Extraction<T = unknown> extends Outcome {
+  data?: T | null;
+}
+export interface Validation extends Outcome {
+  score?: number;
+  recommendation?: 'pass' | 'fail' | 'conditional';
+  reasoning?: string;
+}
+export interface Summary extends Outcome {
+  summary?: string;
+  keyPoints?: string[];
+}
+export interface Decision extends Outcome {
+  action?: string | null;
+  parameters?: Record<string, unknown>;
+  reasoning?: string;
+  rejectedAction?: string;
+}
+export interface Execution {
+  success: boolean;
+  outcome: 'completed' | 'failed' | 'refused';
+  action?: string;
+  result?: unknown;
+  error?: string;
+  errorCode?: string;
+  historyError?: string;
+}
+
+export interface OperationOptions {
+  /** Context entries with inclusion `selected` to send with this operation. */
+  contextKeys?: string[];
+}
+
+export type ActionChoice = string | { action: string; description?: string };
+
+export interface ActionContext {
+  decision: Decision;
+  /** What the decision was made about. */
+  input: unknown;
+  /** Asks the model for a plain-text answer, as the decision's own model and instructions. */
+  reply(message: string): Promise<string>;
+}
+
+export interface Agent {
+  readonly agentId: string;
+  readonly instanceId: string;
+  readonly label?: string;
+  readonly conversation?: string;
+
+  extract<T = unknown>(
+    data: unknown,
+    schema: object,
+    options?: OperationOptions
+  ): Promise<Extraction<T>>;
+  validate(
+    criteria: unknown,
+    subject: unknown,
+    reference?: unknown,
+    options?: OperationOptions
+  ): Promise<Validation>;
+  summarize(
+    content: unknown,
+    options?: OperationOptions & { maxLength?: number; focus?: string }
+  ): Promise<Summary>;
+  decide(
+    context: unknown,
+    actions: ActionChoice[],
+    options?: OperationOptions & { guard?: (decision: Decision) => boolean | Promise<boolean> }
+  ): Promise<Decision>;
+
+  /** An action a decision may choose. `chat` is built in. */
+  registerAction(
+    name: string,
+    handler: (parameters: any, context: ActionContext) => unknown,
+    options?: {
+      input?: object;
+      guard?: (parameters: any, decision: Decision) => boolean | Promise<boolean>;
+    }
+  ): this;
+  /** Runs the handler of a decision this object made, once. */
+  execute(decision: Decision): Promise<Execution>;
+
+  settings(): Promise<Settings>;
+  update(
+    changes: Partial<Pick<Settings, 'provider' | 'model' | 'instructions' | 'name' | 'paused'>>
+  ): Promise<Settings>;
+
+  context: {
+    list(): Promise<ContextEntry[]>;
+    get(key: string): Promise<ContextEntry>;
+    set(
+      key: string,
+      value: unknown,
+      options?: { inclusion?: 'always' | 'selected'; ifVersion?: string | null }
+    ): Promise<ContextEntry>;
+    delete(key: string): Promise<unknown>;
+  };
+  memory: {
+    list(): Promise<Note[]>;
+    add(text: string): Promise<Note>;
+    delete(id: string): Promise<unknown>;
+  };
+}
+
+export class AgentError extends Error {
   code: string;
 }
 
-export declare class SpaceContextClient {
-  constructor(options: { key: string; endpoint: string; fetchImpl?: typeof fetch });
-  get<T = unknown>(namespace: string, key: string): Promise<SpaceContextDocument<T> | null>;
-  put<T = unknown>(namespace: string, key: string, value: T, options: { ifVersion: string | null; ttlSeconds?: number | null }): Promise<SpaceContextDocument<T>>;
-  delete(namespace: string, key: string, ifVersion: string): Promise<void>;
-}
-
-export declare class Resilience {
-  constructor(options?: {
-    maxRetries?: number;
-    timeout?: number;
-    circuitBreakerThreshold?: number;
-    circuitBreakerResetMs?: number;
-  });
-  execute<T>(
-    fn: (signal?: AbortSignal) => Promise<T>,
-    options?: { signal?: AbortSignal; timeout?: number; maxRetries?: number }
-  ): Promise<T>;
-  isTripped(): boolean;
-  reset(): void;
-  recordSuccess(): void;
-  recordFailure(): void;
-  getStats(): ResilienceStats;
-}
-
-export declare class AIToolkit {
-  constructor(options?: AIToolkitOptions);
-
-  /** Optional, explicit Space store. Values are never added to model prompts automatically. */
-  spaceContext: SpaceContextClient | null;
-
-  /** Resilience instance (retry + circuit breaker + timeout) */
-  resilience: Resilience;
-
-  /** Conversation history messages */
-  messages: Array<{ role: string; content: string }>;
-
-  /**
-   * Add context for stateful mode
-   */
-  addContext(key: string, value: any): this;
-
-  /**
-   * Remove context
-   */
-  removeContext(key: string): this;
-
-  /**
-   * Clear all context
-   */
-  clearContext(): this;
-
-  /**
-   * Add a message to conversation history
-   */
-  addMessage(role: string, content: string): this;
-
-  /**
-   * Get a copy of the conversation history
-   */
-  getHistory(): Array<{ role: string; content: string }>;
-
-  /**
-   * Clear conversation history
-   */
-  clearHistory(): this;
-
-  /** Set the character budget for future model requests. */
-  setMaxContextLength(maxChars: number): this;
-
-  /**
-   * Extract structured information from unstructured data
-   */
-  extract(
-    data: any,
-    schema: Record<string, any>,
-    options?: ExtractOptions
-  ): Promise<ExtractResult>;
-
-  /**
-   * Validate data against criteria
-   */
-  validate(
-    criteria: string,
-    subject: any,
-    reference?: any,
-    options?: ValidateOptions
-  ): Promise<ValidateResult>;
-
-  /**
-   * Summarize content into key insights
-   */
-  summarize(
-    content: any,
-    options?: SummarizeOptions
-  ): Promise<SummarizeResult>;
-
-  /**
-   * Make intelligent decision from available actions
-   */
-  decide(
-    context: any,
-    actions: DecisionAction[],
-    options?: DecideOptions
-  ): Promise<DecideResult>;
-
-  /**
-   * Conversational AI interaction with optional tool use and streaming
-   */
-  chat(
-    prompt: string | Array<{ role: string; content: string }>,
-    options?: ChatOptions & { stream?: false; collect?: false }
-  ): Promise<ChatResult>;
-  chat(
-    prompt: string | Array<{ role: string; content: string }>,
-    options: ChatOptions & { stream: true; collect: true }
-  ): Promise<ChatResult>;
-  chat(
-    prompt: string | Array<{ role: string; content: string }>,
-    options: ChatOptions & { stream: true; collect?: false }
-  ): Promise<AsyncGenerator<string, void, unknown>>;
-
-  /**
-   * Execute registered action
-   */
-  execute(decision: DecideResult, options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }): Promise<any>;
-
-  /**
-   * Register action for execution
-   */
-  registerAction(name: string, handler: Function, metadata?: any): this;
-
-  /**
-   * Create pipeline for chaining operations
-   */
-  pipeline(...steps: Function[]): (input: any) => Promise<any>;
-
-  /**
-   * Create new instance with additional context
-   */
-  withContext(additionalPrompt: string): AIToolkit;
-  /** Releases runtime control (shared with copies from withContext and forDomain) and flushes telemetry. */
-  close(): Promise<void>;
-
-  /**
-   * Create specialized instance for domain
-   */
-  forDomain(domain: string): AIToolkit;
-}
-
-/** Preferred public name; AIToolkit remains as a compatibility alias. */
-export { AIToolkit as NullProtocol };
-
-// Stateless function exports
-export function extract(
-  data: any,
-  schema: Record<string, any>,
-  options?: ExtractOptions
-): Promise<ExtractResult>;
-
-export function validate(
-  criteria: string,
-  subject?: any,
-  reference?: any,
-  options?: ValidateOptions
-): Promise<ValidateResult>;
-
-export function summarize(
-  content?: any,
-  options?: SummarizeOptions
-): Promise<SummarizeResult>;
-
-export function decide(
-  context?: any,
-  actions?: DecisionAction[],
-  options?: DecideOptions
-): Promise<DecideResult>;
-
-export function chat(
-  prompt: string | Array<{ role: string; content: string }>,
-  options?: ChatOptions
-): Promise<ChatResult>;
-
-export function execute(
-  decision: DecideResult,
-  options?: { confirm?: (action: string, parameters: Record<string, any>) => boolean | Promise<boolean> }
-): Promise<any>;
-
-export function configure(options: AIToolkitOptions): AIToolkit;
-
-export const presets: Record<string, any>;
-
-export const createAI: {
-  security(): AIToolkit;
-  devops(): AIToolkit;
-  support(): AIToolkit;
-  financial(): AIToolkit;
-  medical(): AIToolkit;
-  legal(): AIToolkit;
-  marketing(): AIToolkit;
-  engineering(): AIToolkit;
+export const NullProtocol: {
+  /** Creates an Agent: saved in the Space of `key`, or in this process without one. */
+  create(options: CreateOptions): Promise<Agent>;
+  /** Loads a saved Agent by its agentId. */
+  load(options: LoadOptions): Promise<Agent>;
 };
-
-export interface ServeOptions extends AIToolkitOptions {
-  /** Port to listen on (default: 3000) */
-  port?: number;
-  /** Bind address (default: 127.0.0.1) */
-  host?: string;
-  /** Required Bearer token auth */
-  apiKey?: string;
-  /** Optional CORS origin */
-  cors?: string;
-  /** Maximum JSON request size in bytes (default: 1048576) */
-  maxBodyBytes?: number;
-}
-
-import type { Server } from 'http';
-
-export interface AIServer extends Server {
-  /** The AIToolkit instance powering the server */
-  ai: AIToolkit;
-  /** Available route paths */
-  routes: string[];
-}
-
-/**
- * Start an HTTP microservice exposing all AI primitives as endpoints.
- * POST /extract, /validate, /summarize, /decide, /chat
- * GET  /health
- */
-export function serve(options?: ServeOptions): AIServer;
-
-export interface AgentDefinition extends AIToolkitOptions {
-  id: string;
-  mode: 'stateless' | 'stateful';
-  description?: string;
-  tools?: ToolDefinition[];
-  schemas?: Record<string, Record<string, any>>;
-  onToolCall?: (name: string, parameters: Record<string, any>, context?: { principal?: string; agentId?: string; sessionId?: string; runId?: string; callId?: string; signal?: AbortSignal }) => any | Promise<any>;
-  callOptions?: BaseOptions & Pick<DecideOptions, 'guard' | 'guardTimeoutMs'> & Pick<ChatOptions, 'systemPrompt'>;
-  /** Defaults to 8,192 rough tokens in the named HTTP service. */
-  maxHistoryTokens?: number;
-  /** At least 2; history retains whole user/assistant exchanges within this cap. */
-  maxHistoryMessages?: number;
-  operations?: Array<'chat' | 'decide' | 'extract' | 'summarize' | 'validate'>;
-  exposeToolCalls?: boolean;
-}
-
-export interface SessionState {
-  messages: Array<{ role: string; content: string }>;
-  context: Record<string, unknown>;
-}
-
-export interface SessionRef {
-  id: string;
-  agent: string;
-  principal: string;
-}
-
-export interface SessionStore {
-  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
-  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
-  release(ref: SessionRef, lease: string): Promise<void>;
-  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
-  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
-  delete(ref: SessionRef): Promise<string>;
-  purgeExpired?(): Promise<number>;
-}
-
-export declare class MemorySessionStore implements SessionStore {
-  constructor(options?: { maxSessions?: number; maxSessionsPerPrincipal?: number });
-  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
-  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
-  release(ref: SessionRef, lease: string): Promise<void>;
-  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
-  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
-  delete(ref: SessionRef): Promise<string>;
-}
-
-export declare class PostgresSessionStore implements SessionStore {
-  constructor(pool: { query(sql: string, values?: unknown[]): Promise<any>; connect(): Promise<any> }, options?: { maxSessionsPerPrincipal?: number });
-  create(ref: Omit<SessionRef, 'id'>, state?: SessionState, ttlMs?: number): Promise<string>;
-  acquire(ref: SessionRef, leaseMs?: number, ttlMs?: number): Promise<{ status: string; lease?: string; state?: SessionState }>;
-  commit(ref: SessionRef, lease: string, state: SessionState, ttlMs?: number): Promise<boolean>;
-  release(ref: SessionRef, lease: string): Promise<void>;
-  renew(ref: SessionRef, lease: string, leaseMs?: number): Promise<boolean>;
-  clear(ref: SessionRef, part?: 'all' | 'history' | 'context'): Promise<string>;
-  delete(ref: SessionRef): Promise<string>;
-  purgeExpired(): Promise<number>;
-}
-
-export interface AgentServerOptions {
-  agents: AgentDefinition[] | Record<string, Omit<AgentDefinition, 'id'>>;
-  /** Bearer key for your HTTP service. A model key goes in each agent definition. */
-  apiKey?: string;
-  /** Optional Space-scoped key for polling desired pause/stop state. Separate from telemetry. */
-  runtimeKey?: string;
-  /** HTTPS NullProtocol API origin; loopback HTTP is allowed for local tests. */
-  runtimeEndpoint?: string;
-  /** Poll once per process, not per agent. Defaults to 15 seconds. */
-  runtimePollMs?: number;
-  authenticate?: (request: import('http').IncomingMessage) => Promise<{ principal: string; agents?: string[]; canManage?: boolean } | null>;
-  store?: SessionStore;
-  only?: string[];
-  port?: number;
-  host?: string;
-  maxConcurrentTurns?: number;
-  maxBodyBytes?: number;
-  maxConnections?: number;
-  handleSignals?: boolean;
-}
-
-export interface AgentServer extends Server {
-  agents: Map<string, { def: AgentDefinition; base: AIToolkit; disabled: boolean; controlPaused: boolean; controlBlocked: boolean; controlRevision: number; controlStopEpoch: number; active: number }>;
-  syncControl(): Promise<boolean>;
-  shutdown(options?: { drainTimeoutMs?: number; cancelTimeoutMs?: number }): Promise<void>;
-}
-
-export function defineAgent(options: AgentDefinition): AgentDefinition;
-export function serveAgents(options: AgentServerOptions): AgentServer;
-export function serve(options: AgentServerOptions): AgentServer;
-
-export interface ManagedRun {
-  id: string;
-  agentId: string;
-  conversationId: string | null;
-  conversation: string | null;
-  templateVersion: number;
-  status: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
-  errorCode: string | null;
-  output: { text: string } | null;
-  usage: { inputTokens: number | null; outputTokens: number | null } | null;
-  createdAt: string;
-  startedAt: string | null;
-  finishedAt: string | null;
-  deadlineAt: string;
-  /** Only in a run's detail: the keys it asked for, and its Agent Context entries by version. `delivery` is `sent` when the provider answered a request carrying that version, `attempted` when none was answered, and `delivered` when the executor did not report its requests. `state` tells whether the entry is still that version. */
-  contextKeys?: string[];
-  contextRefs?: { key: string; version: string; delivery: 'sent' | 'attempted' | 'delivered'; state: 'current' | 'changed' | 'deleted' }[];
-}
-
-export interface ManagedRunOptions {
-  conversation?: string;
-  context?: Record<string, unknown>;
-  /** Selected Agent Context entries to send with this run, besides the entries sent with every run. An unknown key is refused. */
-  contextKeys?: string[];
-  subject?: Record<string, string>;
-  idempotencyKey?: string;
-  signal?: AbortSignal;
-  wait?: boolean;
-  pollIntervalMs?: number;
-  waitTimeoutMs?: number;
-}
-
-export interface ManagedSpaceUsage {
-  plan: string;
-  day: string;
-  limits: { activeRuns: number; runsPerDay: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
-  usage: { activeRuns: number; runsToday: number; conversations: number; storageBytes: number; templates: number; managedAgents: number };
-  tokens: { today: { input: number; output: number; runsWithoutUsage: number } };
-}
-
-export declare class NullProtocolClient {
-  constructor(options: { spaceKey: string; endpoint?: string; fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>; timeoutMs?: number });
-  space(options?: { signal?: AbortSignal }): Promise<{ id: string; slug: string; name: string }>;
-  usage(options?: { signal?: AbortSignal }): Promise<ManagedSpaceUsage>;
-  templates: {
-    create(body: { name: string; config: Record<string, unknown> }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    list(query?: { limit?: number; cursor?: string; archived?: boolean | 'all' }, options?: { signal?: AbortSignal }): Promise<{ templates: Record<string, unknown>[]; nextCursor: string | null }>;
-    get(id: string, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    update(id: string, body: { name?: string; archived?: boolean }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown> }>;
-    publishVersion(id: string, body: { config: Record<string, unknown>; ifVersion: number }, options?: { signal?: AbortSignal }): Promise<{ template: Record<string, unknown>; version: Record<string, unknown> }>;
-    listVersions(id: string, query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ versions: Record<string, unknown>[]; nextCursor: string | null }>;
-    getVersion(id: string, version: number, options?: { signal?: AbortSignal }): Promise<{ version: Record<string, unknown> }>;
-    delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
-  };
-  agents: {
-    create(body: { templateId: string; version?: number; name?: string }, options?: { idempotencyKey?: string; signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    list(query?: { limit?: number; cursor?: string; templateId?: string }, options?: { signal?: AbortSignal }): Promise<{ agents: Record<string, unknown>[]; nextCursor: string | null }>;
-    get(id: string, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    update(id: string, body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused'; avatarId?: string | null }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    setAction(id: string, name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    stop(id: string, body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
-    delete(id: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
-    run(id: string, input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
-  };
-  agent(id: string): {
-    context: {
-      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
-      get(key: string, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
-      put(key: string, body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null; inclusion?: 'always' | 'selected' }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
-      delete(key: string, body: { ifVersion: string }, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
-    };
-    memory: {
-      add(body: { text: string; source?: string }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
-      list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
-      delete(entryId: string, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
-    };
-    conversations: {
-      list(query?: { cursor?: string; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversations: Array<Record<string, unknown>>; nextCursor: string | null }>;
-      get(key: string, query?: { afterSeq?: number; limit?: number }, options?: { signal?: AbortSignal }): Promise<{ conversation: Record<string, unknown>; messages: Array<Record<string, unknown>>; facts: Array<Record<string, unknown>>; summary: Record<string, unknown> | null; nextAfterSeq: number | null }>;
-      delete(key: string, options?: { signal?: AbortSignal }): Promise<{ deletion: { conversationId: string; status: 'completed' | 'pending' } }>;
-      deleteMessage(key: string, seq: number, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
-      deleteFact(key: string, factId: string, options?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
-    };
-    get(options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    update(body: { ifRevision: number; name?: string; pinnedVersion?: number; state?: 'active' | 'paused'; avatarId?: string | null }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    setAction(name: string, body: { disabled: boolean; ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown> }>;
-    stop(body: { ifRevision: number }, options?: { signal?: AbortSignal }): Promise<{ agent: Record<string, unknown>; cancelled: number; cancelRequested: number }>;
-    delete(options?: { signal?: AbortSignal }): Promise<{ deletion: { agentId: string; status: 'completed' | 'pending' } }>;
-    startRun(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
-    getRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
-    listRuns(query?: { limit?: number; cursor?: string }, options?: { signal?: AbortSignal }): Promise<{ runs: ManagedRun[]; nextCursor: string | null }>;
-    listSteps(runId: string, options?: { signal?: AbortSignal }): Promise<{ steps: Record<string, unknown>[] }>;
-    reconcileStep(runId: string, ordinal: number, body: { outcome: 'succeeded' | 'failed'; note?: string }, options?: { signal?: AbortSignal }): Promise<{ step: Record<string, unknown> }>;
-    cancelRun(runId: string, options?: { signal?: AbortSignal }): Promise<ManagedRun>;
-    run(input: unknown, options?: ManagedRunOptions): Promise<ManagedRun>;
-    /**
-     * What online executors registered for this Agent's pinned version: at
-     * least one online, what the closest one lacks, and whether one declares
-     * every action and the model credential ref. Declared compatibility only;
-     * it does not check the model endpoint or its key.
-     */
-    runtime(options?: { signal?: AbortSignal }): Promise<{
-      runtime: { online: boolean; lastSeenAt: string | null; missingActions: string[]; modelCompatible: boolean };
-    }>;
-  };
-}
-
-export declare class PlatformError extends Error {
-  readonly code: string;
-  readonly status: number;
-  readonly details: { latestVersion?: number; revision?: number; limit?: number; runId?: string; unknownAgents?: string[] };
-  readonly retryAfter: number | null;
-}
-
-export interface ManagedActionDefinition {
-  name: string;
-  description: string;
-  input: Record<string, unknown>;
-  output: Record<string, unknown>;
-  effect: 'read' | 'write';
-  timeoutMs?: number;
-  /** Maximum serialized result size in bytes, up to 65536. Defaults to 8192. */
-  maxResultBytes?: number;
-  handler: (args: Record<string, unknown>, context: ManagedActionContext) => unknown | Promise<unknown>;
-  guard?: (args: Record<string, unknown>, context: ManagedActionContext) => boolean | Promise<boolean>;
-}
-
-export declare function defineAction(definition: ManagedActionDefinition): ManagedActionDefinition;
-
-export interface ManagedActionContext {
-  runId: string;
-  agentId: string;
-  conversation: string | null;
-  subject: Record<string, string> | null;
-  runContext: Record<string, unknown> | null;
-  spaceContext: Array<{ namespace: string; key: string; value: unknown; version: string }>;
-  agentContext: Array<{ key: string; value: unknown; version: string }>;
-  agentMemory: Array<{ id: string; text: string }>;
-  pendingOutcomes: Array<Record<string, unknown>>;
-  callId: string;
-  idempotencyKey: string;
-  signal: AbortSignal;
-}
-
-/** Connected outbound executor. One process can serve many managed Agents. */
-export declare class ManagedExecutor {
-  constructor(options: {
-    executorKey: string;
-    endpoint?: string;
-    agentIds: string[];
-    credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean; toolCalls?: boolean; maxPromptBytes?: number }>;
-    actions?: ManagedActionDefinition[];
-    instanceId?: string;
-    fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
-    modelFetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;
-    onError?: (code: string) => void;
-  });
-  register(): Promise<{ instanceId: string; heartbeatSeconds: number; offlineAfterSeconds: number }>;
-  pollOnce(waitSeconds?: number): Promise<unknown>;
-  start(): Promise<this>;
-  stop(): Promise<void>;
-  /**
-   * Null until start() succeeds. Resolves once polling has ended: `stopped`
-   * after stop(), `agent_removed` when every Agent was deleted, the API error
-   * code after rejected credentials or manifest, or `platform_unavailable`
-   * when the API stopped serving this Space. Transient failures do not close it.
-   */
-  readonly closed: Promise<{ reason: string }> | null;
-}
-
-export default AIToolkit;

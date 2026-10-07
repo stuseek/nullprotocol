@@ -75,7 +75,7 @@ export const lastJson = text => {
 const { NullProtocol } = require('..');
 const ai =
   arm === 'flow'
-    ? new NullProtocol(
+    ? await NullProtocol.create(
         compatible
           ? {
               provider: 'openai-compatible',

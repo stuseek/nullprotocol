@@ -4,11 +4,11 @@
 
 Results from 2026-10-06, source commit `71cb1f3` plus this directory, one run per task:
 
-| Model | Direct | Direct, reasoning | NullProtocol flow |
-| --- | ---: | ---: | ---: |
-| Qwen 2.5 3B, local | 3/48 | 10/48 | 47/48 |
-| Qwen 2.5 7B, local | 9/48 | 18/48 | 48/48 |
-| Mistral Large 3 | 13/48 | 44/48 | 48/48 |
+| Model              | Direct | Direct, reasoning | NullProtocol flow |
+| ------------------ | -----: | ----------------: | ----------------: |
+| Qwen 2.5 3B, local |   3/48 |             10/48 |             47/48 |
+| Qwen 2.5 7B, local |   9/48 |             18/48 |             48/48 |
+| Mistral Large 3    |  13/48 |             44/48 |             48/48 |
 
 By family, flow arm: invoices 11/12 on Qwen 3B and 12/12 on the other two; refunds, SLA deadlines and the ticket queue 12/12 on all three. The one Qwen 3B miss is an invoice line read wrongly; the flow accepted it, so check totals that matter against a second source.
 
