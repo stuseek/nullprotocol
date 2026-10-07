@@ -174,6 +174,20 @@ class Agent {
     return meter;
   }
 
+  // The actions left after the ones the Agent's settings disable.
+  allowed(actions, { disabledActions = [] }) {
+    const offered = actions.filter(
+      action => !disabledActions.includes(typeof action === 'string' ? action : action.action)
+    );
+    if (!offered.length) {
+      throw new AgentError(
+        'action_disabled',
+        "Every action offered to this decision is disabled in the Agent's settings."
+      );
+    }
+    return offered;
+  }
+
   // Everything one operation runs with, read once when it starts.
   async turn(contextKeys = []) {
     const { settings, entries, notes, missing } = await this.store.turn(contextKeys);
@@ -215,6 +229,8 @@ class Agent {
     try {
       turn = await this.turn(options.contextKeys);
       if (turn.refusal) throw turn.refusal;
+      // A decision is offered only the actions the Agent's settings allow.
+      if (name === 'decide') input[1] = this.allowed(input[1], turn.settings);
       result = await operations[name](turn, ...input, options);
       if (turn.meter.usage) result.usage = turn.meter.usage;
     } catch (error) {
@@ -299,8 +315,10 @@ class Agent {
     const action = this.actions.get(name);
     // Why the action must not run, or nothing. A check that throws refuses too.
     const refusal = async () => {
-      if ((await this.store.settings()).paused) {
-        return refused('agent_paused', 'This Agent is paused. The action did not run.');
+      const { paused, disabledActions = [] } = await this.store.settings();
+      if (paused) return refused('agent_paused', 'This Agent is paused. The action did not run.');
+      if (disabledActions.includes(name)) {
+        return refused('action_disabled', `"${name}" is disabled in the Agent's settings.`);
       }
       if (!action) {
         return refused('action_not_registered', `No handler is registered for "${name}"`);

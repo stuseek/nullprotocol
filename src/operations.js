@@ -11,26 +11,26 @@ function system(turn, task) {
   return [turn.instructions, task, turn.reference].filter(Boolean).join('\n\n');
 }
 
-// Small models sometimes wrap the one requested object in an array.
-function single(reply) {
+// Reads a reply that must be one JSON object. Small models sometimes wrap it in an array.
+function object(reply) {
   const value = parseJSON(reply);
   return Array.isArray(value) && value.length === 1 ? value[0] : value;
 }
 
-// Asks until `check` accepts the reply or the repair turns run out. `check`
-// returns the problem in words the model can act on, or nothing.
-async function answer(turn, task, request, check) {
+// Asks until `check` accepts the reply or the repair turns run out. `read`
+// parses the reply; `check` returns the problem in words the model can act
+// on, or nothing.
+async function answer(turn, task, request, check, read = object) {
   const turns = [{ role: 'user', content: request }];
   for (let attempts = 1; ; attempts++) {
     const reply = await turn.ask(system(turn, task), turns);
     let value = null;
     let problem;
     try {
-      value = single(reply);
+      value = read(reply);
       problem = check(value);
     } catch {
-      problem =
-        'The reply was not valid JSON. Return one JSON object that starts with { and ends with }.';
+      problem = `The reply was not valid JSON.${read === object ? ' Return one JSON object that starts with { and ends with }.' : ''}`;
     }
     if (!problem) return { value, attempts, repaired: attempts > 1 };
     if (attempts > turn.repairAttempts) return { problem, attempts, repaired: false };
@@ -50,7 +50,9 @@ async function extract(turn, data, schema) {
     reply => {
       const { isValid, issues } = validateExtraction(reply, schema);
       return isValid ? null : `The JSON does not match the schema: ${issues.join('; ')}.`;
-    }
+    },
+    // The schema says what the reply is: an object, a list or a plain value.
+    parseJSON
   );
   return problem
     ? { success: false, data: null, attempts, repaired, error: problem, errorCode: 'invalid_reply' }

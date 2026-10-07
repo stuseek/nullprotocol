@@ -53,6 +53,8 @@ export interface Settings {
   model: string;
   instructions: string;
   paused?: boolean;
+  /** Actions the Agent may not choose or run. */
+  disabledActions?: string[];
   name?: string;
   revision?: number;
 }
@@ -179,7 +181,9 @@ export interface Agent {
 
   settings(): Promise<Settings>;
   update(
-    changes: Partial<Pick<Settings, 'provider' | 'model' | 'instructions' | 'name' | 'paused'>>
+    changes: Partial<
+      Pick<Settings, 'provider' | 'model' | 'instructions' | 'name' | 'paused' | 'disabledActions'>
+    >
   ): Promise<Settings>;
 
   /** The Agent's context, or its conversation's when the object is bound to one. */

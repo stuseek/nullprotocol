@@ -101,6 +101,18 @@ test('each operation checks the reply and lets the model repair it once', async 
   });
   expect(requests[1].messages.at(-1).content).toMatch(/does not match the schema/);
 
+  // A schema for a list takes a list, also of one item.
+  const lines = {
+    type: 'array',
+    items: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] }
+  };
+  replies.push([{ sku: 'mug' }]);
+  expect(await agent.extract('One mug', lines)).toMatchObject({
+    success: true,
+    data: [{ sku: 'mug' }],
+    attempts: 1
+  });
+
   replies.push('not json', 'still not json');
   expect(await agent.extract('How long?', { days: 'number' })).toMatchObject({
     success: false,
@@ -211,6 +223,21 @@ test('execute runs the handler of a decision once, after the schema and the guar
   expect(await agent.execute(late)).toMatchObject({
     outcome: 'refused',
     errorCode: 'agent_paused'
+  });
+
+  // A disabled action is not offered to a decision, and one decided earlier does not run.
+  await agent.update({ paused: false });
+  const earlier = await decide({ orderId: 8 });
+  await agent.update({ disabledActions: ['refund'] });
+  expect(await agent.execute(earlier)).toMatchObject({
+    outcome: 'refused',
+    errorCode: 'action_disabled'
+  });
+  replies.push({ action: 'chat', reasoning: 'Only chat is left.' });
+  await agent.decide('Refund please', ['refund', 'chat']);
+  expect(requests.at(-1).messages[1].content).toContain('Available actions: ["chat"]');
+  expect(await agent.decide('Refund please', ['refund'])).toMatchObject({
+    errorCode: 'action_disabled'
   });
   expect(refund).toHaveBeenCalledTimes(1);
 });
