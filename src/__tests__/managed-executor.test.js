@@ -546,7 +546,9 @@ test.each(['read', 'read-then-context-outgrows-budget', 'write', 'write-then-mod
           JSON.stringify({
             spaceContext: [],
             agentContext: [
-              { key: 'region', value: outgrown ? 'EU '.repeat(2000) : 'EU', version: 'v1' }
+              outgrown
+                ? { key: 'region', value: 'EU '.repeat(2000), version: 'v2' }
+                : { key: 'region', value: 'EU', version: 'v1' }
             ],
             agentMemory: [{ id: 'memory-1', text: 'Prefers brief replies.' }],
             disabledActions: []
@@ -644,8 +646,13 @@ test.each(['read', 'read-then-context-outgrows-budget', 'write', 'write-then-mod
     });
     expect(handler).toHaveBeenCalledTimes(1);
     if (outgrown) {
+      // The answered request carried v1; v2 never left, so no step reports it.
       expect(modelRequests).toHaveLength(1);
       expect(commits[0]).toMatchObject({ status: 'failed', errorCode: 'model_context_too_large' });
+      expect(steps.flatMap(step => step.payload?.request?.context ?? [])).toEqual([
+        { key: 'region', version: 'v1' },
+        { key: 'region', version: 'v1' }
+      ]);
       return;
     }
     expect(result.run.status).toBe(failSecond ? 'failed' : 'succeeded');
@@ -671,9 +678,10 @@ test.each(['read', 'read-then-context-outgrows-budget', 'write', 'write-then-mod
     // Each model step reports the request it sent: its size against the budget
     // and the Agent Context entries in it.
     const sent = steps.filter(step => step.kind === 'model' && step.status !== 'started');
+    // The second request carries nothing it did not carry before.
     expect(sent.map(step => step.payload.request.context)).toEqual([
       [{ key: 'region', version: 'v1' }],
-      [{ key: 'region', version: 'v1' }]
+      []
     ]);
     expect(sent[0].payload.request).toMatchObject({
       bytes: Buffer.byteLength(JSON.stringify(modelRequests[0])),
