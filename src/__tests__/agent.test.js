@@ -41,6 +41,8 @@ test('without a key the Agent lives in the process and only the model is called'
   const fetched = jest.spyOn(globalThis, 'fetch');
   const agent = await create({ instructions: 'You work for Mugs & Co.' });
   expect(agent.agentId).toMatch(/^agent-/);
+  await agent.space.set('brand', 'Mugs & Co');
+  await agent.space.set('region', 'World');
   await agent.context.set('region', { region: 'EU' });
   await agent.context.set('policy', 'Returns within 45 days.', { inclusion: 'selected' });
   await agent.memory.add('The customer is Dana.');
@@ -54,6 +56,8 @@ test('without a key the Agent lives in the process and only the model is called'
   // An entry sent with every operation and the notes are there; a selected entry only when named.
   expect(systemOf(0)).toContain('You work for Mugs & Co.');
   expect(systemOf(0)).toContain('{"region":"EU"}');
+  expect(systemOf(0)).toContain('[brand]\nMugs & Co');
+  expect(systemOf(0)).not.toContain('World');
   expect(systemOf(0)).toContain('The customer is Dana.');
   expect(systemOf(0)).not.toContain('45 days');
   await agent.extract('How long?', { days: 'number' }, { contextKeys: ['policy'] });

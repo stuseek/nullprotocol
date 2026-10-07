@@ -64,6 +64,18 @@ export interface ContextEntry {
   inclusion: 'always' | 'selected';
   version: string;
   conversation?: string | null;
+  scope?: 'space' | 'agent' | 'conversation';
+}
+
+export interface ContextStore {
+  list(): Promise<ContextEntry[]>;
+  get(key: string): Promise<ContextEntry>;
+  set(
+    key: string,
+    value: unknown,
+    options?: { inclusion?: 'always' | 'selected'; ifVersion?: string | null }
+  ): Promise<ContextEntry>;
+  delete(key: string): Promise<unknown>;
 }
 
 export interface Note {

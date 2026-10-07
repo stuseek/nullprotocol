@@ -28,7 +28,7 @@ const MESSAGES = {
 };
 
 function savedStore({ key, endpoint, agentId, conversation }) {
-  const base = `${(endpoint || process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai').replace(/\/+$/, '')}/v1/agents`;
+  const base = `${(endpoint || process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai').replace(/\/+$/, '')}/v1`;
   const scope = extra => {
     const query = new URLSearchParams({ ...(conversation ? { conversation } : {}), ...extra });
     return query.size ? `?${query}` : '';
@@ -68,7 +68,15 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     );
   }
 
-  const agent = `/${agentId}`;
+  const agent = `/agents/${agentId}`;
+  // One scope of context entries: the Agent's (or its conversation's), or the Space's.
+  const contextAt = (path, query) => ({
+    list: async () => (await request('GET', path + query)).entries,
+    get: async name => (await request('GET', `${path}/${name}${query}`)).entry,
+    set: async (name, value, options = {}) =>
+      (await request('PUT', `${path}/${name}${query}`, { value, ...options })).entry,
+    delete: name => request('DELETE', `${path}/${name}${query}`)
+  });
   return {
     request,
     settings: async () => (await request('GET', `${agent}/settings`)).agent,
@@ -84,13 +92,8 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     record: operation => request('POST', `${agent}/operations`, operation),
     recordAction: (operationId, action) =>
       request('POST', `${agent}/operations/${operationId}/actions`, action),
-    context: {
-      list: async () => (await request('GET', `${agent}/context${scope()}`)).entries,
-      get: async name => (await request('GET', `${agent}/context/${name}${scope()}`)).entry,
-      set: async (name, value, options = {}) =>
-        (await request('PUT', `${agent}/context/${name}${scope()}`, { value, ...options })).entry,
-      delete: name => request('DELETE', `${agent}/context/${name}${scope()}`)
-    },
+    context: contextAt(`${agent}/context`, scope()),
+    space: contextAt('/context', ''),
     memory: {
       list: async () => (await request('GET', `${agent}/memory${scope()}`)).notes,
       add: async text =>

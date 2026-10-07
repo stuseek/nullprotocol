@@ -21,44 +21,57 @@ const ARGUMENTS = {
 const MAX_PROMPT_BYTES = 131072;
 const bytes = text => Buffer.byteLength(text, 'utf8');
 
-// Context, memory and settings of an Agent that lives in the process.
-function localStore(settings) {
-  const entries = new Map();
-  let notes = [];
-  const missing = (code, found) => {
-    if (!found) throw new AgentError(code, MESSAGES[code]);
-  };
+const missing = (code, found) => {
+  if (!found) throw new AgentError(code, MESSAGES[code]);
+};
+
+// One scope of context entries kept in the process.
+function localContext(entries = new Map()) {
   return {
+    entries,
+    list: async () => [...entries.values()],
+    get: async name => {
+      missing('context_key_not_found', entries.has(name));
+      return entries.get(name);
+    },
+    set: async (name, value, { inclusion } = {}) => {
+      const entry = {
+        key: name,
+        value,
+        inclusion: inclusion ?? entries.get(name)?.inclusion ?? 'always',
+        version: randomUUID()
+      };
+      entries.set(name, entry);
+      return entry;
+    },
+    delete: async name => missing('context_key_not_found', entries.delete(name))
+  };
+}
+
+// Settings, context and memory of an Agent that lives in the process.
+function localStore(settings) {
+  const space = localContext();
+  const context = localContext();
+  let notes = [];
+  return {
+    space,
+    context,
     settings: async () => settings,
     update: async changes => Object.assign(settings, changes),
-    turn: async contextKeys => ({
-      settings,
-      entries: [...entries.values()].filter(
-        entry => entry.inclusion === 'always' || contextKeys.includes(entry.key)
-      ),
-      notes,
-      missing: contextKeys.filter(name => !entries.has(name))
-    }),
+    turn: async contextKeys => {
+      // The Agent's entry replaces the Space's under the same key.
+      const all = new Map([...space.entries, ...context.entries]);
+      return {
+        settings,
+        entries: [...all.values()].filter(
+          entry => entry.inclusion === 'always' || contextKeys.includes(entry.key)
+        ),
+        notes,
+        missing: contextKeys.filter(name => !all.has(name))
+      };
+    },
     record: async () => {},
     recordAction: async () => {},
-    context: {
-      list: async () => [...entries.values()],
-      get: async name => {
-        missing('context_key_not_found', entries.has(name));
-        return entries.get(name);
-      },
-      set: async (name, value, { inclusion } = {}) => {
-        const entry = {
-          key: name,
-          value,
-          inclusion: inclusion ?? entries.get(name)?.inclusion ?? 'always',
-          version: randomUUID()
-        };
-        entries.set(name, entry);
-        return entry;
-      },
-      delete: async name => missing('context_key_not_found', entries.delete(name))
-    },
     memory: {
       list: async () => notes,
       add: async text => {
@@ -98,6 +111,8 @@ class Agent {
     this.conversation = conversation;
     this.instanceId = randomUUID();
     this.context = store.context;
+    // Context shared by every Agent of the Space.
+    this.space = store.space;
     this.memory = store.memory;
     this.store = store;
     this.credentials = credentials;
@@ -366,7 +381,7 @@ const NullProtocol = {
       });
     }
     const store = savedStore({ key, endpoint, conversation: rest.conversation });
-    const { agent } = await store.request('POST', '', { agentId, name, ...settings });
+    const { agent } = await store.request('POST', '/agents', { agentId, name, ...settings });
     return new Agent({
       ...rest,
       agentId: agent.agentId,
