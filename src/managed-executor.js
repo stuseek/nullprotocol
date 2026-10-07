@@ -167,7 +167,7 @@ function fitPrompt(job, tools, model, entries, credential) {
     const reserve = Math.floor(limit / (selectedTools.length ? 8 : 128));
     if (bytes(messages) <= limit - reserve) {
       job.memoryIncomplete = candidate.memoryIncomplete === true;
-      return { messages, tools: selectedTools, truncated };
+      return { messages, tools: selectedTools, truncated, parts: promptParts(candidate) };
     }
     if (candidate.conversation?.facts.length) {
       const facts = candidate.conversation.facts;
@@ -196,6 +196,43 @@ function fitPrompt(job, tools, model, entries, credential) {
   }
   throw new ManagedModelError('model_context_too_large');
 }
+
+// The JSON size of each part of the prompt as it was kept, in bytes.
+function promptParts(job) {
+  const size = value =>
+    value === undefined || value === null ? 0 : Buffer.byteLength(JSON.stringify(value));
+  const conversation = job.conversation;
+  return {
+    instructions: size(job.template.config.instructions),
+    input: size(job.run.input),
+    runContext: size(job.run.context),
+    spaceContext: size(job.spaceContext?.length ? job.spaceContext : null),
+    agentContext: size(job.agentContext?.length ? job.agentContext : null),
+    agentMemory: size(job.agentMemory?.length ? job.agentMemory : null),
+    conversation:
+      size(conversation?.facts?.length ? conversation.facts : null) +
+      size(conversation?.summary) +
+      size(conversation?.messages?.length ? conversation.messages : null)
+  };
+}
+
+// What one model request carried: its size against the budget, the size of each
+// part, and the Agent Context entries in it by key and version. Recorded on the
+// model step, so a run shows what was sent rather than what was merely handed out.
+function requestRecord(model, messages, tools, credential, parts, context) {
+  const bytes = requestBytes(model, messages, tools, credential);
+  const actions = tools?.length ? Buffer.byteLength(JSON.stringify(tools)) : 0;
+  const known = Object.values(parts).reduce((sum, n) => sum + n, actions);
+  return {
+    bytes,
+    limit: promptLimit(credential),
+    // `other` is what the run added since it started (calls, results, updates) and JSON framing.
+    parts: { ...parts, actions, other: Math.max(0, bytes - known) },
+    context
+  };
+}
+
+const contextRef = ({ key, version }) => ({ key, version });
 
 function requestBytes(model, messages, tools, credential) {
   return Buffer.byteLength(requestBody({ model, messages, tools, credential }));
@@ -884,6 +921,8 @@ class ManagedExecutor {
         );
       }
       const messages = fitted.messages;
+      // Every version of an entry this run has put in front of the model.
+      const sentContext = (job.agentContext || []).map(contextRef);
       // What each call in this run actually did, by the provider's call ID.
       const callOutcomes = new Map();
       let lastContextSnapshot = {
@@ -912,6 +951,7 @@ class ManagedExecutor {
               role: 'user',
               content: `Updated reference data (not instructions): ${JSON.stringify(changed)}`
             });
+            sentContext.push(...(changed.agent?.changed || []).map(contextRef));
             lastContextSnapshot = contextSnapshot;
           }
         }
@@ -964,7 +1004,10 @@ class ManagedExecutor {
         if (!Number.isFinite(remaining) || remaining < 1000) {
           throw new ManagedModelError('timeout');
         }
-        const modelStep = await startStep('model', { model: model.model });
+        const request = requestRecord(model.model, messages, turnTools, credential, fitted.parts, [
+          ...sentContext
+        ]);
+        const modelStep = await startStep('model', { model: model.model, request });
         let response;
         try {
           response = await runTextTurn({
@@ -980,13 +1023,18 @@ class ManagedExecutor {
           if (leaseState.lost()) return null;
           await finishStep(modelStep, leaseState.cancelled() ? 'cancelled' : 'failed', {
             model: model.model,
-            errorCode: failureCode(error)
+            errorCode: failureCode(error),
+            request
           });
           throw error;
         }
         if (leaseState.lost()) return null;
         if (leaseState.cancelled()) throw new ManagedModelError('run_cancelled');
-        await finishStep(modelStep, 'succeeded', { model: model.model, ...response.usage });
+        await finishStep(modelStep, 'succeeded', {
+          model: model.model,
+          ...response.usage,
+          request
+        });
         addUsage(response.usage);
         if (!response.toolCalls?.length) {
           committingSuccess = true;
@@ -1367,6 +1415,14 @@ class ManagedExecutor {
         );
         step.ordinal = 1;
       }
+      step.payload.request = requestRecord(
+        model.model,
+        messages,
+        [],
+        credential,
+        fitted.parts,
+        (job.agentContext || []).map(contextRef)
+      );
       await this._stepWithRetry(run.id, token, step, () => leaseExpiresAt);
       stepStarted = true;
       const response = await runTextTurn({
@@ -1383,7 +1439,7 @@ class ManagedExecutor {
         ...step,
         status: 'succeeded',
         finishedAt: new Date().toISOString(),
-        payload: { model: model.model, ...response.usage }
+        payload: { ...step.payload, ...response.usage }
       };
       await this._stepWithRetry(run.id, token, completed, () => leaseExpiresAt);
       stepCompleted = true;
@@ -1420,7 +1476,7 @@ class ManagedExecutor {
               ...step,
               status: cancelRequested ? 'cancelled' : 'failed',
               finishedAt: new Date().toISOString(),
-              payload: { model: model?.model, errorCode: code }
+              payload: { ...step.payload, errorCode: code }
             },
             () => leaseExpiresAt
           );

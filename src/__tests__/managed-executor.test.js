@@ -668,6 +668,17 @@ test.each(['read', 'read-then-context-outgrows-budget', 'write', 'write-then-mod
         { role: 'tool', tool_call_id: 'provider-id', content: '{"status":"shipped"}' }
       ])
     );
+    // Each model step reports the request it sent: its size against the budget
+    // and the Agent Context entries in it.
+    const sent = steps.filter(step => step.kind === 'model' && step.status !== 'started');
+    expect(sent.map(step => step.payload.request.context)).toEqual([
+      [{ key: 'region', version: 'v1' }],
+      [{ key: 'region', version: 'v1' }]
+    ]);
+    expect(sent[0].payload.request).toMatchObject({
+      bytes: Buffer.byteLength(JSON.stringify(modelRequests[0])),
+      limit: effect === 'read' ? 4096 : 128 * 1024
+    });
     expect(commits[0].output).toEqual(failSecond ? null : { text: 'Your order shipped.' });
     if (effect === 'write') {
       expect(commits[0].conversation.append[1].content).toEqual({
