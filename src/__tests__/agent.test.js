@@ -85,6 +85,14 @@ test('without a key the Agent lives in the process and only the model is called'
 
 test('each operation checks the reply and lets the model repair it once', async () => {
   const agent = await create();
+  // The input is taken when the operation starts; a later change by the caller is not sent.
+  const invoice = { amount: 200 };
+  replies.push({ amount: 200 });
+  const pending = agent.extract(invoice, { amount: 'number' });
+  invoice.amount = 999;
+  await pending;
+  expect(requests[0].messages[1].content).toContain('"amount":200');
+  requests.length = 0;
   replies.push({ days: 'many' }, { days: 30 });
   expect(await agent.extract('How long?', { days: 'number' })).toMatchObject({
     data: { days: 30 },
@@ -151,9 +159,11 @@ test('a request over the budget and a model without credentials fail before any 
 test('execute runs the handler of a decision once, after the schema and the guard', async () => {
   const agent = await create();
   const refund = jest.fn(async ({ orderId }) => ({ refunded: orderId }));
+  const guarded = [];
   agent.registerAction('refund', refund, {
     input: { type: 'object', properties: { orderId: { type: 'number' } }, required: ['orderId'] },
-    guard: ({ orderId }) => {
+    guard: ({ orderId }, decision) => {
+      guarded.push(decision.action);
       if (orderId === 99) throw new Error('lookup failed');
       return orderId !== 13;
     }
@@ -191,6 +201,7 @@ test('execute runs the handler of a decision once, after the schema and the guar
   expect(runs.map(run => run.errorCode ?? run.outcome)).toEqual(['completed', 'already_executed']);
   expect(refund).toHaveBeenCalledTimes(1);
   expect(refund.mock.calls[0][0]).toEqual({ orderId: 42 });
+  expect(guarded.at(-1)).toBe('refund');
 
   await agent.update({ paused: true });
   expect(await agent.extract('x', { days: 'number' })).toMatchObject({ errorCode: 'agent_paused' });

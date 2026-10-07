@@ -182,16 +182,10 @@ export interface Agent {
     changes: Partial<Pick<Settings, 'provider' | 'model' | 'instructions' | 'name' | 'paused'>>
   ): Promise<Settings>;
 
-  context: {
-    list(): Promise<ContextEntry[]>;
-    get(key: string): Promise<ContextEntry>;
-    set(
-      key: string,
-      value: unknown,
-      options?: { inclusion?: 'always' | 'selected'; ifVersion?: string | null }
-    ): Promise<ContextEntry>;
-    delete(key: string): Promise<unknown>;
-  };
+  /** The Agent's context, or its conversation's when the object is bound to one. */
+  context: ContextStore;
+  /** Context shared by every Agent of the Space. An Agent's entry replaces one under the same key. */
+  space: ContextStore;
   memory: {
     list(): Promise<Note[]>;
     add(text: string): Promise<Note>;

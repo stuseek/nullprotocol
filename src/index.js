@@ -204,7 +204,9 @@ class Agent {
 
   async operate(name, args) {
     const names = ARGUMENTS[name];
-    const input = names.map((_, index) => args[index] ?? null);
+    // The input as it is now: what the model is sent and history keeps do not
+    // follow later changes by the caller.
+    const input = structuredClone(names.map((_, index) => args[index] ?? null));
     const options = args[names.length] ?? {};
     const started = Date.now();
     const id = randomUUID();
@@ -220,13 +222,12 @@ class Agent {
       if (!turn) return result;
     }
     if (name === 'decide' && result.success) {
-      // What execute runs is fixed here; later changes to the returned object do not count.
+      // What execute runs, checks and passes on is the decision as it is now.
       this.decisions.set(result, {
         id,
         turn,
         input: input[0],
-        action: result.action,
-        parameters: structuredClone(result.parameters),
+        decision: structuredClone(result),
         executed: false
       });
     }
@@ -277,8 +278,8 @@ class Agent {
    */
   async execute(decision) {
     const made = this.decisions.get(decision);
-    // The decision as it was made: its action and a copy of its parameters.
-    const { action: name, parameters } = made ?? {};
+    // The decision as it was made, whatever happened to the returned object since.
+    const { action: name, parameters } = made?.decision ?? {};
     const refused = (errorCode, error) => ({
       success: false,
       outcome: 'refused',
@@ -311,7 +312,7 @@ class Agent {
           `The parameters do not match the action's schema: ${checked.issues.join('; ')}`
         );
       }
-      if (action.guard && (await action.guard(parameters, decision)) !== true) {
+      if (action.guard && (await action.guard(parameters, made.decision)) !== true) {
         return refused('guard_rejected', 'The action was rejected by its guard');
       }
       return null;
@@ -325,7 +326,7 @@ class Agent {
     if (!outcome) {
       try {
         const result = await action.handler(parameters, {
-          decision,
+          decision: made.decision,
           input: made.input,
           reply: message => operations.reply({ ...made.turn, ask: meter.ask }, String(message))
         });
