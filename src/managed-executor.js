@@ -160,8 +160,12 @@ function fitPrompt(job, tools, model, entries, credential) {
     Buffer.byteLength(requestBody({ model, messages, tools: selectedTools, credential }));
   for (let attempt = 0; attempt < 400; attempt++) {
     const messages = composeMessages(candidate);
-    const reserve = selectedTools.length ? 16384 : 1024;
-    if (bytes(messages) <= promptLimit(credential) - reserve) {
+    // Room kept for the rest of the run: an eighth of the budget when actions may
+    // add calls and results, a little otherwise. A share, so a small budget still
+    // leaves the request itself room.
+    const limit = promptLimit(credential);
+    const reserve = Math.floor(limit / (selectedTools.length ? 8 : 128));
+    if (bytes(messages) <= limit - reserve) {
       job.memoryIncomplete = candidate.memoryIncomplete === true;
       return { messages, tools: selectedTools, truncated };
     }
@@ -267,17 +271,8 @@ function fitTurn(messages, tools, model, entries, credential, callOutcomes = new
     }
     if (fits()) break;
   }
-  if (!fits()) {
-    for (const message of messages) {
-      if (message.role !== 'user' || !message.content.startsWith('Updated reference data')) {
-        continue;
-      }
-      message.content =
-        'Updated reference data omitted due to context budget. Ask for a fresh run before relying on these values.';
-      truncated.contextUpdates++;
-      if (fits()) break;
-    }
-  }
+  // Refreshed reference data is never replaced: if it cannot fit after the steps
+  // below, the run fails instead of continuing on values it no longer has.
   if (!fits()) {
     for (const message of messages) {
       if (message.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;

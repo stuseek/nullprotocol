@@ -4,7 +4,8 @@
 
 - Managed Agents: an Agent Context entry can be `inclusion: 'selected'`, sent only to the runs that name its key in `contextKeys`. A selected entry holds up to 64 KiB.
 - `ManagedExecutor` no longer leaves Agent Context or memory out of a request that is too large: the run fails with `model_context_too_large`. Older conversation facts and turns are still left out first.
-- A credential can set `maxPromptBytes`, the request budget for a model with a small window.
+- A credential can set `maxPromptBytes`, the request budget for a model with a small window. The room kept for action calls and results is a share of that budget, so a small budget no longer drops every action.
+- Context refreshed during a run is no longer replaced by a note when it does not fit: the run fails with `model_context_too_large`.
 
 ## 1.3.1
 

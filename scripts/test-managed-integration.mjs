@@ -146,26 +146,26 @@ try {
         ? { choices: [{ message: { content: 'It shipped.' } }] }
         : wantsRefund && !refundAvailable
           ? { choices: [{ message: { content: 'I cannot verify the full history yet.' } }] }
-        : {
-            choices: [
-              {
-                message: {
-                  content: null,
-                  tool_calls: [
-                    {
-                      id: 'call-1',
-                      type: 'function',
-                      function: {
-                        name: wantsRefund ? 'refund' : 'getOrder',
-                        arguments:
-                          wantsRefund && current.includes('124') ? '{"id":"124"}' : '{"id":"123"}'
+          : {
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: 'call-1',
+                        type: 'function',
+                        function: {
+                          name: wantsRefund ? 'refund' : 'getOrder',
+                          arguments:
+                            wantsRefund && current.includes('124') ? '{"id":"124"}' : '{"id":"123"}'
+                        }
                       }
-                    }
-                  ]
+                    ]
+                  }
                 }
-              }
-            ]
-          };
+              ]
+            };
       return new Response(JSON.stringify(response));
     }
   });
@@ -214,6 +214,12 @@ try {
   assert.equal(failedHistory.rows[0].content.actionOutcomes[0].status, 'succeeded');
   assert.equal(failedHistory.rows[0].content.errorCode, 'model_error');
   await content.agent(agent.id).context.put('region', { value: 'EU', ifVersion: null });
+  // A selected entry reaches only the run that names its key.
+  await content.agent(agent.id).context.put('policy', {
+    value: 'Refunds within 30 days.',
+    ifVersion: null,
+    inclusion: 'selected'
+  });
   await content.agent(agent.id).memory.add({ text: 'Prefers brief replies.' });
   const conversation = await content.agent(agent.id).conversations.get('ticket-124');
   for (let seq = 3; seq <= 34; seq++) {
@@ -242,9 +248,20 @@ try {
   ]);
   const fifth = await caller
     .agent(agent.id)
-    .startRun('Where is order 123?', { conversation: 'ticket-124' });
+    .startRun('Where is order 123?', { conversation: 'ticket-124', contextKeys: ['policy'] });
+  const sentBefore = modelRequests.length;
   const compacted = await executor.pollOnce();
   assert.equal(compacted.run.status, 'succeeded');
+  const mentionsPolicy = request => JSON.stringify(request).includes('Refunds within 30 days.');
+  assert.ok(!modelRequests.slice(0, sentBefore).some(mentionsPolicy));
+  assert.ok(modelRequests.slice(sentBefore).some(mentionsPolicy));
+  assert.deepEqual(
+    (await caller.agent(agent.id).getRun(fifth.id)).contextRefs.map(ref => [ref.key, ref.state]),
+    [
+      ['policy', 'current'],
+      ['region', 'current']
+    ]
+  );
   const compactedConversation = await content.agent(agent.id).conversations.get('ticket-124');
   assert.ok(compactedConversation.summary.coversToSeq >= 22);
   assert.ok(compactedConversation.facts.every(fact => !fact.value.actionOutcome));
@@ -303,8 +320,8 @@ try {
         !request.tools?.some(tool => tool.function.name === 'refund')
     )
   );
-  const memoryState = (await content.agent(agent.id).conversations.get('ticket-124'))
-    .conversation.memoryState;
+  const memoryState = (await content.agent(agent.id).conversations.get('ticket-124')).conversation
+    .memoryState;
   assert.equal(memoryState.backlog, true);
   assert.equal(memoryState.capacityExceeded, false);
   assert.ok(memoryState.uncompactedMessages > 50);

@@ -509,10 +509,13 @@ describe('executor lifetime', () => {
   });
 });
 
-test.each(['read', 'write', 'write-then-model-fails'])(
+// The read cases run on a 4 KiB request budget: a short request keeps its action,
+// and refreshed context that outgrows the budget fails the run instead of being left out.
+test.each(['read', 'read-then-context-outgrows-budget', 'write', 'write-then-model-fails'])(
   'a declared %s action is schema checked, traced and returned to the model',
   async mode => {
-    const effect = mode === 'read' ? 'read' : 'write';
+    const effect = mode.startsWith('read') ? 'read' : 'write';
+    const outgrown = mode === 'read-then-context-outgrows-budget';
     const failSecond = mode === 'write-then-model-fails';
     const action = {
       name: 'getOrder',
@@ -542,7 +545,9 @@ test.each(['read', 'write', 'write-then-model-fails'])(
         return new globalThis.Response(
           JSON.stringify({
             spaceContext: [],
-            agentContext: [{ key: 'region', value: 'EU', version: 'v1' }],
+            agentContext: [
+              { key: 'region', value: outgrown ? 'EU '.repeat(2000) : 'EU', version: 'v1' }
+            ],
             agentMemory: [{ id: 'memory-1', text: 'Prefers brief replies.' }],
             disabledActions: []
           })
@@ -592,7 +597,13 @@ test.each(['read', 'write', 'write-then-model-fails'])(
     const executor = new ManagedExecutor({
       executorKey,
       agentIds: [agentId],
-      credentials: { localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1' } },
+      credentials: {
+        localModel: {
+          provider: 'local',
+          baseURL: 'http://localhost:11434/v1',
+          ...(effect === 'read' ? { maxPromptBytes: 4096 } : {})
+        }
+      },
       actions: [{ ...action, handler }],
       fetchImpl,
       modelFetchImpl
@@ -631,8 +642,13 @@ test.each(['read', 'write', 'write-then-model-fails'])(
           }
         : {})
     });
-    expect(result.run.status).toBe(failSecond ? 'failed' : 'succeeded');
     expect(handler).toHaveBeenCalledTimes(1);
+    if (outgrown) {
+      expect(modelRequests).toHaveLength(1);
+      expect(commits[0]).toMatchObject({ status: 'failed', errorCode: 'model_context_too_large' });
+      return;
+    }
+    expect(result.run.status).toBe(failSecond ? 'failed' : 'succeeded');
     expect(handler.mock.calls[0][1].idempotencyKey).toMatch(new RegExp(`^${runId}:`));
     expect(handler.mock.calls[0][1].agentContext).toEqual([
       { key: 'region', value: 'EU', version: 'v1' }
