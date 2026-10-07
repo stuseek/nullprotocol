@@ -2,7 +2,7 @@
 
 48 everyday back-office tasks, run three ways on each model: one direct prompt, one direct prompt with step-by-step reasoning, and a flow where the model only reads text into a strict schema with `extract` and your code does the arithmetic and applies the rules.
 
-Results from 2026-10-06, source commit `71cb1f3` plus this directory, one run per task:
+One run per task. The flow column for the two local models is from 2026-10-08 on SDK 2.0; the direct columns, which do not use the SDK, and the Mistral row are from 2026-10-06 on 1.3.1:
 
 | Model              | Direct | Direct, reasoning | NullProtocol flow |
 | ------------------ | -----: | ----------------: | ----------------: |
@@ -12,7 +12,7 @@ Results from 2026-10-06, source commit `71cb1f3` plus this directory, one run pe
 
 By family, flow arm: invoices 11/12 on Qwen 3B and 12/12 on the other two; refunds, SLA deadlines and the ticket queue 12/12 on all three. The one Qwen 3B miss is an invoice line read wrongly; the flow accepted it, so check totals that matter against a second source.
 
-Median time per task in the flow arm: 3.8 s for Qwen 3B and 6.2 s for Qwen 7B on one laptop, 2.6 s for Mistral Large 3 over its API. The flow makes 60 model calls for the 48 tasks: two per invoice, one for every other task.
+The flow makes 60 model calls for the 48 tasks: two per invoice, one for every other task; on SDK 2.0 that was 19,175 input tokens for either local model. Median time per task on 1.3.1 was 3.8 s for Qwen 3B and 6.2 s for Qwen 7B on one laptop, and 2.6 s for Mistral Large 3 over its API. The 2.0 run shared the laptop with other work, so its times (5.4 s and 14.1 s) say nothing about the SDK.
 
 ## What the tasks are
 
@@ -38,7 +38,7 @@ Both direct arms and the flow see the same task text. Local models run at temper
 - The refund policy and the business-hours rule are written by hand in the flow. A task whose rule cannot be put in code is outside this benchmark.
 - Each task ran once per arm. The tasks are synthetic and share patterns, so these are counts on this set, not a general measure of any model.
 - The first Qwen 7B flow run scored 40/48: eight queue tasks hit the SDK's 30-second request timeout on the test machine. The published run uses a 180-second timeout.
-- The published flow rows predate token reporting in `extract`, so they list calls and time only; a new run records tokens too.
+- The Mistral flow row has not been run again on 2.0.
 
 ## Run it
 
