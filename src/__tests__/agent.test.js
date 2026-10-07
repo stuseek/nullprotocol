@@ -116,7 +116,6 @@ test('each operation checks the reply and lets the model repair it once', async 
   replies.push('not json', 'still not json');
   expect(await agent.extract('How long?', { days: 'number' })).toMatchObject({
     success: false,
-    data: null,
     errorCode: 'invalid_reply'
   });
 
@@ -137,10 +136,10 @@ test('each operation checks the reply and lets the model repair it once', async 
     errorCode: 'invalid_reply'
   });
   replies.push({ score: 0.9, reasoning: 'Clear.', recommendation: 'pass' });
-  expect(await agent.validate('Is it polite?', 'Thank you!')).toMatchObject({
-    success: true,
-    recommendation: 'pass'
-  });
+  expect(
+    await agent.validate('Is it polite?', 'Thank you!', { reference: 'Our tone guide.' })
+  ).toMatchObject({ success: true, recommendation: 'pass' });
+  expect(requests.at(-1).messages[1].content).toContain('Reference: "Our tone guide."');
   replies.push({ action: 'delete', reasoning: 'x' }, { action: 'escalate', reasoning: 'Angry.' });
   expect(await agent.decide('Angry customer', ['reply', 'escalate'])).toMatchObject({
     success: true,

@@ -14,7 +14,7 @@ const { AgentError, MESSAGES, savedStore } = require('./platform');
 // The arguments of each operation, as history names them. Options come after.
 const ARGUMENTS = {
   extract: ['data', 'schema'],
-  validate: ['criteria', 'subject', 'reference'],
+  validate: ['criteria', 'subject'],
   summarize: ['content'],
   decide: ['context', 'actions']
 };
@@ -222,6 +222,8 @@ class Agent {
     // follow later changes by the caller.
     const input = structuredClone(names.map((_, index) => args[index] ?? null));
     const options = args[names.length] ?? {};
+    // What validate compares the subject with is input too, and is kept with it.
+    const reference = structuredClone(options.reference);
     const started = Date.now();
     const id = randomUUID();
     let turn;
@@ -231,7 +233,7 @@ class Agent {
       if (turn.refusal) throw turn.refusal;
       // A decision is offered only the actions the Agent's settings allow.
       if (name === 'decide') input[1] = this.allowed(input[1], turn.settings);
-      result = await operations[name](turn, ...input, options);
+      result = await operations[name](turn, ...input, { ...options, reference });
       if (turn.meter.usage) result.usage = turn.meter.usage;
     } catch (error) {
       result = { success: false, error: error.message, errorCode: error.code ?? 'failed' };
@@ -263,7 +265,10 @@ class Agent {
         modelCalls: turn.meter.modelCalls,
         requestBytes: turn.meter.requestBytes,
         context: turn.sent,
-        input: Object.fromEntries(names.map((argument, index) => [argument, input[index]])),
+        input: {
+          ...Object.fromEntries(names.map((argument, index) => [argument, input[index]])),
+          reference
+        },
         result,
         success: result.success,
         errorCode: result.errorCode,

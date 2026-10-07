@@ -86,44 +86,47 @@ export interface Note {
   conversation?: string | null;
 }
 
-interface Outcome {
-  success: boolean;
-  error?: string;
-  errorCode?: string;
+/** What every result carries, whether the operation succeeded or not. */
+interface Ran {
   attempts?: number;
   repaired?: boolean;
+  /** Tokens of every request the operation made, when the provider counted them all. */
   usage?: { inputTokens: number; outputTokens: number };
   /** Set when the operation ran but could not be written to history. */
   historyError?: string;
 }
 
-export interface Extraction<T = unknown> extends Outcome {
-  data?: T | null;
+/** A failed operation: `error` says what happened and `errorCode` names it. */
+export interface Failure extends Ran {
+  success: false;
+  error: string;
+  errorCode: string;
 }
-export interface Validation extends Outcome {
-  score?: number;
-  recommendation?: 'pass' | 'fail' | 'conditional';
-  reasoning?: string;
-}
-export interface Summary extends Outcome {
-  summary?: string;
-  keyPoints?: string[];
-}
-export interface Decision extends Outcome {
-  action?: string | null;
-  parameters?: Record<string, unknown>;
-  reasoning?: string;
-  rejectedAction?: string;
-}
-export interface Execution {
-  success: boolean;
-  outcome: 'completed' | 'failed' | 'refused';
-  action?: string;
-  result?: unknown;
-  error?: string;
-  errorCode?: string;
-  historyError?: string;
-}
+
+type Result<T> = (Ran & { success: true } & T) | Failure;
+
+export type Extraction<T = unknown> = Result<{ data: T }>;
+export type Validation = Result<{
+  score: number;
+  recommendation: 'pass' | 'fail' | 'conditional';
+  reasoning: string;
+}>;
+export type Summary = Result<{ summary: string; keyPoints: string[] }>;
+/** A decision the guard rejected is a failure that names the action in `rejectedAction`. */
+export type Decision =
+  | Result<{ action: string; parameters: Record<string, unknown>; reasoning: string }>
+  | (Failure & { rejectedAction?: string });
+
+export type Execution =
+  | { success: true; outcome: 'completed'; action: string; result: unknown; historyError?: string }
+  | {
+      success: false;
+      outcome: 'failed' | 'refused';
+      action?: string;
+      error: string;
+      errorCode: string;
+      historyError?: string;
+    };
 
 export interface OperationOptions {
   /** Context entries with inclusion `selected` to send with this operation. */
@@ -132,8 +135,11 @@ export interface OperationOptions {
 
 export type ActionChoice = string | { action: string; description?: string };
 
+/** A successful decision. */
+export type Chosen = Extract<Decision, { success: true }>;
+
 export interface ActionContext {
-  decision: Decision;
+  decision: Chosen;
   /** What the decision was made about. */
   input: unknown;
   /** Asks the model for a plain-text answer, as the decision's own model and instructions. */
@@ -151,11 +157,11 @@ export interface Agent {
     schema: object,
     options?: OperationOptions
   ): Promise<Extraction<T>>;
+  /** Judges `subject` against `criteria`; `reference` is what to compare it with, if anything. */
   validate(
     criteria: unknown,
     subject: unknown,
-    reference?: unknown,
-    options?: OperationOptions
+    options?: OperationOptions & { reference?: unknown }
   ): Promise<Validation>;
   summarize(
     content: unknown,
@@ -164,7 +170,7 @@ export interface Agent {
   decide(
     context: unknown,
     actions: ActionChoice[],
-    options?: OperationOptions & { guard?: (decision: Decision) => boolean | Promise<boolean> }
+    options?: OperationOptions & { guard?: (decision: Chosen) => boolean | Promise<boolean> }
   ): Promise<Decision>;
 
   /** An action a decision may choose. `chat` is built in. */
@@ -173,7 +179,7 @@ export interface Agent {
     handler: (parameters: any, context: ActionContext) => unknown,
     options?: {
       input?: object;
-      guard?: (parameters: any, decision: Decision) => boolean | Promise<boolean>;
+      guard?: (parameters: any, decision: Chosen) => boolean | Promise<boolean>;
     }
   ): this;
   /** Runs the handler of a decision this object made, once. */
