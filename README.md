@@ -116,7 +116,7 @@ const order = await support.extract(message, schema);
 | Agent | lives in the process | saved in the Space under one `agentId`; create it in code or in the cabinet |
 | Model and instructions | set in code | set on the Agent; a change in the cabinet or by `agent.update()` applies from the next operation of every process |
 | Context and memory | in the process | saved; shared by every process that loads the Agent |
-| History | none | every operation with its input, result, the instructions and context it ran with, the requests and tokens it used, and the outcome of its action, kept for 30 days |
+| History | none | every operation with its input, result, the instructions and context it ran with, the request attempts and tokens it used, and the outcome of its action, kept for 30 days |
 | Pause, disabled actions | `agent.update({ paused: true })` | also from the cabinet, for every process |
 | Sent to NullProtocol | nothing | all of the above, texts included |
 

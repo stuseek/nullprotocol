@@ -150,4 +150,4 @@ await agent.update({ model: 'gpt-4.1', paused: true, disabledActions: ['refund']
 
 ## What is sent where
 
-To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of requests and bytes sent to it, token counts, and each action's parameters, outcome and result. Model keys are never sent.
+To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of HTTP attempts made to it, retries included, and the size of their bodies, token counts, and each action's parameters, outcome and result. Model keys are never sent.
