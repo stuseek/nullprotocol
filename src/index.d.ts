@@ -178,6 +178,7 @@ export interface Agent {
     name: string,
     handler: (parameters: any, context: ActionContext) => unknown,
     options?: {
+      description?: string;
       input?: object;
       guard?: (parameters: any, decision: Chosen) => boolean | Promise<boolean>;
     }

@@ -67,16 +67,16 @@ The model reads; your code calculates and applies the rules. [Operations](docs/o
 
 ```js
 agent.registerAction('refund', ({ orderId }) => refunds.create(orderId), {
+  description: 'Refund an order the customer asks to return',
   input: { type: 'object', properties: { orderId: { type: 'number' } }, required: ['orderId'] },
   guard: ({ orderId }) => orders.isRefundable(orderId) // your rule, in your code
 });
 
-const decision = await agent.decide(message, [
-  { action: 'refund', description: 'The customer wants a refund. parameters: { "orderId": number }' },
-  { action: 'chat', description: 'The customer asks a question. parameters: { "message": the question }' }
-]);
+const decision = await agent.decide(message, ['refund', 'escalate', 'chat']);
 if (decision.success) console.log(await agent.execute(decision));
 ```
+
+The model is shown each registered action's description and schema, and `execute` checks the parameters against that same schema.
 
 `chat` is built in: when a decision chooses it, `execute` answers in plain text with the same model. There is no separate chat mode.
 

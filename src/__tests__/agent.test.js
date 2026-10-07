@@ -234,11 +234,42 @@ test('execute runs the handler of a decision once, after the schema and the guar
   });
   replies.push({ action: 'chat', reasoning: 'Only chat is left.' });
   await agent.decide('Refund please', ['refund', 'chat']);
-  expect(requests.at(-1).messages[1].content).toContain('Available actions: ["chat"]');
+  expect(requests.at(-1).messages[1].content).toContain('Available actions: [{"action":"chat"');
+  expect(requests.at(-1).messages[1].content).not.toContain('"action":"refund"');
   expect(await agent.decide('Refund please', ['refund'])).toMatchObject({
     errorCode: 'action_disabled'
   });
   expect(refund).toHaveBeenCalledTimes(1);
+});
+
+test('a decision is shown the description and schema an action was registered with', async () => {
+  const agent = await create();
+  const input = {
+    type: 'object',
+    properties: { creditEuro: { type: 'number' }, receiptId: { type: 'string' } },
+    required: ['creditEuro', 'receiptId']
+  };
+  agent.registerAction('credit', parameters => parameters, {
+    description: 'Give store credit for a receipt',
+    input
+  });
+  replies.push({ action: 'credit', parameters: { creditEuro: 12, receiptId: 'R-7' } });
+  const decision = await agent.decide('Credit 12 EUR for receipt R-7', ['credit', 'escalate']);
+  expect(requests[0].messages[1].content).toContain(
+    JSON.stringify([
+      { action: 'credit', description: 'Give store credit for a receipt', parameters: input },
+      { action: 'escalate' }
+    ])
+  );
+  expect(await agent.execute(decision)).toMatchObject({
+    outcome: 'completed',
+    result: { creditEuro: 12, receiptId: 'R-7' }
+  });
+
+  // Chat without a message answers what the decision was about, also when that is an object.
+  replies.push({ action: 'chat', parameters: {} }, 'Hello.');
+  await agent.execute(await agent.decide({ question: 'Hi?' }, ['chat']));
+  expect(requests.at(-1).messages[1].content).toBe('{"question":"Hi?"}');
 });
 
 test('chat is an action a decision chooses, answered by the same model', async () => {

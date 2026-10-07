@@ -98,12 +98,12 @@ const result = await agent.decide(context, actions, { guard, contextKeys });
 // { success: true, action, parameters, reasoning }
 ```
 
-`actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. `guard(decision)` is your own check of the choice and must return `true`.
+`actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. A registered action is shown to the model with its description and its parameters schema, so neither needs repeating here. `guard(decision)` is your own check of the choice and must return `true`.
 
 ## Actions
 
 ```js
-agent.registerAction(name, handler, { input, guard });
+agent.registerAction(name, handler, { description, input, guard });
 const run = await agent.execute(decision);
 // { success: true, outcome: 'completed', action, result }
 // { success: false, outcome: 'refused' | 'failed', action, error, errorCode }
@@ -111,7 +111,7 @@ const run = await agent.execute(decision);
 
 `execute` takes the successful result of this object's `decide` and runs what was decided, whatever happened to the returned object since. Before the handler: the Agent must not be paused, the action must be registered and not disabled, `parameters` must match `input` (a JSON Schema), and `guard(parameters, decision)` must return `true`. A guard that throws refuses. One decision runs once: a second `execute` is refused with `already_executed`.
 
-The handler receives `(parameters, { decision, input, reply })`. `reply(message)` asks the decision's own model for a plain-text answer; the built-in `chat` action is `({ message }, { reply, input }) => reply(message ?? input)`.
+The handler receives `(parameters, { decision, input, reply })`. `reply(message)` asks the decision's own model for a plain-text answer; the built-in `chat` action answers `message`, or what the decision was about when the model gave none.
 
 ## Context
 

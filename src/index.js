@@ -120,7 +120,15 @@ class Agent {
     this.decisions = new WeakMap();
     // Chat is one more action a decision may choose, answered by the same model.
     this.actions = new Map([
-      ['chat', { handler: ({ message }, { reply, input }) => reply(message ?? input) }]
+      [
+        'chat',
+        {
+          description: 'Answer in plain text',
+          input: { type: 'object', properties: { message: { type: 'string' } } },
+          handler: ({ message }, { reply, input }) =>
+            reply(message ?? (typeof input === 'string' ? input : JSON.stringify(input)))
+        }
+      ]
     ]);
   }
 
@@ -174,11 +182,21 @@ class Agent {
     return meter;
   }
 
-  // The actions left after the ones the Agent's settings disable.
-  allowed(actions, { disabledActions = [] }) {
-    const offered = actions.filter(
-      action => !disabledActions.includes(typeof action === 'string' ? action : action.action)
-    );
+  // What a decision is offered: the actions the Agent's settings allow, each
+  // with the description and parameters schema it was registered with, so the
+  // schema execute checks is the one the model saw.
+  offered(actions, { disabledActions = [] }) {
+    const offered = actions
+      .map(action => (typeof action === 'string' ? { action } : action))
+      .filter(({ action }) => !disabledActions.includes(action))
+      .map(({ action, description }) => {
+        const registered = this.actions.get(action);
+        return {
+          action,
+          description: description ?? registered?.description,
+          parameters: registered?.input
+        };
+      });
     if (!offered.length) {
       throw new AgentError(
         'action_disabled',
@@ -232,7 +250,7 @@ class Agent {
       turn = await this.turn(options.contextKeys);
       if (turn.refusal) throw turn.refusal;
       // A decision is offered only the actions the Agent's settings allow.
-      if (name === 'decide') input[1] = this.allowed(input[1], turn.settings);
+      if (name === 'decide') input[1] = this.offered(input[1], turn.settings);
       result = await operations[name](turn, ...input, { ...options, reference });
       if (turn.meter.usage) result.usage = turn.meter.usage;
     } catch (error) {
@@ -282,12 +300,13 @@ class Agent {
   }
 
   /**
-   * An action a decision may choose. `input` is a JSON Schema for the
-   * decision's parameters and `guard` a function that must return true; both
-   * run before the handler, in this process.
+   * An action a decision may choose. `description` and `input`, a JSON Schema
+   * for the decision's parameters, are shown to the model with the action's
+   * name. `input` and `guard`, a function that must return true, are checked
+   * before the handler, in this process.
    */
-  registerAction(name, handler, { input, guard } = {}) {
-    this.actions.set(name, { handler, input, guard });
+  registerAction(name, handler, { description, input, guard } = {}) {
+    this.actions.set(name, { handler, description, input, guard });
     return this;
   }
 
@@ -351,7 +370,7 @@ class Agent {
         const result = await action.handler(parameters, {
           decision: made.decision,
           input: made.input,
-          reply: message => operations.reply({ ...made.turn, ask: meter.ask }, String(message))
+          reply: message => operations.reply({ ...made.turn, ask: meter.ask }, message)
         });
         outcome = { success: true, outcome: 'completed', action: name, result };
       } catch (error) {
