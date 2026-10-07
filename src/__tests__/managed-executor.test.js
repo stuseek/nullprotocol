@@ -216,6 +216,66 @@ test('a missing selected Space Context key fails without calling the model', asy
   });
 });
 
+test.each([
+  // A selected entry deleted after the run was created.
+  ['context_unavailable', [{ key: 'policy', present: false }], {}],
+  // Required context larger than the model's own budget is not left out to make room.
+  [
+    'model_context_too_large',
+    [{ key: 'policy', value: 'Refunds within 30 days. '.repeat(400), version: 'v1' }],
+    { maxPromptBytes: 4096 }
+  ]
+])(
+  'Agent Context the run cannot be given fails it with %s',
+  async (errorCode, agentContext, limit) => {
+    const calls = [];
+    const fetchImpl = jest.fn(async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/v1/space')) {
+        return new globalThis.Response(JSON.stringify({ space: { slug: 'demo' } }));
+      }
+      if (url.endsWith('/commit')) {
+        return new globalThis.Response(JSON.stringify({ run: { id: runId, status: 'failed' } }));
+      }
+      return new globalThis.Response(JSON.stringify({ accepted: 1 }));
+    });
+    const modelFetchImpl = jest.fn();
+    const executor = new ManagedExecutor({
+      executorKey,
+      agentIds: [agentId],
+      credentials: {
+        localModel: { provider: 'local', baseURL: 'http://localhost:11434/v1', ...limit }
+      },
+      fetchImpl,
+      modelFetchImpl
+    });
+    const result = await executor.processJob({
+      run: {
+        id: runId,
+        agentId,
+        input: 'Hi',
+        conversationId: null,
+        deadlineAt: new Date(Date.now() + 180000).toISOString()
+      },
+      lease: {
+        token: `np_lease_${'B'.repeat(43)}`,
+        expiresAt: new Date(Date.now() + 30000).toISOString()
+      },
+      template: { contentHash: hashJson(config), config },
+      spaceContext: [],
+      agentContext,
+      conversation: null
+    });
+    expect(result.run.status).toBe('failed');
+    expect(modelFetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(calls.find(call => call.url.endsWith('/commit')).options.body)).toMatchObject(
+      {
+        errorCode
+      }
+    );
+  }
+);
+
 test('a cancellation observed after the provider answers commits cancelled without history', async () => {
   jest.useFakeTimers();
   try {

@@ -631,11 +631,16 @@ export interface ManagedRun {
   startedAt: string | null;
   finishedAt: string | null;
   deadlineAt: string;
+  /** Only in a run's detail: the keys it asked for, and the Agent Context entries its executor received with the version each had. `state` tells whether the entry is still that version. */
+  contextKeys?: string[];
+  contextRefs?: { key: string; version: string; inclusion: 'always' | 'selected'; state: 'current' | 'changed' | 'deleted' }[];
 }
 
 export interface ManagedRunOptions {
   conversation?: string;
   context?: Record<string, unknown>;
+  /** Selected Agent Context entries to send with this run, besides the entries sent with every run. An unknown key is refused. */
+  contextKeys?: string[];
   subject?: Record<string, string>;
   idempotencyKey?: string;
   signal?: AbortSignal;
@@ -680,7 +685,7 @@ export declare class NullProtocolClient {
     context: {
       list(options?: { signal?: AbortSignal }): Promise<{ entries: Array<Record<string, unknown>> }>;
       get(key: string, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
-      put(key: string, body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
+      put(key: string, body: { value: unknown; ifVersion: string | null; ttlSeconds?: number | null; inclusion?: 'always' | 'selected' }, options?: { signal?: AbortSignal }): Promise<{ entry: Record<string, unknown> }>;
       delete(key: string, body: { ifVersion: string }, options?: { signal?: AbortSignal }): Promise<{ deleted: boolean }>;
     };
     memory: {
@@ -762,7 +767,7 @@ export declare class ManagedExecutor {
     executorKey: string;
     endpoint?: string;
     agentIds: string[];
-    credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean; toolCalls?: boolean }>;
+    credentials: Record<string, { provider: string; baseURL: string; apiKey?: string; allowInsecureHttp?: boolean; toolCalls?: boolean; maxPromptBytes?: number }>;
     actions?: ManagedActionDefinition[];
     instanceId?: string;
     fetchImpl?: (input: string, init: Record<string, unknown>) => Promise<any>;

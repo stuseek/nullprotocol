@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Managed Agents: an Agent Context entry can be `inclusion: 'selected'`, sent only to the runs that name its key in `contextKeys`. A selected entry holds up to 64 KiB.
+- `ManagedExecutor` no longer leaves Agent Context or memory out of a request that is too large: the run fails with `model_context_too_large`. Older conversation facts and turns are still left out first.
+- A credential can set `maxPromptBytes`, the request budget for a model with a small window.
+
 ## 1.3.1
 
 - Every operation's result has `usage: { inputTokens, outputTokens }`, summed over its model requests, when the provider reports token counts for all of them. `serveAgents` returns it in `output`.

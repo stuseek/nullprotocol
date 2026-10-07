@@ -72,6 +72,11 @@ function composeMessages(job) {
       version: ref.version
     }));
   }
+  // A selected entry the run named that no longer exists: the run stops rather
+  // than answering without it, as for Space Context.
+  if (job.agentContext?.some(entry => entry.present === false)) {
+    throw new ManagedModelError('context_unavailable');
+  }
   if (job.agentContext?.length) {
     current.agent = job.agentContext.map(entry => ({
       key: entry.key,
@@ -109,6 +114,16 @@ function composeMessages(job) {
   return messages;
 }
 
+// The request budget of a model: the credential's own limit when it has one,
+// never above what one request may carry. Bytes, not tokens: set it with room
+// to spare for a model with a small window.
+function promptLimit(credential) {
+  return Math.min(credential.maxPromptBytes ?? MAX_REQUEST_BYTES, MAX_REQUEST_BYTES);
+}
+
+// Fits the request to the model's budget by leaving out the oldest conversation
+// facts and turns, then actions. Agent Context and memory are never left out:
+// a run whose required data does not fit fails with model_context_too_large.
 function fitPrompt(job, tools, model, entries, credential) {
   const candidate = {
     ...job,
@@ -146,7 +161,7 @@ function fitPrompt(job, tools, model, entries, credential) {
   for (let attempt = 0; attempt < 400; attempt++) {
     const messages = composeMessages(candidate);
     const reserve = selectedTools.length ? 16384 : 1024;
-    if (bytes(messages) <= MAX_REQUEST_BYTES - reserve) {
+    if (bytes(messages) <= promptLimit(credential) - reserve) {
       job.memoryIncomplete = candidate.memoryIncomplete === true;
       return { messages, tools: selectedTools, truncated };
     }
@@ -168,11 +183,6 @@ function fitPrompt(job, tools, model, entries, credential) {
         history.shift();
         truncated.messages++;
       }
-    } else if (candidate.agentMemory.length) {
-      candidate.agentMemory.shift();
-      truncated.agentMemory++;
-    } else if (candidate.agentContext.length) {
-      truncated.agentContextKeys.push(candidate.agentContext.pop().key);
     } else if (selectedTools.length) {
       truncated.actions.push(selectedTools.pop().function.name);
     } else {
@@ -243,7 +253,7 @@ function omittedResult(outcome) {
 function fitTurn(messages, tools, model, entries, credential, callOutcomes = new Map()) {
   const selected = [...tools];
   const truncated = { toolResults: 0, contextUpdates: 0, priorModelOutputs: 0, actions: [] };
-  const fits = () => requestBytes(model, messages, selected, credential) <= MAX_REQUEST_BYTES;
+  const fits = () => requestBytes(model, messages, selected, credential) <= promptLimit(credential);
   if (fits()) return { tools: selected, truncated };
 
   // Keep the call/result pairs intact. The step outcome remains in the trace,
@@ -404,7 +414,9 @@ class ManagedExecutor {
           !value ||
           typeof value !== 'object' ||
           typeof value.provider !== 'string' ||
-          typeof value.baseURL !== 'string'
+          typeof value.baseURL !== 'string' ||
+          (value.maxPromptBytes !== undefined &&
+            !(Number.isSafeInteger(value.maxPromptBytes) && value.maxPromptBytes > 0))
       )
     ) {
       throw new Error('credentials must map credential references to provider settings');

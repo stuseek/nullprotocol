@@ -82,6 +82,7 @@ function runBody(input, options) {
       ? {}
       : { conversation: conversationKey(options.conversation) }),
     ...(options.context === undefined ? {} : { context: options.context }),
+    ...(options.contextKeys === undefined ? {} : { contextKeys: options.contextKeys }),
     ...(options.subject === undefined ? {} : { subject: options.subject })
   };
 }
