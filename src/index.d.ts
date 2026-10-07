@@ -90,7 +90,7 @@ export interface Note {
 interface Ran {
   attempts?: number;
   repaired?: boolean;
-  /** Tokens of every request the operation made, when the provider counted them all. */
+  /** The tokens the provider reported, when it reported them for every reply it gave. */
   usage?: { inputTokens: number; outputTokens: number };
   /** Set when the operation ran but could not be written to history. */
   historyError?: string;

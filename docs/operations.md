@@ -25,7 +25,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `timeout`, `retry`, `circuitBreaker` | 30000 ms, `{ maxRetries: 2 }`, `{ threshold: 5, resetAfterMs: 60000 }` by default. |
 | `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
 | `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
-| `maxPromptBytes` | The largest request body sent to a model. Default and maximum 131072. Set it lower for a model with a small window; it is bytes, not tokens. |
+| `maxPromptBytes` | The largest request body sent to a model. Default 131072. Set it lower for a model with a small window; it is bytes, not tokens. |
 
 `create` and `load` throw an `AgentError` with a `code`: `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
 
@@ -33,7 +33,7 @@ Every object has an `instanceId`, issued when it is made. History records it, so
 
 ## Results
 
-Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and, when the provider counted tokens for every request, `usage: { inputTokens, outputTokens }`. With a key, `historyError` is set when the operation ran but could not be recorded.
+Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and `usage: { inputTokens, outputTokens }`, the tokens the provider reported, when it reported them for every reply it gave. With a key, `historyError` is set when the operation ran but could not be recorded.
 
 | `errorCode` | Meaning |
 | --- | --- |
@@ -60,7 +60,8 @@ A schema is shorthand or JSON Schema:
 // Shorthand: every key is a required field, so this has a field named "items".
 await agent.extract(text, { vendor: 'string', items: 'string[]' });
 
-// JSON Schema is used as is. A field that may be missing says so, and the model returns null instead of inventing.
+// JSON Schema is used as is. A field that may be missing allows null; tell the model in the
+// instructions or the input to use null when the text does not say, and check what matters in code.
 await agent.extract(text, {
   type: 'object',
   properties: { id: { type: 'string' }, days: { type: ['number', 'null'] } },

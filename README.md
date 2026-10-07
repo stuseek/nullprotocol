@@ -97,7 +97,7 @@ Nothing is dropped silently. If instructions, context, memory and input do not f
 Create an SDK key in a Space of the [cabinet](https://app.nullprotocol.ai) and pass it as `key`. The calls stay the same.
 
 ```js
-// Once: create the Agent. It gets an ID, or pass your own agentId.
+// Once: create the Agent. It gets an ID; pass agentId to choose it yourself.
 const agent = await NullProtocol.create({
   key: process.env.NULLPROTOCOL_KEY,
   provider: 'openai',
@@ -107,7 +107,7 @@ const agent = await NullProtocol.create({
 console.log(agent.agentId);
 
 // Anywhere, any number of processes: load it by its ID.
-const support = await NullProtocol.load({ key: process.env.NULLPROTOCOL_KEY, agentId: 'support' });
+const support = await NullProtocol.load({ key: process.env.NULLPROTOCOL_KEY, agentId: agent.agentId });
 const order = await support.extract(message, schema);
 ```
 
