@@ -165,19 +165,28 @@ class Agent {
   // request, retries included, with the bytes of its body and the tokens used.
   meter(settings) {
     const limit = this.call.maxPromptBytes ?? MAX_PROMPT_BYTES;
-    const meter = { modelCalls: 0, requestBytes: 0, usage: { inputTokens: 0, outputTokens: 0 } };
-    meter.ask = async (system, turns) => {
-      const reply = await this.model(settings).complete(system, turns, limit, size => {
+    const meter = { modelCalls: 0, requestBytes: 0 };
+    const tokens = { counted: 0, inputTokens: 0, outputTokens: 0 };
+    const counter = {
+      sent(size) {
         meter.modelCalls++;
         meter.requestBytes += size;
-      });
-      // Tokens are reported only when the provider counted every request.
-      if (reply.inputTokens === null || reply.outputTokens === null) meter.usage = null;
-      if (meter.usage) {
-        meter.usage.inputTokens += reply.inputTokens;
-        meter.usage.outputTokens += reply.outputTokens;
+      },
+      answered({ inputTokens, outputTokens }) {
+        if (inputTokens === null || outputTokens === null) return;
+        tokens.counted++;
+        tokens.inputTokens += inputTokens;
+        tokens.outputTokens += outputTokens;
       }
-      return reply.text;
+    };
+    meter.ask = async (system, turns) =>
+      (await this.model(settings).complete(system, turns, limit, counter)).text;
+    // The tokens the provider reported. A request it did not count, such as
+    // one that failed or timed out, is not zero tokens: it is named instead.
+    meter.usage = () => {
+      const { counted, ...used } = tokens;
+      const uncountedRequests = meter.modelCalls - counted;
+      return counted ? { ...used, ...(uncountedRequests ? { uncountedRequests } : {}) } : undefined;
     };
     return meter;
   }
@@ -252,11 +261,12 @@ class Agent {
       // A decision is offered only the actions the Agent's settings allow.
       if (name === 'decide') input[1] = this.offered(input[1], turn.settings);
       result = await operations[name](turn, ...input, { ...options, reference });
-      if (turn.meter.usage) result.usage = turn.meter.usage;
     } catch (error) {
       result = { success: false, error: error.message, errorCode: error.code ?? 'failed' };
       if (!turn) return result;
     }
+    const usage = turn.meter.usage();
+    if (usage) result.usage = usage;
     if (name === 'decide' && result.success) {
       // What execute runs, checks and passes on is the decision as it is now.
       this.decisions.set(result, {
@@ -392,7 +402,7 @@ class Agent {
         errorCode: outcome.errorCode,
         modelCalls: meter.modelCalls,
         requestBytes: meter.requestBytes,
-        usage: meter.usage ?? undefined,
+        usage: meter.usage(),
         durationMs: Date.now() - started
       })
       .catch(error => {

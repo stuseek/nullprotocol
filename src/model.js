@@ -86,8 +86,9 @@ async function post({ url, headers, body }, signal) {
 const count = value => (Number.isSafeInteger(value) ? value : null);
 
 // Each provider has a request to send and a way to read the reply. A refused
-// or cut-off reply is not an answer; the operations are bounded single calls,
-// so they reject it instead of returning partial text.
+// or cut-off reply is not an answer: `incomplete` names why, and the operations,
+// being bounded single calls, reject it instead of using partial text. Its
+// tokens were spent all the same.
 const openai = {
   request(settings, options, system, turns) {
     const hosted = settings.provider === 'openai';
@@ -107,11 +108,11 @@ const openai = {
   },
   read(reply) {
     const choice = reply.choices?.[0];
-    if (choice?.finish_reason === 'length' || choice?.finish_reason === 'content_filter') {
-      throw failed('provider_error', `The model's reply is incomplete: ${choice.finish_reason}`);
-    }
     return {
       text: choice?.message?.content,
+      incomplete: ['length', 'content_filter'].includes(choice?.finish_reason)
+        ? choice.finish_reason
+        : null,
       inputTokens: count(reply.usage?.prompt_tokens),
       outputTokens: count(reply.usage?.completion_tokens)
     };
@@ -133,21 +134,25 @@ const anthropic = {
     };
   },
   read(reply) {
-    if (
-      ['refusal', 'max_tokens', 'model_context_window_exceeded', 'pause_turn'].includes(
-        reply.stop_reason
-      )
-    ) {
-      throw failed('provider_error', `The model's reply is incomplete: ${reply.stop_reason}`);
-    }
+    const { usage = {} } = reply;
     return {
       // A reply can open with thinking blocks, so the text blocks are joined.
       text: (reply.content || [])
         .filter(block => block.type === 'text')
         .map(block => block.text)
         .join(''),
-      inputTokens: count(reply.usage?.input_tokens),
-      outputTokens: count(reply.usage?.output_tokens)
+      incomplete: ['refusal', 'max_tokens', 'model_context_window_exceeded', 'pause_turn'].includes(
+        reply.stop_reason
+      )
+        ? reply.stop_reason
+        : null,
+      // input_tokens leaves out what was read from or written to the prompt cache.
+      inputTokens: count(
+        usage.input_tokens +
+          (usage.cache_creation_input_tokens ?? 0) +
+          (usage.cache_read_input_tokens ?? 0)
+      ),
+      outputTokens: count(usage.output_tokens)
     };
   }
 };
@@ -156,7 +161,8 @@ const anthropic = {
  * A model to ask. `complete(system, turns, limit)` sends one request, retried
  * on transient failures, and returns the reply text and its token counts.
  * `limit` is the largest request body in bytes; a larger one is not sent.
- * `sent` is called for every request that goes out, with its size.
+ * `meter.sent` is called for every request that goes out, with its size, and
+ * `meter.answered` for every reply, with its token counts.
  * `given` holds provider, model and that provider's credentials; `options` the
  * call settings: timeout, retry, circuitBreaker, temperature, maxTokens.
  */
@@ -170,7 +176,7 @@ function createModel(given, options = {}) {
   });
   const provider = settings.provider === 'anthropic' ? anthropic : openai;
   return {
-    async complete(system, turns, limit, sent) {
+    async complete(system, turns, limit, meter) {
       const request = provider.request(settings, options, system, turns);
       const body = JSON.stringify(request.body);
       const size = Buffer.byteLength(body, 'utf8');
@@ -182,10 +188,14 @@ function createModel(given, options = {}) {
       }
       const reply = provider.read(
         await resilience.execute(signal => {
-          sent(size);
+          meter.sent(size);
           return post({ ...request, body }, signal);
         })
       );
+      meter.answered(reply);
+      if (reply.incomplete) {
+        throw failed('provider_error', `The model's reply is incomplete: ${reply.incomplete}`);
+      }
       if (typeof reply.text !== 'string' || !reply.text.trim()) {
         throw failed('provider_error', "The model's reply has no text");
       }

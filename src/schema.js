@@ -1,6 +1,7 @@
 const Ajv = require('ajv');
+const addFormats = require('ajv-formats');
 
-const ajv = new Ajv({ allErrors: true, strict: false });
+const ajv = addFormats(new Ajv({ allErrors: true, strict: false }));
 const TYPE_NAMES = new Set(['string', 'number', 'integer', 'boolean', 'array', 'object', 'null']);
 // Keywords Ajv implements, plus core and annotation keywords it accepts without a rule.
 const KEYWORDS = new Set([

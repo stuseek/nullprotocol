@@ -90,8 +90,12 @@ export interface Note {
 interface Ran {
   attempts?: number;
   repaired?: boolean;
-  /** The tokens the provider reported, when it reported them for every reply it gave. */
-  usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * The tokens the provider reported, cached input included, on a failed
+   * operation too. `uncountedRequests` is how many requests it did not count,
+   * such as one that failed or timed out; absent when it counted none.
+   */
+  usage?: { inputTokens: number; outputTokens: number; uncountedRequests?: number };
   /** Set when the operation ran but could not be written to history. */
   historyError?: string;
 }

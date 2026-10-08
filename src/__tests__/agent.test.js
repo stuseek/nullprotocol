@@ -18,11 +18,16 @@ beforeAll(async () => {
         response.statusCode = reply.status;
         return response.end('{}');
       }
-      const { content = reply, usage = { prompt_tokens: 10, completion_tokens: 5 } } = reply;
+      const {
+        content = reply,
+        finish,
+        usage = { prompt_tokens: 10, completion_tokens: 5 }
+      } = reply;
       return response.end(
         JSON.stringify({
           choices: [
             {
+              finish_reason: finish,
               message: { content: typeof content === 'string' ? content : JSON.stringify(content) }
             }
           ],
@@ -341,3 +346,36 @@ test('a saved Agent records what really went to the model', async () => {
   expect(requests).toHaveLength(2);
   await new Promise(resolve => space.close(resolve));
 }, 20000);
+
+test('tokens the provider counted are kept when the operation fails, and an uncounted request is named', async () => {
+  const agent = await create();
+  replies.push({ status: 503 }, { content: '{"days":', finish: 'length' });
+  expect(await agent.extract('How long?', { days: 'number' })).toEqual({
+    success: false,
+    error: "The model's reply is incomplete: length",
+    errorCode: 'provider_error',
+    usage: { inputTokens: 10, outputTokens: 5, uncountedRequests: 1 }
+  });
+
+  // Anthropic counts what the prompt cache held apart from input_tokens.
+  const fetched = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: true,
+    text: async () =>
+      JSON.stringify({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: '{"days":45}' }],
+        usage: {
+          input_tokens: 4,
+          cache_creation_input_tokens: 100,
+          cache_read_input_tokens: 2000,
+          output_tokens: 7
+        }
+      })
+  });
+  const claude = await NullProtocol.create({ provider: 'anthropic', model: 'claude', apiKey: 'k' });
+  expect((await claude.extract('How long?', { days: 'number' })).usage).toEqual({
+    inputTokens: 2104,
+    outputTokens: 7
+  });
+  fetched.mockRestore();
+});

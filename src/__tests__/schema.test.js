@@ -53,6 +53,14 @@ describe('extraction schemas', () => {
     expect(() => toJsonSchema({ total: 42 })).toThrow('Schema fields must be');
     expect(() => toJsonSchema('string')).toThrow('Extraction schema must be an object');
   });
+
+  test('a format is checked', () => {
+    const schema = { paidOn: { type: 'string', format: 'date' } };
+    expect(validateExtraction({ paidOn: '2026-10-03' }, schema).isValid).toBe(true);
+    expect(validateExtraction({ paidOn: '3 October 2026' }, schema).issues).toEqual([
+      '/paidOn must match format "date"'
+    ]);
+  });
 });
 
 describe('the validator cache', () => {

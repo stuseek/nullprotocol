@@ -33,7 +33,7 @@ Every object has an `instanceId`, issued when it is made. History records it, so
 
 ## Results
 
-Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and `usage: { inputTokens, outputTokens }`, the tokens the provider reported, when it reported them for every reply it gave. With a key, `historyError` is set when the operation ran but could not be recorded.
+Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and `usage: { inputTokens, outputTokens }`, the tokens the provider reported, cached input included. A failed operation has it too: a reply that was cut off or refused is paid for. A request the provider did not count, such as one that failed or timed out, is not zero tokens: `usage.uncountedRequests` says how many there were, and `usage` is absent when the provider counted none. With a key, `historyError` is set when the operation ran but could not be recorded.
 
 | `errorCode` | Meaning |
 | --- | --- |
