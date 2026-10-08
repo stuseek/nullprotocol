@@ -155,7 +155,7 @@ await dana.decide(message, actions); // sees the Agent's context and Dana's, and
 
 A request that does not fit the model's window must fail, not be cut down. `ollama` asks Ollama to refuse it, and the operation fails with `model_context_too_large` and both numbers. Ollama's OpenAI-compatible address (`/v1`) cuts the same request down silently and answers from what is left, so use `ollama` for Ollama. Whether another OpenAI-compatible server refuses or cuts is up to that server; the SDK cannot tell.
 
-The operations are tested on local models through `ollama` and `openai-compatible`. The `openai` and `anthropic` requests follow the providers' published APIs and have not yet been run against paid accounts in this release.
+The operations are tested on local models through `ollama` and `openai-compatible`, and were run on `anthropic` with `claude-haiku-4-5`. The `openai` requests follow the provider's published API and have not yet been run against a paid account in this release.
 
 ## Documentation
 
