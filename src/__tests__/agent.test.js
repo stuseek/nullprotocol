@@ -308,11 +308,21 @@ test('chat is an action a decision chooses, answered by the same model', async (
 test('a saved Agent records what really went to the model', async () => {
   // A Space that serves one Agent and keeps what the SDK reports.
   const recorded = [];
+  const asked = [];
+  const source = {
+    documentId: 'd1',
+    name: 'Terms',
+    revision: 2,
+    whole: false,
+    passages: [{ heading: 'Gifts', start: 40, end: 61 }]
+  };
   const space = http.createServer((request, response) => {
     let body = '';
     request.on('data', chunk => (body += chunk));
     request.on('end', () => {
-      if (request.method === 'POST') recorded.push(JSON.parse(body));
+      if (request.method === 'POST') {
+        (request.url.endsWith('/turn') ? asked : recorded).push(JSON.parse(body));
+      }
       response.setHeader('Content-Type', 'application/json');
       response.end(
         JSON.stringify({
@@ -320,7 +330,15 @@ test('a saved Agent records what really went to the model', async () => {
           entries: [{ key: 'policy', value: 'Returns within 45 days.', version: 'v1' }],
           notes: [],
           missing: [],
-          documents: [{ id: 'd1', name: 'Terms', revision: 2, text: 'Gift cards are final.' }]
+          documents: [
+            {
+              id: 'd1',
+              name: 'Terms',
+              revision: 2,
+              whole: false,
+              passages: [{ heading: 'Gifts', start: 40, end: 61, text: 'Gift cards are final.' }]
+            }
+          ]
         })
       );
     });
@@ -347,10 +365,12 @@ test('a saved Agent records what really went to the model', async () => {
     requestBytes: requests[0].bytes + requests[1].bytes,
     context: [{ key: 'policy', version: 'v1' }],
     reference: expect.stringContaining('45 days'),
-    sources: [{ documentId: 'd1', name: 'Terms', revision: 2 }]
+    sources: [source]
   });
-  // The model is sent the document whole; history keeps it by revision, not as text.
-  expect(systemOf(0)).toContain('[Terms]\nGift cards are final.');
+  // The turn was asked with the task, and the model is sent the passage it
+  // gave; history keeps the passage as a range of the revision, not as text.
+  expect(asked[0]).toMatchObject({ query: 'How long?\n{"days":"number"}' });
+  expect(systemOf(0)).toContain('[Terms › Gifts]\nGift cards are final.');
   expect(recorded[0].reference).not.toContain('Gift cards');
 
   // The budget is the size of the request as it is sent; one byte over is not sent.
@@ -363,7 +383,7 @@ test('a saved Agent records what really went to the model', async () => {
     success: false,
     modelCalls: 0,
     requestBytes: 0,
-    sources: [{ documentId: 'd1', name: 'Terms', revision: 2 }]
+    sources: [source]
   });
   expect(requests).toHaveLength(2);
   await new Promise(resolve => space.close(resolve));
