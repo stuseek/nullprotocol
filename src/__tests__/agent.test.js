@@ -319,7 +319,8 @@ test('a saved Agent records what really went to the model', async () => {
           agent: { provider: 'openai-compatible', model: 'test', instructions: '', revision: 3 },
           entries: [{ key: 'policy', value: 'Returns within 45 days.', version: 'v1' }],
           notes: [],
-          missing: []
+          missing: [],
+          documents: [{ id: 'd1', name: 'Terms', revision: 2, text: 'Gift cards are final.' }]
         })
       );
     });
@@ -345,15 +346,25 @@ test('a saved Agent records what really went to the model', async () => {
     modelCalls: 2,
     requestBytes: requests[0].bytes + requests[1].bytes,
     context: [{ key: 'policy', version: 'v1' }],
-    reference: expect.stringContaining('45 days')
+    reference: expect.stringContaining('45 days'),
+    sources: [{ documentId: 'd1', name: 'Terms', revision: 2 }]
   });
+  // The model is sent the document whole; history keeps it by revision, not as text.
+  expect(systemOf(0)).toContain('[Terms]\nGift cards are final.');
+  expect(recorded[0].reference).not.toContain('Gift cards');
 
   // The budget is the size of the request as it is sent; one byte over is not sent.
   const tight = await load(requests[0].bytes - 1);
   expect(await tight.extract('How long?', { days: 'number' })).toMatchObject({
     errorCode: 'model_context_too_large'
   });
-  expect(recorded[1]).toMatchObject({ success: false, modelCalls: 0, requestBytes: 0 });
+  // An operation that never reached the model still says what it ran with.
+  expect(recorded[1]).toMatchObject({
+    success: false,
+    modelCalls: 0,
+    requestBytes: 0,
+    sources: [{ documentId: 'd1', name: 'Terms', revision: 2 }]
+  });
   expect(requests).toHaveLength(2);
   await new Promise(resolve => space.close(resolve));
 }, 20000);

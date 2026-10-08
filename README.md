@@ -89,6 +89,8 @@ await agent.memory.add('Keep answers under three sentences.');
 await agent.extract(question, schema, { contextKeys: ['refund-policy'] });
 ```
 
+A saved Agent also works by its documents, such as terms or a policy uploaded in the cabinet: each operation is sent them whole, and history names the revision it ran with. There is nothing to call for it.
+
 Nothing is dropped silently. If instructions, context, memory and input do not fit the request budget (`maxPromptBytes`, 128 KiB by default), the operation fails with `model_context_too_large` and the model is not called.
 
 ## Add a key: the same Agent, saved
