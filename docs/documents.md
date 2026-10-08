@@ -1,6 +1,6 @@
 # Documents
 
-A saved Agent can work by documents: terms, a policy, a price list. You upload them in the cabinet, under Context, as a text, Markdown or PDF file, or type the text in. There is nothing to call in code: the next ordinary operation of the Agent is given what it needs of them.
+A saved Agent can work by documents: terms, a policy, a price list. You upload them in the cabinet, under Context, as a text, Markdown or PDF file, or type the text in. There is nothing to call in code: once a document has been prepared, the next ordinary operation of the Agent is given what it needs of it.
 
 ## How a document comes into use
 
@@ -12,7 +12,7 @@ A document belongs to the Space, to an Agent or to one conversation of an Agent.
 
 ## What an operation is given
 
-When the documents in effect are short, an operation is given them whole. Otherwise it is given the passages nearest to its task, chosen by NullProtocol without calling a model: the criteria and subject of a `validate`, the context of a `decide`, the data and schema of an `extract`, the focus and content of a `summarize`. By default it is given up to 6000 characters of documents; `documentBudget` in `create` and `load` sets another amount.
+When the documents in effect are short, an operation is given them whole. Otherwise it is given the passages nearest to its task, chosen by NullProtocol with an embedding model of its own and without an additional generative call: the criteria and subject of a `validate`, the context of a `decide`, the data and schema of an `extract`, the focus and content of a `summarize`. By default it is given up to 6000 characters of documents; `documentBudget` in `create` and `load` sets another amount.
 
 Choosing passages finds the parts of a document a task is about. It does not check that they are enough to answer, and it is not the model's answer: whether an operation gets the answer right depends on the model you set for the Agent.
 
@@ -22,7 +22,7 @@ An operation never goes on without the documents in effect. It fails before the 
 
 | `errorCode` | Meaning |
 | --- | --- |
-| `search_query_too_large` | The task is over 8000 characters and the documents do not fit whole, so passages cannot be chosen by it. |
+| `search_query_too_large` | The documents do not fit whole, and the task is too long to choose passages by: over 8000 characters, or more than 12 parts when it is cut as a document is. |
 | `document_not_ready` | A document in effect is being prepared again and its passages cannot be chosen yet. |
 | `encoder_busy`, `encoder_unavailable` | Passages could not be chosen right now. Try again. |
 | `document_budget_too_small` | No passage fits the amount of documents the operation can take. |
