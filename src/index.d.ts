@@ -16,6 +16,11 @@ export interface CallOptions {
   circuitBreaker?: { threshold?: number; resetAfterMs?: number };
   temperature?: number;
   maxTokens?: number;
+  /**
+   * How much of a saved Agent's documents an operation is given, in
+   * characters. 6000 when left out. It bounds the documents, not the request.
+   */
+  documentBudget?: number;
   /** Extra turns the model gets to fix an unusable reply. Default 1. */
   repairAttempts?: number;
   /** The largest request, in bytes, this object sends to a model. Default 131072. */
