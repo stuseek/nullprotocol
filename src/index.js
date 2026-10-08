@@ -247,7 +247,8 @@ class Agent {
       entries,
       notes,
       missing,
-      documents = []
+      documents = [],
+      pending = []
     } = await this.store.turn(contextKeys, task, this.call.documentBudget);
     const meter = this.meter(settings);
     // History keeps the context and memory text, and the documents by revision.
@@ -265,6 +266,8 @@ class Agent {
         passages: passages.map(({ heading, start, end }) => ({ heading, start, end }))
       })),
       sent: entries.map(({ key, version }) => ({ key, version })),
+      // Documents that were not in effect yet, and so were not given.
+      pending,
       repairAttempts: this.call.repairAttempts ?? 1,
       meter
     };
@@ -333,6 +336,7 @@ class Agent {
         reference: turn.kept,
         // The documents the operation ran with, sent to the model or not.
         sources: turn.sources.length ? turn.sources : undefined,
+        pending: turn.pending.length ? turn.pending : undefined,
         modelCalls: turn.meter.modelCalls,
         requestBytes: turn.meter.requestBytes,
         context: turn.sent,

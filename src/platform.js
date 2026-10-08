@@ -25,7 +25,7 @@ const MESSAGES = {
   memory_limit_reached: 'The Agent has the maximum number of memory notes.',
   context_key_not_found: 'No context entry with this key.',
   document_not_ready:
-    'A document of this Agent is still being read and has no earlier text to use. Try again when the cabinet shows it as ready.',
+    'A document of this Agent is being read again and its passages cannot be chosen yet. Try again when the cabinet shows it as ready.',
   search_query_too_large:
     'The task is too long to choose passages of the documents by. Shorten it, or keep the documents small enough to be sent whole.',
   search_query_required:

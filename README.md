@@ -89,7 +89,7 @@ await agent.memory.add('Keep answers under three sentences.');
 await agent.extract(question, schema, { contextKeys: ['refund-policy'] });
 ```
 
-A saved Agent also works by its documents, such as terms or a policy uploaded in the cabinet. Each operation is given them whole when they are small, and otherwise the passages nearest to its task, chosen by NullProtocol without a model call; history shows the passages it was given. There is nothing to call for it. When the documents cannot be given, because one is still being read or the task is too long to choose passages by, the operation fails before the model is called: it never goes on without them.
+A saved Agent also works by its documents, such as terms or a policy uploaded in the cabinet. Each operation is given them whole when they are small, and otherwise the passages nearest to its task, chosen by NullProtocol without a model call; history shows the passages it was given. There is nothing to call for it. A document takes effect when NullProtocol has read it: until then a new one is not used and a replaced one goes on with its text before, and history names what was waiting. When the documents in effect cannot be given, because the task is too long to choose passages by or passages cannot be chosen right now, the operation fails before the model is called: it never goes on without them.
 
 Nothing is dropped silently. If instructions, context, memory and input do not fit the request budget (`maxPromptBytes`, 128 KiB by default), the operation fails with `model_context_too_large` and the model is not called.
 

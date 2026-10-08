@@ -330,6 +330,7 @@ test('a saved Agent records what really went to the model', async () => {
           entries: [{ key: 'policy', value: 'Returns within 45 days.', version: 'v1' }],
           notes: [],
           missing: [],
+          pending: [{ documentId: 'd2', name: 'New rules', revision: 1, state: 'preparing' }],
           documents: [
             {
               id: 'd1',
@@ -365,7 +366,9 @@ test('a saved Agent records what really went to the model', async () => {
     requestBytes: requests[0].bytes + requests[1].bytes,
     context: [{ key: 'policy', version: 'v1' }],
     reference: expect.stringContaining('45 days'),
-    sources: [source]
+    sources: [source],
+    // A document that was not in effect yet is named, not given.
+    pending: [{ documentId: 'd2', name: 'New rules', revision: 1, state: 'preparing' }]
   });
   // The turn was asked with the task, and the model is sent the passage it
   // gave; history keeps the passage as a range of the revision, not as text.
