@@ -1,7 +1,21 @@
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 
-const ajv = addFormats(new Ajv({ allErrors: true, strict: false }));
+// Ajv, when not strict, only warns about a format it does not know and then
+// leaves it unchecked. A constraint that is not checked is a schema error.
+const ajv = addFormats(
+  new Ajv({
+    allErrors: true,
+    strict: false,
+    logger: {
+      log() {},
+      warn(message) {
+        throw new Error(message.replace(' ignored', ''));
+      },
+      error: console.error
+    }
+  })
+);
 const TYPE_NAMES = new Set(['string', 'number', 'integer', 'boolean', 'array', 'object', 'null']);
 // Keywords Ajv implements, plus core and annotation keywords it accepts without a rule.
 const KEYWORDS = new Set([

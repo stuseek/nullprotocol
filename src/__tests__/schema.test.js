@@ -1,5 +1,5 @@
 describe('extraction schemas', () => {
-  const { toJsonSchema, validateExtraction } = require('../schema');
+  const { toJsonSchema, validateExtraction, validatorFor } = require('../schema');
 
   test('shorthand fields may be named like JSON Schema keywords', () => {
     expect(
@@ -54,12 +54,15 @@ describe('extraction schemas', () => {
     expect(() => toJsonSchema('string')).toThrow('Extraction schema must be an object');
   });
 
-  test('a format is checked', () => {
+  test('a format is checked, and one that cannot be is a schema error', () => {
     const schema = { paidOn: { type: 'string', format: 'date' } };
-    expect(validateExtraction({ paidOn: '2026-10-03' }, schema).isValid).toBe(true);
-    expect(validateExtraction({ paidOn: '3 October 2026' }, schema).issues).toEqual([
+    expect(validateExtraction({ paidOn: '2028-02-29' }, schema).isValid).toBe(true);
+    expect(validateExtraction({ paidOn: '2026-02-29' }, schema).issues).toEqual([
       '/paidOn must match format "date"'
     ]);
+    expect(() => validatorFor({ code: { type: 'string', format: 'made-up' } })).toThrow(
+      'unknown format "made-up" in schema at path "#/properties/code"'
+    );
   });
 });
 

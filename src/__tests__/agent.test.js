@@ -11,12 +11,23 @@ beforeAll(async () => {
     let body = '';
     request.on('data', chunk => (body += chunk));
     request.on('end', () => {
-      requests.push({ ...JSON.parse(body), bytes: Buffer.byteLength(body) });
+      requests.push({ ...JSON.parse(body), url: request.url, bytes: Buffer.byteLength(body) });
       const reply = replies.shift();
       response.setHeader('Content-Type', 'application/json');
       if (reply.status) {
         response.statusCode = reply.status;
-        return response.end('{}');
+        return response.end(JSON.stringify({ error: reply.error }));
+      }
+      // Ollama's own API has its own reply.
+      if (request.url === '/api/chat') {
+        return response.end(
+          JSON.stringify({
+            message: { content: JSON.stringify(reply) },
+            done_reason: 'stop',
+            prompt_eval_count: 30,
+            eval_count: 6
+          })
+        );
       }
       const {
         content = reply,
@@ -378,4 +389,24 @@ test('tokens the provider counted are kept when the operation fails, and an unco
     outputTokens: 7
   });
   fetched.mockRestore();
+});
+
+test('Ollama is asked through its own API, which refuses a request larger than the window', async () => {
+  const agent = await NullProtocol.create({
+    provider: 'ollama',
+    model: 'test',
+    baseURL: baseURL.replace('/v1', '')
+  });
+  replies.push({ days: 45 }, { status: 400, error: 'request(9016 tokens) exceeds context(2048)' });
+  expect(await agent.extract('How long?', { days: 'number' })).toMatchObject({
+    data: { days: 45 },
+    usage: { inputTokens: 30, outputTokens: 6 }
+  });
+  expect(requests[0]).toMatchObject({ url: '/api/chat', truncate: false, shift: false });
+  expect(await agent.extract('How long?', { days: 'number' })).toEqual({
+    success: false,
+    error:
+      "The request takes 9016 tokens and the model's window is 2048. Nothing was left out and the model did not answer. Send less context, or give the model a larger window.",
+    errorCode: 'model_context_too_large'
+  });
 });

@@ -24,8 +24,7 @@ ollama pull qwen2.5:3b-instruct
 import { NullProtocol } from 'nullprotocol';
 
 const agent = await NullProtocol.create({
-  provider: 'openai-compatible',
-  baseURL: 'http://localhost:11434/v1',
+  provider: 'ollama',
   model: 'qwen2.5:3b-instruct',
   instructions: 'You read orders for Mugs & Co. Use only what the text says.',
   timeout: 120000 // a local model can take longer than the 30-second default
@@ -128,7 +127,7 @@ If the Agent's model changes to a provider your process has no credentials for, 
 await NullProtocol.load({
   key,
   agentId: 'support',
-  credentials: { 'openai-compatible': { baseURL: 'http://localhost:11434/v1' } }
+  credentials: { 'openai-compatible': { baseURL: 'http://localhost:8000/v1' } }
 });
 ```
 
@@ -151,9 +150,12 @@ await dana.decide(message, actions); // sees the Agent's context and Dana's, and
 | --- | --- | --- |
 | `openai` | the OpenAI chat completions API | `apiKey` or `OPENAI_API_KEY` |
 | `anthropic` | the Anthropic messages API | `apiKey` or `ANTHROPIC_API_KEY` |
-| `openai-compatible` | any server with the OpenAI chat API: Ollama, vLLM, LM Studio, Mistral, and others | `baseURL`, and `apiKey` if the server needs one |
+| `ollama` | Ollama's own chat API | `baseURL` if it is not `http://localhost:11434` |
+| `openai-compatible` | any server with the OpenAI chat API: vLLM, LM Studio, Mistral, and others | `baseURL`, and `apiKey` if the server needs one |
 
-The operations are tested on local models through `openai-compatible`. The `openai` and `anthropic` requests follow the providers' published APIs and have not yet been run against paid accounts in this release.
+A request that does not fit the model's window must fail, not be cut down. `ollama` asks Ollama to refuse it, and the operation fails with `model_context_too_large` and both numbers. Ollama's OpenAI-compatible address (`/v1`) cuts the same request down silently and answers from what is left, so use `ollama` for Ollama. Whether another OpenAI-compatible server refuses or cuts is up to that server; the SDK cannot tell.
+
+The operations are tested on local models through `ollama` and `openai-compatible`. The `openai` and `anthropic` requests follow the providers' published APIs and have not yet been run against paid accounts in this release.
 
 ## Documentation
 

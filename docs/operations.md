@@ -13,7 +13,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 
 | Option | Meaning |
 | --- | --- |
-| `provider`, `model` | The model. `provider` is `openai`, `anthropic` or `openai-compatible`. `create` only: a loaded Agent's model comes from its Space. |
+| `provider`, `model` | The model. `provider` is `openai`, `anthropic`, `ollama` or `openai-compatible`. `create` only: a loaded Agent's model comes from its Space. |
 | `instructions` | Who the Agent is, what it is for and the rules it follows. `create` only. |
 | `apiKey`, `baseURL` | Credentials for `provider` in `create`. |
 | `credentials` | Credentials by provider, for the models this process may be asked to call: `{ openai: { apiKey }, 'openai-compatible': { baseURL, apiKey } }`. |
@@ -25,7 +25,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `timeout`, `retry`, `circuitBreaker` | 30000 ms, `{ maxRetries: 2 }`, `{ threshold: 5, resetAfterMs: 60000 }` by default. |
 | `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
 | `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
-| `maxPromptBytes` | The largest request body sent to a model. Default 131072. Set it lower for a model with a small window; it is bytes, not tokens. |
+| `maxPromptBytes` | The largest request body sent to a model. Default 131072. It is bytes, not tokens, and is not the model's window: see [Providers](../README.md#providers). |
 
 `create` and `load` throw an `AgentError` with a `code`: `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
 
@@ -42,7 +42,7 @@ Every operation returns `{ success: true, ... }` or `{ success: false, error, er
 | `agent_paused` | The Agent is paused. |
 | `action_disabled` | Every action offered to `decide` is disabled in the Agent's settings. |
 | `context_key_not_found` | `contextKeys` names an entry the Agent does not have. |
-| `model_context_too_large` | The request is larger than `maxPromptBytes`. Nothing was left out and the model was not called. |
+| `model_context_too_large` | The request is larger than `maxPromptBytes`, or Ollama refused it as larger than the model's window. Nothing was left out and the model did not answer. |
 | `model_unavailable` | This process has no credentials for the Agent's provider. |
 | `rate_limited`, `provider_error` | The provider refused or failed, also after retries, or its reply was cut off or empty. |
 | `key_refused`, `platform_unavailable` | With a key: the Space could not be read, so the operation did not run. |
@@ -72,7 +72,7 @@ await agent.extract(text, {
 await agent.extract(text, { type: 'array', items: { type: 'object', properties: { sku: { type: 'string' } } } });
 ```
 
-A nested object made only of schema keywords is JSON Schema: `{ address: { type: 'string' } }` makes `address` a string. An invalid schema fails before the model is called.
+A nested object made only of schema keywords is JSON Schema: `{ address: { type: 'string' } }` makes `address` a string. A `format` such as `date`, `date-time`, `email` or `uri` is checked, so `2026-02-29` is not a date. An invalid schema, or one with a format that cannot be checked, fails before the model is called.
 
 ## summarize
 

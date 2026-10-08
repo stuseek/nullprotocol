@@ -1,9 +1,9 @@
-export type Provider = 'openai' | 'anthropic' | 'openai-compatible';
+export type Provider = 'openai' | 'anthropic' | 'ollama' | 'openai-compatible';
 
 /** What a process needs to call one provider. Cloud keys default to OPENAI_API_KEY and ANTHROPIC_API_KEY. */
 export interface Credentials {
   apiKey?: string;
-  /** The address of an OpenAI-compatible server, such as http://localhost:11434/v1. */
+  /** The address of an OpenAI-compatible server, such as http://localhost:8000/v1, or of Ollama. */
   baseURL?: string;
 }
 

@@ -6,7 +6,8 @@ const { Resilience } = require('./resilience');
 const PROVIDERS = {
   openai: { keyEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1' },
   anthropic: { keyEnv: 'ANTHROPIC_API_KEY', endpoint: 'https://api.anthropic.com/v1' },
-  'openai-compatible': {}
+  'openai-compatible': {},
+  ollama: { local: 'http://localhost:11434' }
 };
 
 // Claude 4.7 and later reject sampling parameters. Only these released
@@ -19,7 +20,7 @@ const SAMPLING_MODELS = /^claude-(3-|haiku-4-5|sonnet-4-(5|6|20)|opus-4-(0|1|5|6
 function modelSettings({ provider, model, apiKey, baseURL }) {
   if (!Object.hasOwn(PROVIDERS, provider)) {
     throw new Error(
-      `Unknown provider ${JSON.stringify(provider)}. Use openai, anthropic or openai-compatible.`
+      `Unknown provider ${JSON.stringify(provider)}. Use openai, anthropic, ollama or openai-compatible.`
     );
   }
   const spec = PROVIDERS[provider];
@@ -39,18 +40,19 @@ function modelSettings({ provider, model, apiKey, baseURL }) {
     if (!key) throw new Error(`provider ${provider} needs apiKey or ${spec.keyEnv}`);
     return { provider, model, apiKey: key, baseURL: spec.endpoint };
   }
+  const address = baseURL ?? spec.local;
   let url;
   try {
-    url = new URL(baseURL);
+    url = new URL(address);
   } catch {
     url = null;
   }
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     throw new Error(
-      'provider openai-compatible needs baseURL, the http(s) address of your server, such as http://localhost:11434/v1 for Ollama'
+      `provider ${provider} needs baseURL, the http(s) address of your server, such as http://localhost:8000/v1`
     );
   }
-  return { provider, model, apiKey, baseURL: baseURL.replace(/\/+$/, '') };
+  return { provider, model, apiKey, baseURL: address.replace(/\/+$/, '') };
 }
 
 function failed(code, message, status) {
@@ -157,6 +159,52 @@ const anthropic = {
   }
 };
 
+// Ollama's own API refuses a request that does not fit the model's window.
+// Through its OpenAI-compatible API the same request is cut down silently and
+// answered, which is why Ollama has its own provider.
+const ollama = {
+  request(settings, options, system, turns) {
+    return {
+      url: `${settings.baseURL}/api/chat`,
+      headers: settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {},
+      body: {
+        model: settings.model,
+        messages: [{ role: 'system', content: system }, ...turns],
+        stream: false,
+        truncate: false,
+        shift: false,
+        options: {
+          num_predict: options.maxTokens ?? 1000,
+          temperature: options.temperature ?? 0.3
+        }
+      }
+    };
+  },
+  // Its refusal says how many tokens the request takes and how many fit.
+  explain(error) {
+    const fit = error.message.match(
+      /request ?\((\d+) tokens\) exceeds (?:the available )?context(?: size)? ?\((\d+)/
+    );
+    return (
+      fit &&
+      failed(
+        'model_context_too_large',
+        `The request takes ${fit[1]} tokens and the model's window is ${fit[2]}. Nothing was left out and the model did not answer. Send less context, or give the model a larger window.`
+      )
+    );
+  },
+  read(reply) {
+    return {
+      text: reply.message?.content,
+      incomplete: reply.done_reason === 'length' ? 'length' : null,
+      inputTokens: count(reply.prompt_eval_count),
+      outputTokens: count(reply.eval_count)
+    };
+  }
+};
+
+const ADAPTERS = { openai, anthropic, ollama, 'openai-compatible': openai };
+
 /**
  * A model to ask. `complete(system, turns, limit)` sends one request, retried
  * on transient failures, and returns the reply text and its token counts.
@@ -174,7 +222,7 @@ function createModel(given, options = {}) {
     circuitBreakerThreshold: options.circuitBreaker?.threshold ?? 5,
     circuitBreakerResetMs: options.circuitBreaker?.resetAfterMs ?? 60000
   });
-  const provider = settings.provider === 'anthropic' ? anthropic : openai;
+  const provider = ADAPTERS[settings.provider];
   return {
     async complete(system, turns, limit, meter) {
       const request = provider.request(settings, options, system, turns);
@@ -187,10 +235,14 @@ function createModel(given, options = {}) {
         );
       }
       const reply = provider.read(
-        await resilience.execute(signal => {
-          meter.sent(size);
-          return post({ ...request, body }, signal);
-        })
+        await resilience
+          .execute(signal => {
+            meter.sent(size);
+            return post({ ...request, body }, signal);
+          })
+          .catch(error => {
+            throw provider.explain?.(error) || error;
+          })
       );
       meter.answered(reply);
       if (reply.incomplete) {
