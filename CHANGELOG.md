@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+
+- `provider: 'ollama'` calls a local model through Ollama's own API, with no key. A request larger than the model's window fails with `model_context_too_large` instead of being cut silently.
+- Documents: a saved Agent's texts, kept in the cabinet for the Agent, its Space or one conversation, are given whole to every operation. Together they must fit `documentBudget`, 6000 characters by default; when they do not, the operation fails with `documents_too_large` before the model is called. History names the documents each operation was given by revision and keeps their text.
+- `usage` is on a failed operation too and counts cached input. `uncountedRequests` says how many requests the provider did not count, such as one that failed or timed out.
+- A schema `format` such as `date`, `date-time`, `email` or `uri` is checked, and one that cannot be checked fails before the model is called. The package now depends on `ajv-formats`.
+
 ## 2.0.0
 
 A new SDK. Nothing from 1.x is kept for compatibility.
