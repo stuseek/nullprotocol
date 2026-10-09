@@ -83,8 +83,8 @@ The model is shown each registered action's description and schema, and `execute
 
 ```js
 await agent.context.set('region', { region: 'EU', currency: 'EUR' }); // sent with every operation
-await agent.context.set('refund-policy', policyText, { inclusion: 'selected' }); // a document, sent when named
-await agent.memory.add('Keep answers under three sentences.');
+await agent.context.set('refund-policy', policyText, { inclusion: 'selected' }); // sent only when named
+await agent.memory.add('The warehouse ships on weekdays.'); // a short fact, kept in mind in every operation
 
 await agent.extract(question, schema, { contextKeys: ['refund-policy'] });
 ```
