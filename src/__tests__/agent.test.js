@@ -309,13 +309,7 @@ test('a saved Agent records what really went to the model', async () => {
   // A Space that serves one Agent and keeps what the SDK reports.
   const recorded = [];
   const asked = [];
-  const source = {
-    documentId: 'd1',
-    name: 'Terms',
-    revision: 2,
-    whole: false,
-    passages: [{ heading: 'Gifts', start: 40, end: 61 }]
-  };
+  const source = { documentId: 'd1', name: 'Terms', revision: 2 };
   const space = http.createServer((request, response) => {
     let body = '';
     request.on('data', chunk => (body += chunk));
@@ -323,6 +317,8 @@ test('a saved Agent records what really went to the model', async () => {
       if (request.method === 'POST') {
         (request.url.endsWith('/turn') ? asked : recorded).push(JSON.parse(body));
       }
+      // Documents over the budget come named and without their text.
+      const tooLarge = asked.at(-1)?.budget === 20;
       response.setHeader('Content-Type', 'application/json');
       response.end(
         JSON.stringify({
@@ -330,28 +326,28 @@ test('a saved Agent records what really went to the model', async () => {
           entries: [{ key: 'policy', value: 'Returns within 45 days.', version: 'v1' }],
           notes: [],
           missing: [],
-          pending: [{ documentId: 'd2', name: 'New rules', revision: 1, state: 'preparing' }],
           documents: [
             {
               id: 'd1',
               name: 'Terms',
               revision: 2,
-              whole: false,
-              passages: [{ heading: 'Gifts', start: 40, end: 61, text: 'Gift cards are final.' }]
+              ...(!tooLarge && { text: 'Gift cards are final.' })
             }
-          ]
+          ],
+          ...(tooLarge && { tooLarge: { characters: 21, budget: 20 } })
         })
       );
     });
   });
   await new Promise(resolve => space.listen(0, '127.0.0.1', resolve));
-  const load = maxPromptBytes =>
+  const load = (maxPromptBytes, documentBudget) =>
     NullProtocol.load({
       key: 'np_space_test',
       endpoint: `http://127.0.0.1:${space.address().port}`,
       agentId: 'support',
       credentials: { 'openai-compatible': { baseURL } },
-      maxPromptBytes
+      maxPromptBytes,
+      documentBudget
     });
 
   // A retried request is two requests; a provider that does not count tokens reports none.
@@ -366,14 +362,10 @@ test('a saved Agent records what really went to the model', async () => {
     requestBytes: requests[0].bytes + requests[1].bytes,
     context: [{ key: 'policy', version: 'v1' }],
     reference: expect.stringContaining('45 days'),
-    sources: [source],
-    // A document that was not in effect yet is named, not given.
-    pending: [{ documentId: 'd2', name: 'New rules', revision: 1, state: 'preparing' }]
+    sources: [source]
   });
-  // The turn was asked with the task, and the model is sent the passage it
-  // gave; history keeps the passage as a range of the revision, not as text.
-  expect(asked[0]).toMatchObject({ query: 'How long?\n{"days":"number"}' });
-  expect(systemOf(0)).toContain('[Terms › Gifts]\nGift cards are final.');
+  // The model is sent the document whole; history keeps it by revision, not as text.
+  expect(systemOf(0)).toContain('[Terms]\nGift cards are final.');
   expect(recorded[0].reference).not.toContain('Gift cards');
 
   // The budget is the size of the request as it is sent; one byte over is not sent.
@@ -388,6 +380,21 @@ test('a saved Agent records what really went to the model', async () => {
     requestBytes: 0,
     sources: [source]
   });
+  // Documents over the document budget are not cut: the operation fails
+  // before the model with the two numbers, and history has it.
+  expect(await (await load(4096, 20)).extract('How long?', { days: 'number' })).toEqual({
+    success: false,
+    error:
+      "The documents of this Agent take 21 characters and the operation's document budget is 20. Shorten them or set a larger documentBudget.",
+    errorCode: 'documents_too_large'
+  });
+  expect(recorded[2]).toMatchObject({
+    success: false,
+    errorCode: 'documents_too_large',
+    modelCalls: 0,
+    sources: [source]
+  });
+  expect(recorded[2].result.usage).toBeUndefined();
   expect(requests).toHaveLength(2);
   await new Promise(resolve => space.close(resolve));
 }, 20000);

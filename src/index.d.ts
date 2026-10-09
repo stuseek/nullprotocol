@@ -17,8 +17,9 @@ export interface CallOptions {
   temperature?: number;
   maxTokens?: number;
   /**
-   * How much of a saved Agent's documents an operation is given, in
-   * characters. 6000 when left out. It bounds the documents, not the request.
+   * How many characters of a saved Agent's documents an operation can take,
+   * counted as a string's length. 6000 when left out. Documents are given
+   * whole: when they are more, the operation fails with documents_too_large.
    */
   documentBudget?: number;
   /** Extra turns the model gets to fix an unusable reply. Default 1. */

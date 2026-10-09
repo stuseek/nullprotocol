@@ -24,19 +24,6 @@ const MESSAGES = {
   context_limit_reached: 'The Agent has the maximum number of context entries.',
   memory_limit_reached: 'The Agent has the maximum number of memory notes.',
   context_key_not_found: 'No context entry with this key.',
-  document_not_ready:
-    'A document of this Agent is being read again and its passages cannot be chosen yet. Try again when the cabinet shows it as ready.',
-  search_query_too_large:
-    'The task is too long to choose passages of the documents by. Shorten it, or keep the documents small enough to be sent whole.',
-  search_query_required:
-    'The documents do not fit whole and the operation has no text to choose their passages by.',
-  document_budget_too_small: 'No passage of the documents fits the document budget.',
-  documents_too_large:
-    'The documents of this Agent do not fit the document budget of the operation. Shorten them or set a larger documentBudget.',
-  encoder_unavailable:
-    'NullProtocol could not choose passages of the documents right now. Nothing was sent to the model.',
-  encoder_busy:
-    'NullProtocol is too busy to choose passages of the documents right now. Nothing was sent to the model.',
   note_not_found: 'No memory note with this ID.'
 };
 
@@ -101,13 +88,11 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     settings: async () => (await request('GET', `${agent}/settings`)).agent,
     update: async changes => (await request('PATCH', `${agent}/settings`, changes)).agent,
     // Settings, the context an operation is sent, its documents and the notes, in one read.
-    // The `task` is what passages of the documents are chosen by, and `budget`
-    // how much of the documents the operation can take, in characters.
-    turn: async (contextKeys, task, budget) => {
+    // `budget` is how many characters of documents the operation can take.
+    turn: async (contextKeys, budget) => {
       const { agent: settings, ...rest } = await request('POST', `${agent}/turn`, {
         keys: contextKeys,
         conversation: conversation || undefined,
-        query: task,
         budget
       });
       return { settings, ...rest };
