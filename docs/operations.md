@@ -24,7 +24,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `label` | A name for this process, such as `backend` or `worker`. It only filters history. |
 | `timeout`, `retry`, `circuitBreaker` | 30000 ms, `{ maxRetries: 2 }`, `{ threshold: 5, resetAfterMs: 60000 }` by default. |
 | `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
-| `documentBudget` | How much of a saved Agent's documents an operation is given, in characters. Default 6000. Documents that fit are given whole; otherwise the passages nearest the task are. It bounds the documents, not the whole request. |
+| `documentBudget` | How much of a saved Agent's documents an operation is given, in characters. Default 6000. Documents are given whole, and an operation whose documents do not fit fails with `documents_too_large`. It bounds the documents, not the whole request. |
 | `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
 | `maxPromptBytes` | The largest request body sent to a model. Default 131072. It is bytes, not tokens, and is not the model's window: see [Providers](../README.md#providers). |
 

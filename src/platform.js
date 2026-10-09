@@ -31,6 +31,8 @@ const MESSAGES = {
   search_query_required:
     'The documents do not fit whole and the operation has no text to choose their passages by.',
   document_budget_too_small: 'No passage of the documents fits the document budget.',
+  documents_too_large:
+    'The documents of this Agent do not fit the document budget of the operation. Shorten them or set a larger documentBudget.',
   encoder_unavailable:
     'NullProtocol could not choose passages of the documents right now. Nothing was sent to the model.',
   encoder_busy:
