@@ -1,12 +1,14 @@
 // One way to call a model, whatever its provider. The provider's own request
 // shape stays in this file.
 
+const { randomUUID } = require('crypto');
 const { Resilience } = require('./resilience');
 
 const PROVIDERS = {
   openai: { keyEnv: 'OPENAI_API_KEY', endpoint: 'https://api.openai.com/v1' },
   anthropic: { keyEnv: 'ANTHROPIC_API_KEY', endpoint: 'https://api.anthropic.com/v1' },
   'openai-compatible': {},
+  nullprotocol: { local: 'https://api.nullprotocol.ai/v1' },
   ollama: { local: 'http://localhost:11434' }
 };
 
@@ -20,7 +22,7 @@ const SAMPLING_MODELS = /^claude-(3-|haiku-4-5|sonnet-4-(5|6|20)|opus-4-(0|1|5|6
 function modelSettings({ provider, model, apiKey, baseURL }) {
   if (!Object.hasOwn(PROVIDERS, provider)) {
     throw new Error(
-      `Unknown provider ${JSON.stringify(provider)}. Use openai, anthropic, ollama or openai-compatible.`
+      `Unknown provider ${JSON.stringify(provider)}. Use nullprotocol, openai, anthropic, ollama or openai-compatible.`
     );
   }
   const spec = PROVIDERS[provider];
@@ -39,6 +41,9 @@ function modelSettings({ provider, model, apiKey, baseURL }) {
     const key = apiKey ?? process.env[spec.keyEnv];
     if (!key) throw new Error(`provider ${provider} needs apiKey or ${spec.keyEnv}`);
     return { provider, model, apiKey: key, baseURL: spec.endpoint };
+  }
+  if (provider === 'nullprotocol' && !apiKey) {
+    throw new Error('NullProtocol-hosted models need the SDK key of a Space.');
   }
   const address = baseURL ?? spec.local;
   let url;
@@ -59,8 +64,8 @@ function failed(code, message, status) {
   return Object.assign(new Error(message), { code, ...(status ? { status } : {}) });
 }
 
-async function post({ url, headers, body }, signal) {
-  const response = await fetch(url, {
+async function post({ url, headers, body, platform }, signal, fetchImpl) {
+  const response = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body,
@@ -75,6 +80,37 @@ async function post({ url, headers, body }, signal) {
   }
   if (!response.ok) {
     const detail = json?.error?.message || json?.error || text.slice(0, 200);
+    if (platform) {
+      const code =
+        json?.error?.code || (typeof json?.error === 'string' ? json.error : 'provider_error');
+      const messages = {
+        spend_cap_reached:
+          'This team has no available model credit. Contact the team owner or use your own model.',
+        inference_unavailable:
+          'NullProtocol-hosted models are temporarily unavailable. Try again later.',
+        model_not_allowed: 'This model is not enabled for your team. Choose an available model.',
+        plan_required:
+          'Hosted models are not enabled for this team. Use your own model or contact the team owner.',
+        managed_inference_not_enabled: 'Hosted models are not enabled for this team.',
+        unauthorized: 'The SDK key was refused. Check that it is active and belongs to this Space.',
+        too_many_inference_requests:
+          'This team already has the maximum number of model requests running. Try again shortly.',
+        upstream_error:
+          'The model provider could not complete the request. Check history before trying again.',
+        upstream_rate_limited: 'The model provider is busy. Try again shortly.',
+        request_failed: 'This model request already failed. It was not sent again.',
+        in_progress: 'This model request is still running. Check history before trying again.',
+        already_completed:
+          'This model request completed but its response was lost. It was not sent again.',
+        request_outcome_unknown:
+          'The outcome of this model request is unknown. It was not sent again.'
+      };
+      throw failed(
+        code === 'unauthorized' ? 'key_refused' : code,
+        messages[code] || `NullProtocol could not run the model: ${code.replaceAll('_', ' ')}`,
+        response.status
+      );
+    }
     throw failed(
       response.status === 429 ? 'rate_limited' : 'provider_error',
       `The model provider answered ${response.status}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`,
@@ -97,7 +133,13 @@ const openai = {
     const temperature = options.temperature ?? (hosted ? undefined : 0.3);
     return {
       url: `${settings.baseURL}/chat/completions`,
-      headers: settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {},
+      platform: settings.provider === 'nullprotocol',
+      headers: {
+        ...(settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {}),
+        ...(settings.provider === 'nullprotocol'
+          ? { 'X-NullProtocol-Request-Id': randomUUID() }
+          : {})
+      },
       body: {
         model: settings.model,
         messages: [{ role: 'system', content: system }, ...turns],
@@ -203,7 +245,7 @@ const ollama = {
   }
 };
 
-const ADAPTERS = { openai, anthropic, ollama, 'openai-compatible': openai };
+const ADAPTERS = { nullprotocol: openai, openai, anthropic, ollama, 'openai-compatible': openai };
 
 /**
  * A model to ask. `complete(system, turns, limit)` sends one request, retried
@@ -214,7 +256,7 @@ const ADAPTERS = { openai, anthropic, ollama, 'openai-compatible': openai };
  * `given` holds provider, model and that provider's credentials; `options` the
  * call settings: timeout, retry, circuitBreaker, temperature, maxTokens.
  */
-function createModel(given, options = {}) {
+function createModel(given, options = {}, fetchImpl = fetch) {
   const settings = modelSettings(given);
   const resilience = new Resilience({
     maxRetries: options.retry?.maxRetries ?? 2,
@@ -238,7 +280,7 @@ function createModel(given, options = {}) {
         await resilience
           .execute(signal => {
             meter.sent(size);
-            return post({ ...request, body }, signal);
+            return post({ ...request, body }, signal, fetchImpl);
           })
           .catch(error => {
             throw provider.explain?.(error) || error;

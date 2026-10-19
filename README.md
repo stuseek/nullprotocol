@@ -44,8 +44,22 @@ The same code runs on a hosted model. Its key is read from the provider's own va
 
 ```js
 await NullProtocol.create({ provider: 'openai', model: 'gpt-4.1-mini' }); // OPENAI_API_KEY
-await NullProtocol.create({ provider: 'anthropic', model: 'claude-sonnet-5-5' }); // ANTHROPIC_API_KEY
+await NullProtocol.create({ provider: 'anthropic', model: 'claude-haiku-4-5' }); // ANTHROPIC_API_KEY
 ```
+
+## Use Ministral through NullProtocol
+
+For a team with model access and credit enabled, choose **Ministral 14B** in the cabinet and press **Run agent**, or load the same agent from code:
+
+```js
+const agent = await NullProtocol.load({
+  key: process.env.NULLPROTOCOL_KEY,
+  agentId: 'invoice-reader'
+});
+const invoice = await agent.extract(text, { invoiceId: 'string', total: 'number' });
+```
+
+The Space's SDK key covers both the saved agent and its NullProtocol model. No Mistral key is needed in your application. To create one from code, use `NullProtocol.create({ key, provider: 'nullprotocol', model: 'ministral-14b', instructions })`. Access and available credit are checked on every model request. The cabinet shows the model's token rates; paid top-ups are not available yet.
 
 ## The four operations
 
@@ -121,7 +135,7 @@ const order = await support.extract(message, schema);
 | Pause, disabled actions | `agent.update({ paused: true })` | also from the cabinet, for every process |
 | Sent to NullProtocol | nothing | all of the above, texts included |
 
-One `agentId` in one Space is one Agent, however many processes load it. An operation makes one read and one write to NullProtocol and waits for the write before it returns, so a short-lived function loses nothing and needs no `close()`. The key is not a model key: model keys stay in your process and are never sent to NullProtocol.
+One `agentId` in one Space is one Agent, however many processes load it. An operation reads its saved settings and reference, then waits for its history write before returning, so a short-lived function needs no `close()`. With `provider: 'nullprotocol'`, model requests also go through NullProtocol with that same key. For your own providers, model requests go directly from your process to the provider; their model keys are never sent to NullProtocol.
 
 If the Agent's model changes to a provider your process has no credentials for, the operation fails with `model_unavailable` and says so in history. Give a process the credentials of the providers it may be asked to call:
 
@@ -150,6 +164,7 @@ await dana.decide(message, actions); // sees the Agent's context and Dana's, and
 
 | `provider` | Calls | Credentials |
 | --- | --- | --- |
+| `nullprotocol` | NullProtocol’s model gateway | `key`, the SDK key of its Space; enabled team access and credit |
 | `openai` | the OpenAI chat completions API | `apiKey` or `OPENAI_API_KEY` |
 | `anthropic` | the Anthropic messages API | `apiKey` or `ANTHROPIC_API_KEY` |
 | `ollama` | Ollama's own chat API | `baseURL` if it is not `http://localhost:11434` |
@@ -157,7 +172,7 @@ await dana.decide(message, actions); // sees the Agent's context and Dana's, and
 
 A request that does not fit the model's window must fail, not be cut down. `ollama` asks Ollama to refuse it, and the operation fails with `model_context_too_large` and both numbers. Ollama's OpenAI-compatible address (`/v1`) cuts the same request down silently and answers from what is left, so use `ollama` for Ollama. Whether another OpenAI-compatible server refuses or cuts is up to that server; the SDK cannot tell.
 
-The operations are tested on local models through `ollama` and `openai-compatible`, and were run on `anthropic` with `claude-haiku-4-5`. The `openai` requests follow the provider's published API and have not yet been run against a paid account in this release.
+Ministral 14B is called through Mistral’s API when selected as a NullProtocol model. The operations are tested on local models through `ollama` and `openai-compatible`, and were run on `anthropic` with `claude-haiku-4-5`. The `openai` requests follow the provider's published API and have not yet been run against a paid account in this release.
 
 ## Documentation
 

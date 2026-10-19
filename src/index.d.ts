@@ -1,4 +1,4 @@
-export type Provider = 'openai' | 'anthropic' | 'ollama' | 'openai-compatible';
+export type Provider = 'nullprotocol' | 'openai' | 'anthropic' | 'ollama' | 'openai-compatible';
 
 /** What a process needs to call one provider. Cloud keys default to OPENAI_API_KEY and ANTHROPIC_API_KEY. */
 export interface Credentials {

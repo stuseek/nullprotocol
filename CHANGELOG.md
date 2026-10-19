@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+- `provider: 'nullprotocol'` uses the Space's SDK key for both saved agents and hosted model access. No upstream model key is required in the application. Team access, model allowance and credit are checked on every request.
+- Model request retries retain their request ID so an uncertain network outcome cannot dispatch another paid request with the same ID.
+- The cabinet can run the same four operations on a NullProtocol model and record the result, reference and token usage in the agent's history.
+
 ## 2.1.0
 
 - `provider: 'ollama'` calls a local model through Ollama's own API, with no key. A request larger than the model's window fails with `model_context_too_large` instead of being cut silently.

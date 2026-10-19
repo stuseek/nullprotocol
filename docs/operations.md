@@ -13,7 +13,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 
 | Option | Meaning |
 | --- | --- |
-| `provider`, `model` | The model. `provider` is `openai`, `anthropic`, `ollama` or `openai-compatible`. `create` only: a loaded Agent's model comes from its Space. |
+| `provider`, `model` | The model. `provider` is `nullprotocol`, `openai`, `anthropic`, `ollama` or `openai-compatible`. `create` only: a loaded Agent's model comes from its Space. |
 | `instructions` | Who the Agent is, what it is for and the rules it follows. `create` only. |
 | `apiKey`, `baseURL` | Credentials for `provider` in `create`. |
 | `credentials` | Credentials by provider, for the models this process may be asked to call: `{ openai: { apiKey }, 'openai-compatible': { baseURL, apiKey } }`. |
@@ -34,6 +34,8 @@ Every object has an `instanceId`, issued when it is made. History records it, so
 
 ## Results
 
+For `provider: 'nullprotocol'`, `key` is required and credentials are automatic in both `create` and `load`. It uses the Space's enabled model catalogue and credit. A retry of the same model request keeps its request ID to prevent a duplicate upstream charge; it does not replay a previously completed response. Cabinet Run uses the same four operation implementations. `decide` there chooses an action; registered handlers still run in your application.
+
 Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and `usage: { inputTokens, outputTokens }`, the tokens the provider reported, cached input included. A failed operation has it too: the tokens of a reply that was cut off or refused are counted. A request the provider did not count, such as one that failed or timed out, is not zero tokens: `usage.uncountedRequests` says how many there were, and `usage` is absent when the provider counted none. With a key, `historyError` is set when the operation ran but could not be recorded.
 
 | `errorCode` | Meaning |
@@ -44,7 +46,10 @@ Every operation returns `{ success: true, ... }` or `{ success: false, error, er
 | `action_disabled` | Every action offered to `decide` is disabled in the Agent's settings. |
 | `context_key_not_found` | `contextKeys` names an entry the Agent does not have. |
 | `model_context_too_large` | The request is larger than `maxPromptBytes`, or Ollama refused it as larger than the model's window. Nothing was left out and the model did not answer. |
-| `model_unavailable` | This process has no credentials for the Agent's provider. |
+| `model_unavailable` | This process has no credentials for the Agent's provider, or the hosted model is not configured. |
+| `spend_cap_reached` | The team has insufficient model credit for this request. |
+| `inference_unavailable`, `managed_inference_not_enabled`, `plan_required`, `model_not_allowed` | The hosted gateway or this team’s model access is unavailable. |
+| `in_progress`, `already_completed`, `request_outcome_unknown` | A hosted request ID has already been used; the SDK does not dispatch another paid request with it. Check history before starting a new operation. |
 | `rate_limited`, `provider_error` | The provider refused or failed, also after retries, or its reply was cut off or empty. |
 | `key_refused`, `platform_unavailable` | With a key: the Space could not be read, so the operation did not run. |
 
@@ -151,4 +156,4 @@ await agent.update({ model: 'gpt-4.1', paused: true, disabledActions: ['refund']
 
 ## What is sent where
 
-To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of HTTP attempts made to it, retries included, and the size of their bodies, token counts, and each action's parameters, outcome and result. Model keys are never sent.
+To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of HTTP attempts made to it, retries included, and the size of their bodies, token counts, and each action's parameters, outcome and result. Keys for your own model providers are never sent to NullProtocol. With `provider: 'nullprotocol'`, the Space SDK key authorizes the model request through NullProtocol; the upstream model key stays on the server.
