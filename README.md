@@ -192,3 +192,8 @@ npm run validate
 ## License
 
 MIT
+
+
+## Use an agent over HTTP
+
+Run a saved agent on a NullProtocol model from your backend, Make or n8n using the same Space SDK key. In the cabinet, open **Connect → HTTP API** for a ready-to-copy request. See the [HTTP API guide](https://github.com/stuseek/nullprotocol/blob/main/docs/http.md) for the four operations, responses and safe retries.
