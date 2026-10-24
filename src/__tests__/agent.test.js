@@ -1,5 +1,6 @@
 const http = require('http');
 const { NullProtocol } = require('..');
+const { createRuntime } = require('../runtime');
 
 // A model server that answers with the next scripted reply and keeps what it was sent.
 let server;
@@ -162,6 +163,70 @@ test('each operation checks the reply and lets the model repair it once', async 
     action: 'escalate',
     attempts: 2
   });
+});
+
+test('validation keeps falsy references and summary history keeps the constraints actually sent', async () => {
+  const recorded = [];
+  const agent = createRuntime({
+    agentId: 'history',
+    credentials: { 'openai-compatible': { baseURL } },
+    store: {
+      turn: async () => ({
+        settings: { provider: 'openai-compatible', model: 'test', instructions: '' },
+        entries: [],
+        notes: [],
+        missing: []
+      }),
+      record: async operation => recorded.push(operation)
+    }
+  });
+  for (const reference of [false, 0, '', null, undefined]) {
+    replies.push({ score: 1, reasoning: 'Compared.', recommendation: 'pass' });
+    expect((await agent.validate('Matches the reference.', true, { reference })).success).toBe(
+      true
+    );
+    const prompt = requests.at(-1).messages[1].content;
+    const kept = JSON.parse(JSON.stringify(recorded.at(-1).input));
+    if (reference === undefined) {
+      expect(prompt).not.toContain('Reference:');
+      expect(kept).not.toHaveProperty('reference');
+    } else {
+      expect(prompt).toContain(`Reference: ${JSON.stringify(reference)}`);
+      expect(kept.reference).toEqual(reference);
+    }
+  }
+  const options = { maxLength: 40, focus: 'refund deadline' };
+  replies.push({ summary: 'Returns within 30 days.', keyPoints: ['30 days'] });
+  const pending = agent.summarize('The policy.', options);
+  options.maxLength = 1;
+  options.focus = 'changed after the operation started';
+  expect((await pending).success).toBe(true);
+  expect(recorded.at(-1).input).toMatchObject({
+    content: 'The policy.',
+    maxLength: 40,
+    focus: 'refund deadline'
+  });
+  expect(requests.at(-1).messages[1].content).toContain('max 40 chars');
+  expect(requests.at(-1).messages[1].content).toContain('"refund deadline"');
+  for (const [given, expected] of [
+    [undefined, { maxLength: 200, focus: 'key_insights' }],
+    [
+      { maxLength: undefined, focus: undefined },
+      { maxLength: 200, focus: 'key_insights' }
+    ],
+    [
+      { maxLength: null, focus: null },
+      { maxLength: null, focus: null }
+    ]
+  ]) {
+    replies.push({ summary: '', keyPoints: [] });
+    expect((await agent.summarize('The policy.', given)).success).toBe(true);
+    expect(recorded.at(-1).input).toMatchObject(expected);
+    expect(requests.at(-1).messages[1].content).toContain(`max ${expected.maxLength} chars`);
+    expect(requests.at(-1).messages[1].content).toContain(
+      `focusing on ${JSON.stringify(expected.focus)}`
+    );
+  }
 });
 
 test('a request over the budget and a model without credentials fail before any call', async () => {

@@ -210,6 +210,15 @@ class Agent {
     // follow later changes by the caller.
     const input = structuredClone(names.map((_, index) => args[index] ?? null));
     const options = args[names.length] ?? {};
+    // These change the summary's prompt too. Keep the effective values with
+    // its input, including explicit null, before an asynchronous settings read.
+    const summaryOptions =
+      name === 'summarize'
+        ? structuredClone({
+            maxLength: options.maxLength === undefined ? 200 : options.maxLength,
+            focus: options.focus === undefined ? 'key_insights' : options.focus
+          })
+        : {};
     // What validate compares the subject with is input too, and is kept with it.
     const reference = structuredClone(options.reference);
     const started = Date.now();
@@ -221,7 +230,7 @@ class Agent {
       if (turn.refusal) throw turn.refusal;
       // A decision is offered only the actions the Agent's settings allow.
       if (name === 'decide') input[1] = this.offered(input[1], turn.settings);
-      result = await operations[name](turn, ...input, { ...options, reference });
+      result = await operations[name](turn, ...input, { ...options, ...summaryOptions, reference });
     } catch (error) {
       result = { success: false, error: error.message, errorCode: error.code ?? 'failed' };
       if (!turn) return result;
@@ -258,6 +267,7 @@ class Agent {
         context: turn.sent,
         input: {
           ...Object.fromEntries(names.map((argument, index) => [argument, input[index]])),
+          ...summaryOptions,
           reference
         },
         result,
