@@ -11,10 +11,12 @@ export interface Credentials {
 export interface CallOptions {
   /** Credentials by provider, for the models this process may be asked to call. */
   credentials?: Partial<Record<Provider, Credentials>>;
+  /** Milliseconds per request attempt. Default 30000. */
   timeout?: number;
   retry?: { maxRetries?: number };
   circuitBreaker?: { threshold?: number; resetAfterMs?: number };
   temperature?: number;
+  /** Maximum generated tokens. Default 1000. */
   maxTokens?: number;
   /**
    * How many characters of a saved Agent's documents an operation can take,
@@ -92,6 +94,13 @@ export interface Note {
   conversation?: string | null;
 }
 
+/** Provider-reported usage, including partial totals when some requests were not counted. */
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  uncountedRequests?: number;
+}
+
 /** What every result carries, whether the operation succeeded or not. */
 interface Ran {
   attempts?: number;
@@ -101,7 +110,7 @@ interface Ran {
    * operation too. `uncountedRequests` is how many requests it did not count,
    * such as one that failed or timed out; absent when it counted none.
    */
-  usage?: { inputTokens: number; outputTokens: number; uncountedRequests?: number };
+  usage?: Usage;
   /** Set when the operation ran but could not be written to history. */
   historyError?: string;
 }
@@ -113,7 +122,7 @@ export interface Failure extends Ran {
   errorCode: string;
 }
 
-type Result<T> = (Ran & { success: true } & T) | Failure;
+export type Result<T> = (Ran & { success: true } & T) | Failure;
 
 export type Extraction<T = unknown> = Result<{ data: T }>;
 export type Validation = Result<{
@@ -215,6 +224,7 @@ export interface Agent {
 }
 
 export class AgentError extends Error {
+  constructor(code: string, message: string, details?: Record<string, unknown>);
   code: string;
 }
 

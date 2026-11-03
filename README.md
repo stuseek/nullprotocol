@@ -2,198 +2,114 @@
 
 # NullProtocol
 
-An Agent with a model, instructions, context and memory, and four operations whose replies are checked in code: `extract`, `summarize`, `validate` and `decide`. Change the model without changing the calls. Run it with no account at all, or add one key and see every operation in the [cabinet](https://app.nullprotocol.ai).
-
-## Install
+Give an AI agent a focused job. Extract typed data, summarize text, check an answer or choose an action. Manage its instructions and context in the [cabinet](https://app.nullprotocol.ai), and see the input, result and token usage of each operation.
 
 ```sh
 npm install nullprotocol
 ```
 
-Node.js 18 or newer. No other packages are needed for OpenAI, Anthropic or a local model.
+Node.js 18 or newer. JavaScript and TypeScript. CommonJS and ESM.
 
-## Create an Agent and call it
+## Run your agent
 
-With a local model you need no account and no key:
+Create an agent in the cabinet, choose a NullProtocol model, and copy a Space SDK key from **Connect**. Set `NULLPROTOCOL_KEY` in your application's environment. Your team needs model access and available credit.
+
+Save this as `agent.mjs`, replacing `order-reader` with your agent's ID:
+
+```js
+import { NullProtocol } from 'nullprotocol';
+
+const agent = await NullProtocol.load({
+  key: process.env.NULLPROTOCOL_KEY,
+  agentId: 'order-reader'
+});
+
+const result = await agent.extract('Order 42: two blue mugs.', {
+  orderId: 'number',
+  quantity: 'number',
+  item: 'string'
+});
+
+if (result.success) {
+  console.log(result.data); // { orderId: 42, quantity: 2, item: 'blue mugs' }
+  console.log(result.usage); // Provider-reported input and output tokens.
+} else {
+  console.error(result.errorCode, result.error);
+}
+```
+
+```sh
+node agent.mjs
+```
+
+The same SDK key loads the saved agent and authorizes its NullProtocol model. No separate model key is needed. Edit its instructions or context in the cabinet; the next operation uses the changes.
+
+## Four operations
+
+| Call | Result on success |
+| --- | --- |
+| `agent.extract(text, schema)` | `data` matching your schema |
+| `agent.summarize(text)` | `summary`, `keyPoints` |
+| `agent.validate(criteria, subject)` | `recommendation`, `score`, `reasoning` |
+| `agent.decide(input, actions)` | `action`, `parameters`, `reasoning` |
+
+Every operation returns `success: true` or `success: false` with `errorCode` and `error`. Invalid model replies get one repair attempt by default. Schema validation checks the output's structure; your code still checks facts and business rules.
+
+`decide` chooses an action. To run application code, register a handler and pass the decision to `agent.execute(decision)`. See [actions and execution](docs/operations.md#actions).
+
+## Give it the right context
+
+```js
+// Included in every operation.
+await agent.context.set('shop', { currency: 'EUR', returnDays: 30 });
+
+// Included only when the operation asks for it.
+await agent.context.set('order', { id: 42, delivered: true }, { inclusion: 'selected' });
+const result = await agent.extract('Read the order ID and shop currency.', { orderId: 'number', currency: 'string' }, {
+  contextKeys: ['order']
+});
+
+// A short saved fact, included in every operation.
+await agent.memory.add('The warehouse ships on weekdays.');
+```
+
+Reference texts added in the cabinet are included automatically. History keeps their revisions, so you can see the text used by an earlier operation after an edit. [Context, notes and customer data](docs/context.md).
+
+## Use a local model
+
+No account or key is needed for a local agent:
 
 ```sh
 ollama pull qwen2.5:3b-instruct
 ```
 
 ```js
-import { NullProtocol } from 'nullprotocol';
-
 const agent = await NullProtocol.create({
   provider: 'ollama',
   model: 'qwen2.5:3b-instruct',
-  instructions: 'You read orders for Mugs & Co. Use only what the text says.',
-  timeout: 120000 // a local model can take longer than the 30-second default
-});
-
-const order = await agent.extract('Order 42: two blue mugs', {
-  orderId: 'number',
-  quantity: 'number',
-  item: 'string'
-});
-
-if (order.success) console.log(order.data); // { orderId: 42, quantity: 2, item: 'blue mugs' }
-else console.error(order.errorCode, order.error); // ask again, use a stronger model, or send for review
-```
-
-The same code runs on a hosted model. Its key is read from the provider's own variable:
-
-```js
-await NullProtocol.create({ provider: 'openai', model: 'gpt-4.1-mini' }); // OPENAI_API_KEY
-await NullProtocol.create({ provider: 'anthropic', model: 'claude-haiku-4-5' }); // ANTHROPIC_API_KEY
-```
-
-## Use Ministral through NullProtocol
-
-For a team with model access and credit enabled, choose **Ministral 14B** in the cabinet and press **Run agent**, or load the same agent from code:
-
-```js
-const agent = await NullProtocol.load({
-  key: process.env.NULLPROTOCOL_KEY,
-  agentId: 'invoice-reader'
-});
-const invoice = await agent.extract(text, { invoiceId: 'string', total: 'number' });
-```
-
-The Space's SDK key covers both the saved agent and its NullProtocol model. No Mistral key is needed in your application. To create one from code, use `NullProtocol.create({ key, provider: 'nullprotocol', model: 'ministral-14b', instructions })`. Access and available credit are checked on every model request. The cabinet shows the model's token rates; paid top-ups are not available yet.
-
-## The four operations
-
-Each one asks the model for JSON, checks the reply in code and, when the reply is unusable, shows the model the exact problem and asks once more. A result is `{ success: true, ... }` or `{ success: false, error, errorCode }`; an operation does not throw for a bad reply.
-
-```js
-const read = await agent.extract(text, schema);          // data that matches the schema
-const brief = await agent.summarize(text, { maxLength: 200 }); // summary, keyPoints
-const check = await agent.validate(criteria, subject);   // score, recommendation, reasoning
-const next = await agent.decide(ticket, ['refund', 'escalate', 'chat']); // one of the actions
-```
-
-The model reads; your code calculates and applies the rules. [Operations](docs/operations.md) has every option, the schema forms and the error codes.
-
-### Actions
-
-`decide` only chooses. `execute` runs the handler you registered for the chosen action, after the action's schema and guard, and once per decision:
-
-```js
-agent.registerAction('refund', ({ orderId }) => refunds.create(orderId), {
-  description: 'Refund an order the customer asks to return',
-  input: { type: 'object', properties: { orderId: { type: 'number' } }, required: ['orderId'] },
-  guard: ({ orderId }) => orders.isRefundable(orderId) // your rule, in your code
-});
-
-const decision = await agent.decide(message, ['refund', 'escalate', 'chat']);
-if (decision.success) console.log(await agent.execute(decision));
-```
-
-The model is shown each registered action's description and schema, and `execute` checks the parameters against that same schema.
-
-`chat` is built in: when a decision chooses it, `execute` answers in plain text with the same model. There is no separate chat mode.
-
-## Context and memory
-
-```js
-await agent.context.set('region', { region: 'EU', currency: 'EUR' }); // sent with every operation
-await agent.context.set('refund-policy', policyText, { inclusion: 'selected' }); // sent only when named
-await agent.memory.add('The warehouse ships on weekdays.'); // a short fact, kept in mind in every operation
-
-await agent.extract(question, schema, { contextKeys: ['refund-policy'] });
-```
-
-A saved Agent also works by its documents, such as terms or a policy kept as text in the cabinet. Each operation is given them whole, and history shows what it was given. There is nothing to call for it; [Documents](docs/documents.md) has the rest. When the documents do not fit the operation's `documentBudget`, the operation fails before the model is called: it never goes on without them.
-
-Nothing is dropped silently. If instructions, context, memory and input do not fit the request budget (`maxPromptBytes`, 128 KiB by default), the operation fails with `model_context_too_large` and the model is not called.
-
-## Add a key: the same Agent, saved
-
-Create an SDK key in a Space of the [cabinet](https://app.nullprotocol.ai) and pass it as `key`. The calls stay the same.
-
-```js
-// Once: create the Agent. It gets an ID; pass agentId to choose it yourself.
-const agent = await NullProtocol.create({
-  key: process.env.NULLPROTOCOL_KEY,
-  provider: 'openai',
-  model: 'gpt-4.1-mini',
-  instructions: 'You are the support agent of Mugs & Co.'
-});
-console.log(agent.agentId);
-
-// Anywhere, any number of processes: load it by its ID.
-const support = await NullProtocol.load({ key: process.env.NULLPROTOCOL_KEY, agentId: agent.agentId });
-const order = await support.extract(message, schema);
-```
-
-| | Without a key | With a key |
-| --- | --- | --- |
-| Agent | lives in the process | saved in the Space under one `agentId`; create it in code or in the cabinet |
-| Model and instructions | set in code | set on the Agent; a change in the cabinet or by `agent.update()` applies from the next operation of every process |
-| Context and memory | in the process | saved; shared by every process that loads the Agent |
-| History | none | every operation with its input, result, the instructions and context it ran with, the request attempts and tokens it used, and the outcome of its action, kept for 30 days |
-| Pause, disabled actions | `agent.update({ paused: true })` | also from the cabinet, for every process |
-| Sent to NullProtocol | nothing | all of the above, texts included |
-
-One `agentId` in one Space is one Agent, however many processes load it. An operation reads its saved settings and reference, then waits for its history write before returning, so a short-lived function needs no `close()`. With `provider: 'nullprotocol'`, model requests also go through NullProtocol with that same key. For your own providers, model requests go directly from your process to the provider; their model keys are never sent to NullProtocol.
-
-If the Agent's model changes to a provider your process has no credentials for, the operation fails with `model_unavailable` and says so in history. Give a process the credentials of the providers it may be asked to call:
-
-```js
-await NullProtocol.load({
-  key,
-  agentId: 'support',
-  credentials: { 'openai-compatible': { baseURL: 'http://localhost:8000/v1' } }
+  instructions: 'Read orders. Use only facts in the supplied text.',
+  timeout: 120000
 });
 ```
 
-### One customer, one conversation
+Use the same four operations. Without a Space key, settings, context and notes live in your process and nothing is sent to NullProtocol. You can also [connect your own model provider](docs/providers.md).
 
-Bind an object to a conversation and its context and memory become that conversation's own, on top of the Agent's:
+## Examples and reference
 
-```js
-const dana = await NullProtocol.load({ key, agentId: 'support', conversation: 'telegram:42' });
-await dana.context.set('profile', 'Name: Dana. Plan: Gold.');
-await dana.memory.add('Asked about order 6642.');
-await dana.decide(message, actions); // sees the Agent's context and Dana's, and nobody else's
-```
-
-`agent.space` is context shared by every Agent of the Space. Under one key the conversation's entry replaces the Agent's, and the Agent's replaces the Space's.
-
-## Providers
-
-| `provider` | Calls | Credentials |
-| --- | --- | --- |
-| `nullprotocol` | NullProtocol’s model gateway | `key`, the SDK key of its Space; enabled team access and credit |
-| `openai` | the OpenAI chat completions API | `apiKey` or `OPENAI_API_KEY` |
-| `anthropic` | the Anthropic messages API | `apiKey` or `ANTHROPIC_API_KEY` |
-| `ollama` | Ollama's own chat API | `baseURL` if it is not `http://localhost:11434` |
-| `openai-compatible` | any server with the OpenAI chat API: vLLM, LM Studio, Mistral, and others | `baseURL`, and `apiKey` if the server needs one |
-
-A request that does not fit the model's window must fail, not be cut down. `ollama` asks Ollama to refuse it, and the operation fails with `model_context_too_large` and both numbers. Ollama's OpenAI-compatible address (`/v1`) cuts the same request down silently and answers from what is left, so use `ollama` for Ollama. Whether another OpenAI-compatible server refuses or cuts is up to that server; the SDK cannot tell.
-
-Ministral 14B is called through Mistral’s API when selected as a NullProtocol model. The operations are tested on local models through `ollama` and `openai-compatible`, and were run on `anthropic` with `claude-haiku-4-5`. The `openai` requests follow the provider's published API and have not yet been run against a paid account in this release.
-
-## Documentation
-
-- [Operations](docs/operations.md): options, schemas, actions, context, settings, error codes
-- [Documents](docs/documents.md): how a document comes into use, what an operation is given, refusals and history
-- [Runnable flows](examples/flows/README.md): refund, invoice and SLA, where the model reads and code decides
-- [Benchmark](bench/README.md)
-- [Changelog](CHANGELOG.md)
+- [Runnable examples](examples/README.md) — saved and local agents, then invoice, refund and SLA workflows.
+- [API reference](docs/operations.md) — options, results, errors and action handlers.
+- [Models and credentials](docs/providers.md) — NullProtocol, Ollama, OpenAI, Anthropic and compatible servers.
+- [Reference texts](docs/documents.md) — versions, budgets and History.
+- [HTTP API](docs/http.md) — call a saved agent without the JavaScript SDK.
+- [Changelog](CHANGELOG.md) · [Benchmark](bench/README.md)
 
 ## Development
 
 ```sh
-npm install
+npm ci
 npm run validate
 ```
 
 ## License
 
 MIT
-
-
-## Use an agent over HTTP
-
-Run a saved agent on a NullProtocol model from your backend, Make or n8n using the same Space SDK key. In the cabinet, open **Connect → HTTP API** for a ready-to-copy request. See the [HTTP API guide](https://github.com/stuseek/nullprotocol/blob/main/docs/http.md) for the four operations, responses and safe retries.

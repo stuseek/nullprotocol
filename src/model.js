@@ -19,16 +19,20 @@ const SAMPLING_MODELS = /^claude-(3-|haiku-4-5|sonnet-4-(5|6|20)|opus-4-(0|1|5|6
 // Checks the settings and credentials for one provider and model. A cloud key
 // is read only from its own provider's variable, and a cloud provider never
 // takes another address.
-function modelSettings({ provider, model, apiKey, baseURL }) {
+function validateModel({ provider, model }) {
   if (!Object.hasOwn(PROVIDERS, provider)) {
     throw new Error(
       `Unknown provider ${JSON.stringify(provider)}. Use nullprotocol, openai, anthropic, ollama or openai-compatible.`
     );
   }
-  const spec = PROVIDERS[provider];
   if (typeof model !== 'string' || !model.trim()) {
     throw new Error(`provider ${provider} needs model, the name of the model to call`);
   }
+}
+
+function modelSettings({ provider, model, apiKey, baseURL }) {
+  validateModel({ provider, model });
+  const spec = PROVIDERS[provider];
   if (apiKey !== undefined && (typeof apiKey !== 'string' || !apiKey)) {
     throw new Error('apiKey must be a nonempty string');
   }
@@ -298,4 +302,4 @@ function createModel(given, options = {}, fetchImpl = fetch) {
   };
 }
 
-module.exports = { createModel, modelSettings };
+module.exports = { createModel, modelSettings, validateModel };

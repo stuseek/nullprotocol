@@ -7,6 +7,7 @@
 
 const { randomUUID } = require('crypto');
 const { createRuntime } = require('./runtime');
+const { validateModel } = require('./model');
 const { AgentError, MESSAGES, savedStore } = require('./platform');
 
 const missing = (code, found) => {
@@ -78,24 +79,62 @@ function localStore(settings) {
   };
 }
 
+// Check setup mistakes before creating records or making network requests.
+function optionsObject(options, method) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new AgentError('invalid_options', `NullProtocol.${method} needs an options object.`);
+  }
+  return options;
+}
+
+function nonempty(value, name) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new AgentError('invalid_options', `${name} must be a nonempty string.`);
+  }
+}
+
+// The same Space key authorizes storage and NullProtocol-hosted models.
+function hostedCredentials(key, endpoint) {
+  return key
+    ? {
+        nullprotocol: {
+          apiKey: key,
+          baseURL: `${(endpoint || process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai').replace(/\/+$/, '')}/v1`
+        }
+      }
+    : {};
+}
+
 const NullProtocol = {
   /**
    * Creates an Agent and returns it with its agentId. With `key` the Agent is
    * saved in the Space of that key; without it the Agent lives in this process.
    */
-  async create({
-    key,
-    endpoint,
-    agentId,
-    name,
-    provider,
-    model,
-    instructions = '',
-    apiKey,
-    baseURL,
-    credentials,
-    ...rest
-  }) {
+  async create(options) {
+    const {
+      key,
+      endpoint,
+      agentId,
+      name,
+      provider,
+      model,
+      instructions = '',
+      apiKey,
+      baseURL,
+      credentials,
+      ...rest
+    } = optionsObject(options, 'create');
+    try {
+      validateModel({ provider, model });
+    } catch (error) {
+      throw new AgentError('invalid_options', error.message);
+    }
+    if (typeof instructions !== 'string') {
+      throw new AgentError('invalid_options', 'instructions must be a string.');
+    }
+    if (agentId !== undefined) nonempty(agentId, 'agentId');
+    if (key !== undefined) nonempty(key, 'key');
+    if (endpoint !== undefined) nonempty(endpoint, 'endpoint');
     const settings = { provider, model, instructions };
     if (provider === 'nullprotocol' && !key) {
       throw new AgentError(
@@ -103,17 +142,9 @@ const NullProtocol = {
         'A NullProtocol-hosted model needs the SDK key of a Space.'
       );
     }
-    const hosted = key
-      ? {
-          nullprotocol: {
-            apiKey: key,
-            baseURL: `${(endpoint || process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai').replace(/\/+$/, '')}/v1`
-          }
-        }
-      : {};
     const own = {
       ...credentials,
-      ...hosted,
+      ...hostedCredentials(key, endpoint),
       ...(provider !== 'nullprotocol'
         ? { [provider]: { apiKey, baseURL, ...credentials?.[provider] } }
         : {})
@@ -137,13 +168,17 @@ const NullProtocol = {
   },
 
   /** Loads a saved Agent by its agentId. Its model and instructions come from the Space. */
-  async load({ key, endpoint, agentId, credentials = {}, ...rest }) {
+  async load(options) {
+    const { key, endpoint, agentId, credentials = {}, ...rest } = optionsObject(options, 'load');
     if (!key) {
       throw new AgentError(
         'key_required',
         'NullProtocol.load reads a saved Agent and needs key, the SDK key of its Space. Without a key, create the Agent in code with NullProtocol.create.'
       );
     }
+    nonempty(key, 'key');
+    nonempty(agentId, 'agentId');
+    if (endpoint !== undefined) nonempty(endpoint, 'endpoint');
     const store = savedStore({ key, endpoint, agentId, conversation: rest.conversation });
     await store.settings();
     return createRuntime({
@@ -152,10 +187,7 @@ const NullProtocol = {
       store,
       credentials: {
         ...credentials,
-        nullprotocol: {
-          apiKey: key,
-          baseURL: `${(endpoint || process.env.NULLPROTOCOL_API_URL || 'https://api.nullprotocol.ai').replace(/\/+$/, '')}/v1`
-        }
+        ...hostedCredentials(key, endpoint)
       }
     });
   }

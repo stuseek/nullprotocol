@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Shorter getting-started guide, separate context/provider guides and runnable saved/local examples.
+- `create` and `load` report invalid setup fields as `AgentError` with `invalid_options` before network requests. Missing saved-agent keys still use `key_required`.
+- Exported `Result` and `Usage` TypeScript types, and corrected the `AgentError` constructor declaration.
+- CI checks the SDK and its types without an unused database service.
+
 ## 2.2.1
 
 - Validation sends explicitly supplied references even when their value is `false`, `0`, an empty string or `null`.

@@ -26,15 +26,15 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
 | `documentBudget` | How much of a saved Agent's documents an operation is given, in characters. Default 6000. Documents are given whole, and an operation whose documents do not fit fails with `documents_too_large`. It bounds the documents, not the whole request. |
 | `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
-| `maxPromptBytes` | The largest request body sent to a model. Default 131072. It is bytes, not tokens, and is not the model's window: see [Providers](../README.md#providers). |
+| `maxPromptBytes` | The largest request body sent to a model. Default 131072. It is bytes, not tokens, and is not the model's window: see [Models and credentials](providers.md#request-limits). |
 
-`create` and `load` throw an `AgentError` with a `code`: `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
+`create` and `load` throw an `AgentError` with a `code`: `invalid_options` (missing or invalid setup fields, detected before a network request), `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
 
 Every object has an `instanceId`, issued when it is made. History records it, so the operations of one process can be told apart; nothing is stored under it.
 
 ## Results
 
-For `provider: 'nullprotocol'`, `key` is required and credentials are automatic in both `create` and `load`. It uses the Space's enabled model catalogue and credit. A retry of the same model request keeps its request ID to prevent a duplicate upstream charge; it does not replay a previously completed response. Cabinet Run uses the same four operation implementations. `decide` there chooses an action; registered handlers still run in your application.
+For `provider: 'nullprotocol'`, `key` is required and credentials are automatic in both `create` and `load`. It uses the Space's enabled model catalogue and credit. A retry of the same model request keeps its request ID to prevent a duplicate upstream charge; it does not replay a previously completed response. The cabinet’s Try agent uses the same four operation implementations. `decide` there chooses an action; registered handlers still run in your application.
 
 Every operation returns `{ success: true, ... }` or `{ success: false, error, errorCode }`, with `attempts`, `repaired` and `usage: { inputTokens, outputTokens }`, the tokens the provider reported, cached input included. A failed operation has it too: the tokens of a reply that was cut off or refused are counted. A request the provider did not count, such as one that failed or timed out, is not zero tokens: `usage.uncountedRequests` says how many there were, and `usage` is absent when the provider counted none. With a key, `historyError` is set when the operation ran but could not be recorded.
 
