@@ -38,25 +38,11 @@ const agent = await NullProtocol.create({
 });
 ```
 
-## Saved agents with your own provider
+## Saved agents and telemetry
 
-Pass a Space SDK `key` to `create` to save the agent. Load it later with `NullProtocol.load({ key, agentId })`. The agent's model and instructions are read from its saved settings; provider credentials come from your application.
+Saved agents use `provider: 'nullprotocol'`. A Space SDK key loads their model, instructions and context and records their operations. The same key authorizes hosted model calls; no provider credential is required.
 
-A process that may be asked to use several providers can supply their credentials together:
-
-```js
-const agent = await NullProtocol.load({
-  key: process.env.NULLPROTOCOL_KEY,
-  agentId: 'support',
-  credentials: {
-    openai: { apiKey: process.env.OPENAI_API_KEY },
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
-    'openai-compatible': { baseURL: 'http://localhost:8000/v1' }
-  }
-});
-```
-
-If credentials for the saved provider are unavailable, an operation returns `model_unavailable`. A model change in the cabinet applies to the next operation.
+Your own providers are supported in standalone agents without a Space key. Their settings, context and notes live in the process, and nothing is sent to NullProtocol. An older saved agent with an external provider keeps its History, but must be switched to a NullProtocol model in the cabinet before its next hosted operation. The server refuses that operation with `managed_provider_required` before a model is called.
 
 ## Request limits
 

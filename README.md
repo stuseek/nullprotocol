@@ -92,7 +92,7 @@ const agent = await NullProtocol.create({
 });
 ```
 
-Use the same four operations. Without a Space key, settings, context and notes live in your process and nothing is sent to NullProtocol. You can also [connect your own model provider](docs/providers.md).
+Use the same four operations. Without a Space key, settings, context and notes live in your process and nothing is sent to NullProtocol. You can also [connect your own model provider](docs/providers.md). Local and external providers run without a Space key; saved agents and hosted telemetry use NullProtocol models.
 
 ## Examples and reference
 

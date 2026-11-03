@@ -17,7 +17,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `instructions` | Who the Agent is, what it is for and the rules it follows. `create` only. |
 | `apiKey`, `baseURL` | Credentials for `provider` in `create`. |
 | `credentials` | Credentials by provider, for the models this process may be asked to call: `{ openai: { apiKey }, 'openai-compatible': { baseURL, apiKey } }`. |
-| `key` | An SDK key of a Space. `create` saves the Agent there; without it the Agent lives in the process. `load` needs it and fails with `key_required` otherwise. |
+| `key` | An SDK key of a Space. `create` saves a `nullprotocol` Agent there; external providers use standalone agents without a Space key. `load` needs it and fails with `key_required` otherwise. |
 | `endpoint` | Another NullProtocol API address. Default `https://api.nullprotocol.ai`, or `NULLPROTOCOL_API_URL`. |
 | `agentId` | The Agent's ID. `create` issues one when it is left out and fails with `agent_exists` when it is taken. |
 | `conversation` | Binds the object to one conversation: its `context` and `memory` are then that conversation's own, on top of the Agent's. |
@@ -28,7 +28,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `repairAttempts` | Extra turns the model gets to fix an unusable reply. Default 1. |
 | `maxPromptBytes` | The largest request body sent to a model. Default 131072. It is bytes, not tokens, and is not the model's window: see [Models and credentials](providers.md#request-limits). |
 
-`create` and `load` throw an `AgentError` with a `code`: `invalid_options` (missing or invalid setup fields, detected before a network request), `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `platform_unavailable`.
+`create` and `load` throw an `AgentError` with a `code`: `invalid_options` (missing or invalid setup fields, detected before a network request), `key_required`, `key_refused` (the key is invalid, revoked or not an SDK key), `agent_not_found`, `agent_exists`, `managed_provider_required` (saved agents use NullProtocol models), `platform_unavailable`.
 
 Every object has an `instanceId`, issued when it is made. History records it, so the operations of one process can be told apart; nothing is stored under it.
 
