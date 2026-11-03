@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.2 — 2026-11-03
 
 - Shorter getting-started guide, separate context/provider guides and runnable saved/local examples.
 - `create` and `load` report invalid setup fields as `AgentError` with `invalid_options` before network requests. Missing saved-agent keys still use `key_required`.
