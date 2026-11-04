@@ -45,6 +45,8 @@ Every operation returns `{ success: true, ... }` or `{ success: false, error, er
 | `agent_paused` | The Agent is paused. |
 | `action_disabled` | Every action offered to `decide` is disabled in the Agent's settings. |
 | `context_key_not_found` | `contextKeys` names an entry the Agent does not have. |
+| `documents_too_large` | Reference texts exceed `documentBudget`. The error gives the total and budget; the refusal is recorded before any model call. |
+| `managed_provider_required` | A saved agent uses an external provider. Choose a NullProtocol model in the cabinet before its next hosted operation. |
 | `model_context_too_large` | The request is larger than `maxPromptBytes`, or Ollama refused it as larger than the model's window. Nothing was left out and the model did not answer. |
 | `model_unavailable` | This process has no credentials for the Agent's provider, or the hosted model is not configured. |
 | `spend_cap_reached` | The team has insufficient model credit for this request. |
@@ -87,7 +89,7 @@ const result = await agent.summarize(content, { maxLength: 200, focus: 'key_insi
 // { success: true, summary, keyPoints }
 ```
 
-A summary longer than `maxLength` characters is not accepted.
+The SDK defaults to `maxLength: 200` and `focus: 'key_insights'`. A summary longer than `maxLength` JavaScript string characters is not accepted. The HTTP API and Try agent default to 1000 characters; set an explicit limit when you need the same task across integrations.
 
 ## validate
 
@@ -129,7 +131,7 @@ await agent.context.list();
 await agent.context.delete(key);
 ```
 
-`value` is text or JSON. `inclusion: 'always'` (the default) sends the entry with every operation and holds 8 KiB; `'selected'` sends it only with operations that name its key in `contextKeys`, and holds 64 KiB. An Agent has up to 50 entries in each scope.
+`value` is text or JSON. `inclusion: 'always'` (the default) sends the entry with every operation; `'selected'` sends it only with operations that name its key in `contextKeys`. For saved agents, each scope holds up to 50 entries: 8 KiB per `always` entry and 64 KiB per `selected` entry. These storage limits are enforced by the server; the standalone in-memory store does not enforce them. Every model request still has its `maxPromptBytes` limit.
 
 With a key, `ifVersion` guards concurrent writers: `null` creates only, a version replaces only that version, and without it the entry is overwritten. `agent.space` has the same four calls for context shared by every Agent of the Space.
 
@@ -149,10 +151,10 @@ Notes are short facts the Agent keeps in mind in every operation. An object boun
 
 ```js
 await agent.settings(); // { provider, model, instructions, paused, disabledActions, ... }
-await agent.update({ model: 'gpt-4.1', paused: true, disabledActions: ['refund'] });
+await agent.update({ paused: true, disabledActions: ['refund'] });
 ```
 
-`update` changes `provider`, `model`, `instructions`, `name`, `paused` and `disabledActions`. With a key it changes the saved Agent, and so does the cabinet; either applies from the next operation of every process. An operation already running keeps the settings it started with, and so does the `execute` of a decision already made, except that a pause or a disabled action stops it.
+`update` changes `provider`, `model`, `instructions`, `name`, `paused` and `disabledActions`. A saved agent must keep `provider: 'nullprotocol'` and use a model allowed for its team. With a key it changes the saved Agent, and so does the cabinet; either applies from the next operation of every process. An operation already running keeps the settings it started with, and so does the `execute` of a decision already made, except that a pause or a disabled action stops it.
 
 ## What is sent where
 

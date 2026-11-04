@@ -2,7 +2,7 @@
 
 # NullProtocol
 
-Give an AI agent a focused job. Extract typed data, summarize text, check an answer or choose an action. Manage its instructions and context in the [cabinet](https://app.nullprotocol.ai), and see the input, result and token usage of each operation.
+Give an AI agent a focused job. Extract typed data, summarize text, check an answer or choose an action. Manage its instructions and context in the [cabinet](https://app.nullprotocol.ai), and see the input, result and token usage of each operation. The agent keeps the configuration; each SDK or HTTP request chooses which operation to run.
 
 ```sh
 npm install nullprotocol

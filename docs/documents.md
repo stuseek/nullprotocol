@@ -1,12 +1,12 @@
-# Documents
+# Reference texts
 
-A saved Agent can work by documents: terms, a policy, a price list. You keep them as text in the cabinet, under Context: add a text, edit it, delete it. There is nothing to call in code: the next ordinary operation of the Agent is given its documents.
+Add policies, terms or product information under **Context → Reference texts** in the cabinet. Once saved, they are included in the agent's next SDK or HTTP operation. No extra SDK method or context key is needed. The API calls these reference texts `documents`.
 
 Uploading files and choosing only the passages of a long document that a task needs are coming soon. For now a document is a text, and it is given whole.
 
 ## How a document comes into use
 
-A document takes effect when it is saved, up to 1 MiB of text. Every change is a new revision.
+A document takes effect when it is saved, up to 1 MiB of text. A different text creates a new revision. Renaming a document or saving identical text keeps its revision; the concurrency `version` still changes.
 
 A document belongs to the Space, to an Agent or to one conversation of an Agent. Under one name the narrowest is the one used.
 
@@ -21,7 +21,7 @@ An operation never goes on without its documents. It fails before the model is c
 | `errorCode` | Meaning |
 | --- | --- |
 | `documents_too_large` | The documents are more than the document budget. `error` says both numbers. Shorten the documents or set a larger `documentBudget`. |
-| `model_context_too_large` | The whole request, documents included, does not fit the request budget or the model's window. |
+| `model_context_too_large` | The complete request exceeds `maxPromptBytes`, or Ollama explicitly refuses it for exceeding its token window. These character and byte budgets do not measure a model's token window; see [request limits](providers.md#request-limits). |
 
 ## What history shows
 
@@ -29,4 +29,4 @@ Every operation records the documents it ran with, by the name and revision they
 
 ## Where your documents go
 
-The text of a document is stored in NullProtocol. An operation's documents are then sent, with the rest of the operation, to the model provider you set for the Agent, from your own process.
+Reference texts are stored in NullProtocol. Saved agents use NullProtocol models. With the SDK, the effective reference texts are read into your application and included in its model request through the NullProtocol gateway. With the HTTP API or Try agent, the operation runs on the server. The gateway sends the assembled input to the configured upstream model provider; a route through LLMAPI also transits LLMAPI. Model provider credentials stay on the server.

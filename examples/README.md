@@ -4,7 +4,7 @@ Run these from the repository after `npm ci`. In your own project, install `null
 
 ## Saved agent
 
-Create an agent in the cabinet and give it a NullProtocol model, or use a saved agent configured for your own provider. Put its Space SDK key and agent ID in your environment:
+Create an agent in the cabinet and choose a NullProtocol model. Put its Space SDK key and agent ID in your environment:
 
 ```sh
 export NULLPROTOCOL_KEY='your-space-sdk-key'
@@ -12,7 +12,7 @@ export NULLPROTOCOL_AGENT_ID='order-reader'
 node examples/saved.mjs
 ```
 
-[saved.mjs](saved.mjs) loads the agent, extracts three order fields and prints its result and reported tokens. NullProtocol models require enabled team access and credit. Your own model needs its provider credentials in this process; [provider setup](../docs/providers.md).
+[saved.mjs](saved.mjs) loads the agent, extracts three order fields and prints its result and reported tokens. NullProtocol models require enabled team access and credit. The Space SDK key also authorizes the hosted model call; no upstream provider key is needed. Your own providers run as standalone agents without a Space key; see [provider setup](../docs/providers.md).
 
 ## Local agent
 
