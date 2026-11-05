@@ -2,13 +2,13 @@
 
 Add policies, terms or product information under **Context → Reference texts** in the cabinet. Once saved, they are included in the agent's next SDK or HTTP operation. No extra SDK method or context key is needed. The API calls these reference texts `documents`.
 
-Uploading files and choosing only the passages of a long document that a task needs are coming soon. For now a document is a text, and it is given whole.
+Reference texts are edited as text and always given whole. For UTF-8 TXT/Markdown uploads and finding relevant passages in longer documents, use [Knowledge](knowledge.md). These are separate features: a Knowledge document is searched only when requested and is not automatically included in full.
 
 ## How a document comes into use
 
 A document takes effect when it is saved, up to 1 MiB of text. A different text creates a new revision. Renaming a document or saving identical text keeps its revision; the concurrency `version` still changes.
 
-A document belongs to the Space, to an Agent or to one conversation of an Agent. Under one name the narrowest is the one used.
+A document belongs to the Space, to an Agent or to one application-chosen data scope (`conversation`). The scope can identify an order, project, user, job or another entity. Under one name the narrowest is the one used. [Scoped data](context.md#scoped-data) describes inheritance.
 
 ## What an operation is given
 

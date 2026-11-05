@@ -55,7 +55,7 @@ The same SDK key loads the saved agent and authorizes its NullProtocol model. No
 
 Every operation returns `success: true` or `success: false` with `errorCode` and `error`. Invalid model replies get one repair attempt by default. Schema validation checks the output's structure; your code still checks facts and business rules.
 
-`decide` chooses an action. To run application code, register a handler and pass the decision to `agent.execute(decision)`. See [actions and execution](docs/operations.md#actions).
+`decide` chooses an action and prepares its parameters. Register your application's handlers, such as `send_message` or `search_catalog`, then pass the decision to `agent.execute(decision)`. Sending prepared text does not need another model call. [Decisions and application actions](docs/actions.md) covers delivery, catalogue lookup and execution checks.
 
 ## Give it the right context
 
@@ -69,11 +69,31 @@ const result = await agent.extract('Read the order ID and shop currency.', { ord
   contextKeys: ['order']
 });
 
-// A short saved fact, included in every operation.
+// A shared fact about the agent's work, included in every operation.
 await agent.memory.add('The warehouse ships on weekdays.');
 ```
 
-Reference texts added in the cabinet are included automatically. History keeps their revisions, so you can see the text used by an earlier operation after an edit. [Context, notes and customer data](docs/context.md).
+Reference texts added under Context in the cabinet are included automatically and in full. Knowledge documents are searched only when a call requests `knowledge: true` or `{ query }`; only selected passages are included. History keeps the source revisions and selected evidence. [Context, memory and scopes](docs/context.md) explains what each call receives.
+
+## Separate data for any entity
+
+Load with `conversation: 'order:42'`, `'project:alpha'`, `'job:import-8'` or another ID chosen by your application. Despite its name, `conversation` is a general saved-data scope. It selects that entity's context and notes alongside agent-wide data.
+
+IDs are flat. Use `user:42` for facts reused across that user's sessions, or a different ID for each session. Notes saved without an ID are agent-wide. No chat history or automatic memory extraction is implied. [Scope examples and inheritance](docs/context.md#scoped-data).
+
+## Search Knowledge
+
+Add documents in the cabinet and explicitly connect the Space documents an agent needs. Then opt in on a call:
+
+```js
+const result = await agent.extract(
+  'Within how many days can unused goods be returned?',
+  { days: 'number' },
+  { knowledge: true }
+);
+```
+
+All four operations accept the same option. Use `{ knowledge: { query: 'return window and exceptions' } }` for an explicit search. `result.knowledge` describes the selected evidence; `result.knowledgeUsage` counts search embeddings separately from generation `usage`. [Knowledge guide](docs/knowledge.md).
 
 ## Use a local model
 
@@ -96,8 +116,9 @@ Use the same four operations. Without a Space key, settings, context and notes l
 
 ## Examples and reference
 
-- [Runnable examples](examples/README.md) — saved and local agents, then invoice, refund and SLA workflows.
+- [Runnable examples](examples/README.md) — saved/local agents, message and catalogue actions, invoice, refund and SLA workflows.
 - [API reference](docs/operations.md) — options, results, errors and action handlers.
+- [Actions](docs/actions.md) · [Context and scopes](docs/context.md) · [Knowledge](docs/knowledge.md).
 - [Models and credentials](docs/providers.md) — NullProtocol, Ollama, OpenAI, Anthropic and compatible servers.
 - [Reference texts](docs/documents.md) — versions, budgets and History.
 - [HTTP API](docs/http.md) — call a saved agent without the JavaScript SDK.
@@ -110,8 +131,8 @@ npm ci
 npm run validate
 ```
 
+This working branch includes an unreleased breaking removal of the default `chat` action; published npm 2.3.0 is unchanged. The examples use explicit handlers and work with either behavior. See [migration](docs/actions.md#upgrading-from-sdk-23) and [Unreleased changes](CHANGELOG.md#unreleased).
+
 ## License
 
 MIT
-
-Knowledge: [search connected documents](docs/knowledge.md) with the same four operations (SDK 2.3 and an enabled server).

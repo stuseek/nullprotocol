@@ -20,7 +20,7 @@ const same = await NullProtocol.load({ key, agentId, ...call });
 | `key` | An SDK key of a Space. `create` saves a `nullprotocol` Agent there; external providers use standalone agents without a Space key. `load` needs it and fails with `key_required` otherwise. |
 | `endpoint` | Another NullProtocol API address. Default `https://api.nullprotocol.ai`, or `NULLPROTOCOL_API_URL`. |
 | `agentId` | The Agent's ID. `create` issues one when it is left out and fails with `agent_exists` when it is taken. |
-| `conversation` | Binds the object to one conversation: its `context` and `memory` are then that conversation's own, on top of the Agent's. |
+| `conversation` | An application-chosen scope ID for any entity or unit of work, such as `order:42`, `project:alpha` or `user:42`. Calls receive that scope's data plus agent/Space data. IDs are flat, not nested; they do not create chats. See [scoped data](context.md#scoped-data). |
 | `label` | A name for this process, such as `backend` or `worker`. It only filters history. |
 | `timeout`, `retry`, `circuitBreaker` | 30000 ms, `{ maxRetries: 2 }`, `{ threshold: 5, resetAfterMs: 60000 }` by default. |
 | `temperature`, `maxTokens` | Sent to the model. `maxTokens` is 1000 by default. |
@@ -109,18 +109,32 @@ const result = await agent.decide(context, actions, { guard, contextKeys });
 
 `actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. A registered action is shown to the model with its description and its parameters schema, so neither needs repeating here. `guard(decision)` is your own check of the choice and must return `true`.
 
+A decision can be used just as a payload. Registering and executing a handler is optional. Parameter schemas are shown during `decide`, but enforced before a registered handler runs in `execute`. If your application consumes `parameters` directly, validate them in your code. [Actions guide](actions.md) shows message delivery, catalogue lookup and execution errors.
+
 ## Actions
 
 ```js
-agent.registerAction(name, handler, { description, input, guard });
+agent.registerAction('send_message', ({ text }) => sendToCustomer(text), {
+  description: 'Send a reply to the customer',
+  input: {
+    type: 'object',
+    properties: { text: { type: 'string' } },
+    required: ['text'],
+    additionalProperties: false
+  }
+});
+const decision = await agent.decide('Добрый день', ['send_message']);
+if (!decision.success) throw new Error(decision.error);
 const run = await agent.execute(decision);
 // { success: true, outcome: 'completed', action, result }
 // { success: false, outcome: 'refused' | 'failed', action, error, errorCode }
 ```
 
+`sendToCustomer` is your application's delivery function. The model prepares `parameters.text` during `decide`; the handler sends that text without a second model call. Actions are registered by the application. An unregistered action is refused with `action_not_registered` before a handler or model can run. See [the built-in chat migration](actions.md#upgrading-from-sdk-23) for the unreleased removal of that handler.
+
 `execute` takes the successful result of this object's `decide` and runs what was decided, whatever happened to the returned object since. Before the handler: the Agent must not be paused, the action must be registered and not disabled, `parameters` must match `input` (a JSON Schema), and `guard(parameters, decision)` must return `true`. A guard that throws refuses. One decision runs once: a second `execute` is refused with `already_executed`.
 
-The handler receives `(parameters, { decision, input, reply })`. `reply(message)` asks the decision's own model for a plain-text answer; the built-in `chat` action answers `message`, or what the decision was about when the model gave none.
+The handler receives `(parameters, { decision, input, reply })`. A handler can explicitly call `reply(message)` for another model-generated answer using the decision's model, instructions and reference snapshot. Its model requests and tokens are counted with the action. Returning or delivering prepared parameters does not call the model.
 
 ## Context
 
@@ -135,7 +149,7 @@ await agent.context.delete(key);
 
 With a key, `ifVersion` guards concurrent writers: `null` creates only, a version replaces only that version, and without it the entry is overwritten. `agent.space` has the same four calls for context shared by every Agent of the Space.
 
-An operation receives the entries of the Space, the Agent and its conversation. Under one key the narrowest scope wins, and then that entry's `inclusion` decides whether the operation gets it.
+An operation receives the entries of the Space, the Agent and the selected data scope (`conversation`). Under one key the narrowest scope wins, and then that entry's `inclusion` decides whether the operation gets it. Scope IDs can identify any entity or unit of work; they do not inherit from one another.
 
 ## Memory
 
@@ -145,7 +159,7 @@ await agent.memory.list();
 await agent.memory.delete(id);
 ```
 
-Notes are short facts the Agent keeps in mind in every operation. An object bound to a conversation adds notes to that conversation and sees the Agent's and its own. With a key each scope, the Agent's own and each conversation's, holds up to 200 notes of 4 KiB. Nothing is added to memory on its own: an operation does not remember the one before it.
+Notes are short facts included in every operation in their scope. An object loaded with `conversation` writes notes for that ID and reads its own plus agent-wide notes. An object without it writes agent-wide notes used by every scope. With a key, each scope holds up to 200 notes of 4 KiB. Nothing is added automatically, and History retention does not expire saved notes. [Scoped data and memory](context.md#scoped-data) explains isolation.
 
 ## Settings
 
@@ -158,7 +172,7 @@ await agent.update({ paused: true, disabledActions: ['refund'] });
 
 ## What is sent where
 
-To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of HTTP attempts made to it, retries included, and the size of their bodies, token counts, and each action's parameters, outcome and result. Keys for your own model providers are never sent to NullProtocol. With `provider: 'nullprotocol'`, the Space SDK key authorizes the model request through NullProtocol; the upstream model key stays on the server.
+To the model's provider: the instructions, included context and notes, reference texts, selected Knowledge passages when requested, and operation input. Knowledge preparation and search queries separately go to Mistral's embedding API. Without a Space key, nothing is sent to NullProtocol. With one, NullProtocol stores settings and saved data until deleted, and operation History for 30 days: input/result, the instructions and context used, source revisions, model, request counts and bytes, usage and recorded action outcomes. Keys for your own model providers are never sent to NullProtocol. With `provider: 'nullprotocol'`, the Space SDK key authorizes the model request through NullProtocol; the upstream model key stays on the server.
 
 ## Knowledge
 
