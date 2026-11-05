@@ -103,6 +103,10 @@ export interface Usage {
 
 /** What every result carries, whether the operation succeeded or not. */
 interface Ran {
+  /** The selected Knowledge evidence and actual search query, when requested. */
+  knowledge?: KnowledgeEvidence;
+  /** Search embedding usage, separately from generation, including failed searches. */
+  knowledgeUsage?: { inputTokens?: number; uncountedRequests?: number };
   attempts?: number;
   repaired?: boolean;
   /**
@@ -148,8 +152,22 @@ export type Execution =
     };
 
 export interface OperationOptions {
+  /** Search only this agent's own and explicitly connected Space sources. Omitted means no search. */
+  knowledge?: boolean | { query: string };
   /** Context entries with inclusion `selected` to send with this operation. */
   contextKeys?: string[];
+}
+
+export interface KnowledgeEvidence {
+  id: string;
+  query: string;
+  profile: string;
+  sources: {
+    sourceId: string;
+    name: string;
+    revision: number;
+    passages: { start: number; end: number; heading: string; text: string }[];
+  }[];
 }
 
 export type ActionChoice = string | { action: string; description?: string };

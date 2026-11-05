@@ -159,3 +159,7 @@ await agent.update({ paused: true, disabledActions: ['refund'] });
 ## What is sent where
 
 To the model's provider: the instructions, the context and memory of the operation, and its input. Without a key, nothing is sent to NullProtocol. With a key, NullProtocol stores the Agent's settings, context and memory, and for 30 days every operation: its input and result, the instructions and context text it ran with, the model, the number of HTTP attempts made to it, retries included, and the size of their bodies, token counts, and each action's parameters, outcome and result. Keys for your own model providers are never sent to NullProtocol. With `provider: 'nullprotocol'`, the Space SDK key authorizes the model request through NullProtocol; the upstream model key stays on the server.
+
+## Knowledge
+
+All four operations accept optional `knowledge: true | false | { query: string }`. Omitted or false means no retrieval. An agent searches only its own sources and explicitly connected Space documents. [Knowledge](knowledge.md) describes preparation, source snapshots, query limits and failures. It requires SDK 2.3 and an enabled server; existing Context behavior is unchanged. Knowledge sends document sections and search queries to Mistral for embeddings, separately from the selected generation provider.

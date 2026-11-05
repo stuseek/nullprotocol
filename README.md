@@ -113,3 +113,5 @@ npm run validate
 ## License
 
 MIT
+
+Knowledge: [search connected documents](docs/knowledge.md) with the same four operations (SDK 2.3 and an enabled server).

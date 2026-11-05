@@ -89,11 +89,12 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     update: async changes => (await request('PATCH', `${agent}/settings`, changes)).agent,
     // Settings, the context an operation is sent, its documents and the notes, in one read.
     // `budget` is how many characters of documents the operation can take.
-    turn: async (contextKeys, budget) => {
+    turn: async (contextKeys, budget, knowledgeQuery) => {
       const { agent: settings, ...rest } = await request('POST', `${agent}/turn`, {
         keys: contextKeys,
         conversation: conversation || undefined,
-        budget
+        budget,
+        ...(knowledgeQuery !== undefined && { knowledgeQuery })
       });
       return { settings, ...rest };
     },

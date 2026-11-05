@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.0
+
+- Optional Knowledge retrieval across extract, summarize, validate and decide. Existing calls keep their behavior.
+- Explicit search queries for long inputs; selected source revisions and exact passages returned with results and linked to History.
+- Server-side Space libraries and agent connections are described in docs/knowledge.md.
+
 ## 2.2.2 — 2026-11-03
 
 - Shorter getting-started guide, separate context/provider guides and runnable saved/local examples.
