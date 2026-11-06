@@ -143,7 +143,7 @@ Choose a hosted model marked Photos, then pass URLs with the operation:
 
 ```js
 const result = await agent.extract('Identify the landmark.', { landmark: 'string' }, {
-  images: ['https://docs.mistral.ai/img/eiffel-tower-paris.jpg']
+  images: ['https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&q=80']
 });
 ```
 
