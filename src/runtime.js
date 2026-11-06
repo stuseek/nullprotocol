@@ -101,6 +101,7 @@ class Agent {
     this.conversation = conversation;
     this.instanceId = randomUUID();
     this.context = store.context;
+    this.knowledge = store.knowledge;
     // Context shared by every Agent of the Space.
     this.space = store.space;
     this.memory = store.memory;

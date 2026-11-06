@@ -1,6 +1,7 @@
 // A saved Agent over HTTP: the same store an Agent in the process has, kept in its Space.
 
 const { URLSearchParams } = require('url');
+const { knowledgeLibrary, agentKnowledge } = require('./knowledge');
 
 class AgentError extends Error {
   constructor(code, message, details) {
@@ -17,14 +18,16 @@ const MESSAGES = {
   agent_exists: 'An Agent with this agentId already exists. Use NullProtocol.load to work with it.',
   agent_id_deleted: 'An Agent with this agentId was deleted. Choose another agentId.',
   agent_limit_reached: 'The Space has reached its Agent limit.',
-  version_conflict: 'The context entry changed since it was read. Read it again and retry.',
+  version_conflict: 'The saved data changed since it was read. Read the latest version and retry.',
   revision_conflict: 'The Agent settings changed since they were read. Read them again and retry.',
   context_entry_too_large:
     'The context entry is too large. An entry sent with every operation holds 8 KiB; one with inclusion "selected" holds 64 KiB.',
   context_limit_reached: 'The Agent has the maximum number of context entries.',
   memory_limit_reached: 'The Agent has the maximum number of memory notes.',
   context_key_not_found: 'No context entry with this key.',
-  note_not_found: 'No memory note with this ID.'
+  note_not_found: 'No memory note with this ID.',
+  knowledge_not_found: 'No Knowledge document with this ID in the requested scope.',
+  knowledge_document_too_large: 'A Knowledge document holds up to 1 MiB of UTF-8 text.'
 };
 
 function savedStore({ key, endpoint, agentId, conversation }) {
@@ -102,7 +105,8 @@ function savedStore({ key, endpoint, agentId, conversation }) {
     recordAction: (operationId, action) =>
       request('POST', `${agent}/operations/${operationId}/actions`, action),
     context: contextAt(`${agent}/context`, scope()),
-    space: contextAt('/context', ''),
+    space: { ...contextAt('/context', ''), knowledge: knowledgeLibrary(request, AgentError) },
+    knowledge: agentKnowledge(request, agentId, AgentError),
     memory: {
       list: async () => (await request('GET', `${agent}/memory${scope()}`)).notes,
       add: async text =>

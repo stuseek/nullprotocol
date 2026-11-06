@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.0 — 2026-11-06
+
+- Manage Knowledge sources from JavaScript/TypeScript: agent and Space document CRUD, preparation state/retry, explicit connections and shared embedding usage.
+- Update/delete require the source version; connection and ownership remain distinct. No server schema change or automatic retrieval is introduced.
+
 ## 3.0.0 — 2026-11-06
 
 ### Breaking

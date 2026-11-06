@@ -9,6 +9,7 @@ const { randomUUID } = require('crypto');
 const { createRuntime } = require('./runtime');
 const { validateModel } = require('./model');
 const { AgentError, MESSAGES, savedStore } = require('./platform');
+const { knowledgeLibrary, agentKnowledge } = require('./knowledge');
 
 const missing = (code, found) => {
   if (!found) throw new AgentError(code, MESSAGES[code]);
@@ -39,12 +40,19 @@ function localContext(entries = new Map()) {
 
 // Settings, context and memory of an Agent that lives in the process.
 function localStore(settings) {
-  const space = localContext();
+  const unavailable = async () => {
+    throw new AgentError(
+      'knowledge_unavailable',
+      'Knowledge requires a saved Agent and its Space SDK key.'
+    );
+  };
+  const space = { ...localContext(), knowledge: knowledgeLibrary(unavailable, AgentError) };
   const context = localContext();
   let notes = [];
   return {
     space,
     context,
+    knowledge: agentKnowledge(unavailable, '', AgentError),
     settings: async () => ({ ...settings }),
     update: async changes => Object.assign(settings, changes),
     turn: async contextKeys => {

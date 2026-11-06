@@ -83,7 +83,7 @@ IDs are flat. Use `user:42` for facts reused across that user's sessions, or a d
 
 ## Search Knowledge
 
-Add documents in the cabinet and explicitly connect the Space documents an agent needs. Then opt in on a call:
+Add documents in the cabinet or through `agent.knowledge.add({ name, text })`. Manage shared sources with `agent.space.knowledge` and connect them explicitly. Once preparation is ready, opt in on a call:
 
 ```js
 const result = await agent.extract(
