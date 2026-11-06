@@ -130,7 +130,7 @@ const run = await agent.execute(decision);
 // { success: false, outcome: 'refused' | 'failed', action, error, errorCode }
 ```
 
-`sendToCustomer` is your application's delivery function. The model prepares `parameters.text` during `decide`; the handler sends that text without a second model call. Actions are registered by the application. An unregistered action is refused with `action_not_registered` before a handler or model can run. See [the built-in chat migration](actions.md#upgrading-from-sdk-23) for the unreleased removal of that handler.
+`sendToCustomer` is your application's delivery function. The model prepares `parameters.text` during `decide`; the handler sends that text without a second model call. Actions are registered by the application. An unregistered action is refused with `action_not_registered` before a handler or model can run. See [the built-in chat migration](actions.md#upgrading-from-sdk-23) when upgrading an application that relied on that handler.
 
 `execute` takes the successful result of this object's `decide` and runs what was decided, whatever happened to the returned object since. Before the handler: the Agent must not be paused, the action must be registered and not disabled, `parameters` must match `input` (a JSON Schema), and `guard(parameters, decision)` must return `true`. A guard that throws refuses. One decision runs once: a second `execute` is refused with `already_executed`.
 

@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 — 2026-11-06
 
 ### Breaking
 
-- Removed the implicit `chat` action handler. Applications register every executable action themselves, including message delivery. `decide` still accepts any explicitly offered action name; executing an unregistered name returns `action_not_registered`. Register an explicit `chat` handler to preserve an application's old behavior. This change requires a major SDK release; published 2.3.0 is unchanged.
+- Removed the implicit `chat` action handler. Applications register every executable action themselves, including message delivery. `decide` still accepts any explicitly offered action name; executing an unregistered name returns `action_not_registered`. Register an explicit `chat` handler to preserve an application's old behavior. This is a major-version change. Existing 2.x installations keep their behavior until upgraded.
 
 ### Documentation
 

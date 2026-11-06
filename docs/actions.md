@@ -89,7 +89,7 @@ The [HTTP run endpoint](http.md) returns the choice and parameters for `decide`.
 
 ## Upgrading from SDK 2.3
 
-Published SDK 2.3.0 still has an implicit `chat` action. Its removal is an unreleased breaking change; this branch registers no default handlers. Existing applications can preserve the old behavior explicitly:
+SDK 2.3 has an implicit `chat` action. SDK 3 registers no default handlers. Existing applications can preserve the old behavior explicitly:
 
 ```js
 agent.registerAction('chat', ({ message }, { input, reply }) =>

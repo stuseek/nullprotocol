@@ -131,7 +131,7 @@ npm ci
 npm run validate
 ```
 
-This working branch includes an unreleased breaking removal of the default `chat` action; published npm 2.3.0 is unchanged. The examples use explicit handlers and work with either behavior. See [migration](docs/actions.md#upgrading-from-sdk-23) and [Unreleased changes](CHANGELOG.md#unreleased).
+Version 3 removes the default `chat` handler: applications register executable actions explicitly. The examples also work with SDK 2.3 when those handlers are registered. See the [migration guide](docs/actions.md#upgrading-from-sdk-23) and [3.0 changes](CHANGELOG.md#300--2026-11-06).
 
 ## License
 
