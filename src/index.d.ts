@@ -31,8 +31,10 @@ export interface CallOptions {
   /** A name for this process, such as backend or worker. It only filters history. */
   label?: string;
   /**
-   * Binds the object to one conversation, such as a customer or a chat. Its
-   * context and memory are then that conversation's own, on top of the Agent's.
+   * Selects saved data for any entity or unit of work: an order, project, job,
+   * user or session. IDs are flat, not nested. Agent-wide notes are included
+   * in every scope; Knowledge connections stay agent-wide. No dialogue is
+   * saved automatically. Hosted IDs: 1–128 characters, no control characters.
    */
   conversation?: string;
 }
@@ -112,7 +114,7 @@ interface Ran {
   /**
    * The tokens the provider reported, cached input included, on a failed
    * operation too. `uncountedRequests` is how many requests it did not count,
-   * such as one that failed or timed out; absent when it counted none.
+   * such as one that failed or timed out. The whole `usage` field is absent when no request had reported usage.
    */
   usage?: Usage;
   /** Set when the operation ran but could not be written to history. */
@@ -210,7 +212,7 @@ export interface Agent {
     options?: OperationOptions & { guard?: (decision: Chosen) => boolean | Promise<boolean> }
   ): Promise<Decision>;
 
-  /** An action a decision may choose. `chat` is built in. */
+  /** Registers an application action, its parameter schema and optional execution guard. */
   registerAction(
     name: string,
     handler: (parameters: any, context: ActionContext) => unknown,
@@ -230,10 +232,11 @@ export interface Agent {
     >
   ): Promise<Settings>;
 
-  /** The Agent's context, or its conversation's when the object is bound to one. */
+  /** The Agent's context, or the selected data scope's context when `conversation` is set. */
   context: ContextStore;
   /** Context shared by every Agent of the Space. An Agent's entry replaces one under the same key. */
   space: ContextStore;
+  /** Explicit saved facts: agent-wide without `conversation`, otherwise scoped to that ID. */
   memory: {
     list(): Promise<Note[]>;
     add(text: string): Promise<Note>;

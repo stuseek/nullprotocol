@@ -260,9 +260,13 @@ test('execute runs the handler of a decision once, after the schema and the guar
       return orderId !== 13;
     }
   });
+  agent.registerAction('send_message', ({ text }) => text, {
+    description: 'Send a message to the customer',
+    input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+  });
   const decide = parameters => {
     replies.push({ action: 'refund', reasoning: 'Asked.', parameters });
-    return agent.decide('Refund please', ['refund', 'chat']);
+    return agent.decide('Refund please', ['refund', 'send_message']);
   };
 
   expect(await agent.execute(await decide({ orderId: 13 }))).toMatchObject({
@@ -287,7 +291,7 @@ test('execute runs the handler of a decision once, after the schema and the guar
   // What runs is the decision as it was made, on the settings it was made with.
   const decision = await decide({ orderId: 42 });
   decision.parameters.orderId = 13;
-  decision.action = 'chat';
+  decision.action = 'send_message';
   await agent.update({ model: 'another' });
   const runs = await Promise.all([agent.execute(decision), agent.execute(decision)]);
   expect(runs.map(run => run.errorCode ?? run.outcome)).toEqual(['completed', 'already_executed']);
@@ -313,9 +317,11 @@ test('execute runs the handler of a decision once, after the schema and the guar
     outcome: 'refused',
     errorCode: 'action_disabled'
   });
-  replies.push({ action: 'chat', reasoning: 'Only chat is left.' });
-  await agent.decide('Refund please', ['refund', 'chat']);
-  expect(requests.at(-1).messages[1].content).toContain('Available actions: [{"action":"chat"');
+  replies.push({ action: 'send_message', parameters: { text: 'Please contact support.' } });
+  await agent.decide('Refund please', ['refund', 'send_message']);
+  expect(requests.at(-1).messages[1].content).toContain(
+    'Available actions: [{"action":"send_message"'
+  );
   expect(requests.at(-1).messages[1].content).not.toContain('"action":"refund"');
   expect(await agent.decide('Refund please', ['refund'])).toMatchObject({
     errorCode: 'action_disabled'
@@ -346,28 +352,69 @@ test('a decision is shown the description and schema an action was registered wi
     outcome: 'completed',
     result: { creditEuro: 12, receiptId: 'R-7' }
   });
-
-  // Chat without a message answers what the decision was about, also when that is an object.
-  replies.push({ action: 'chat', parameters: {} }, 'Hello.');
-  await agent.execute(await agent.decide({ question: 'Hi?' }, ['chat']));
-  expect(requests.at(-1).messages[1].content).toBe('{"question":"Hi?"}');
 });
 
-test('chat is an action a decision chooses, answered by the same model', async () => {
+test('chat has no built-in handler and execution does not generate another answer', async () => {
+  const agent = await create();
+  replies.push({ action: 'chat', parameters: { message: 'Hello.' } });
+  const decision = await agent.decide('Hello', ['chat']);
+  expect(decision.success).toBe(true);
+  expect(await agent.execute(decision)).toMatchObject({
+    success: false,
+    outcome: 'refused',
+    errorCode: 'action_not_registered'
+  });
+  expect(requests).toHaveLength(1);
+  expect(agent.chat).toBeUndefined();
+});
+
+test.each(['send_message', 'chat'])(
+  '%s is an application action that sends the prepared text without another model call',
+  async name => {
+    const agent = await create();
+    const send = jest.fn(async ({ text }) => ({ sent: text }));
+    agent.registerAction(name, send, {
+      description: 'Send the supplied reply to the customer',
+      input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+    });
+    replies.push({ action: name, parameters: { text: 'Добрый день!' } });
+    const decision = await agent.decide('Добрый день', [name]);
+    expect(await agent.execute(decision)).toMatchObject({
+      success: true,
+      outcome: 'completed',
+      action: name,
+      result: { sent: 'Добрый день!' }
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toEqual({ text: 'Добрый день!' });
+    expect(requests).toHaveLength(1);
+  }
+);
+
+test('a registered handler may explicitly request a reply using the decision snapshot', async () => {
   const agent = await create({ instructions: 'Be kind.' });
+  agent.registerAction('answer', ({ message }, { input, reply }) =>
+    reply(message ?? JSON.stringify(input))
+  );
   replies.push({
-    action: 'chat',
+    action: 'answer',
     reasoning: 'A question.',
     parameters: { message: 'What is your name?' }
   });
-  const decision = await agent.decide('What is your name?', ['chat', 'escalate']);
+  const decision = await agent.decide('What is your name?', ['answer', 'escalate']);
+  await agent.update({ instructions: 'Different instructions.', model: 'another' });
   replies.push('I am the Mugs & Co assistant.');
   expect(await agent.execute(decision)).toMatchObject({
     outcome: 'completed',
     result: 'I am the Mugs & Co assistant.'
   });
   expect(systemOf(1)).toContain('Be kind.');
-  expect(agent.chat).toBeUndefined();
+  expect(systemOf(1)).not.toContain('Different instructions.');
+  expect(requests[1].model).toBe('test');
+
+  replies.push({ action: 'answer', parameters: {} }, 'Hello.');
+  await agent.execute(await agent.decide({ question: 'Hi?' }, ['answer']));
+  expect(requests.at(-1).messages[1].content).toBe('{"question":"Hi?"}');
 });
 
 test('a saved Agent records what really went to the model', async () => {

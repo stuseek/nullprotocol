@@ -12,8 +12,6 @@
 
 A request that does not fit the model's window must fail, not be cut down. `ollama` asks Ollama to refuse it, and the operation fails with `model_context_too_large` and both numbers. Ollama's OpenAI-compatible address (`/v1`) cuts the same request down silently and answers from what is left, so use `ollama` for Ollama. Whether another OpenAI-compatible server refuses or cuts is up to that server; the SDK cannot tell.
 
-
-
 ## Run with your own provider
 
 ```js

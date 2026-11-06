@@ -26,3 +26,14 @@ node examples/local.mjs
 ## Workflows
 
 [Invoice, refund and SLA examples](flows/README.md) combine extraction with calculations and rules in application code.
+
+## Message and catalogue actions
+
+```sh
+node examples/actions.mjs 'Hello!'
+node examples/actions.mjs 'Find a blue mug under 20 EUR.'
+```
+
+[actions.mjs](actions.mjs) defaults to local Ollama, with the same model/URL environment variables as above. With both `NULLPROTOCOL_KEY` and `NULLPROTOCOL_AGENT_ID`, it loads a saved agent instead; optional `NULLPROTOCOL_SCOPE_ID` selects any saved data scope using the SDK's `conversation` field.
+
+The application registers `send_message` and `search_catalog`. A greeting returns the text prepared during `decide`; a product request searches the small catalogue in the file. `execute` does not make another model call. The example writes results to stdout, not to a real messaging service. [Actions guide](../docs/actions.md).

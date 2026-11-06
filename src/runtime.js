@@ -110,18 +110,8 @@ class Agent {
     this.call = call;
     this.models = new Map();
     this.decisions = new WeakMap();
-    // Chat is one more action a decision may choose, answered by the same model.
-    this.actions = new Map([
-      [
-        'chat',
-        {
-          description: 'Answer in plain text',
-          input: { type: 'object', properties: { message: { type: 'string' } } },
-          handler: ({ message }, { reply, input }) =>
-            reply(message ?? (typeof input === 'string' ? input : JSON.stringify(input)))
-        }
-      ]
-    ]);
+    // Applications register the actions their decisions are allowed to execute.
+    this.actions = new Map();
   }
 
   /** The Agent's settings as the next operation will read them. */

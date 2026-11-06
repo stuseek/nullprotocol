@@ -83,7 +83,25 @@ Returns `result.recommendation` (`pass`, `fail` or `conditional`), `score` and `
 
 Returns `result.action`, `result.parameters` and `result.reasoning`. This endpoint chooses the action; your application executes it. An action disabled in the agent's settings is not offered.
 
-Any operation may include `contextKeys: ["key"]` for selected named values, or `conversation: "customer:42"` for that customer's separate context and notes. Both are optional. Shared and agent data are included according to their saved settings.
+Any operation may include `contextKeys: ["key"]` for selected named values, or `conversation: "order:42"` to choose that entity's saved data scope. The ID can identify any entity or unit of work; it is not restricted to a conversation. Both fields are optional. Shared and agent data are included according to their saved settings. See [scoped data](context.md#scoped-data).
+
+`decide` over HTTP does not load handlers from an SDK process or enforce their parameter schemas. The endpoint accepts action names/descriptions; your backend validates and executes the returned payload. An HTTP decision is not an SDK decision object and cannot be passed to `agent.execute()` in another process. Use the [SDK action flow](actions.md) when you want its schema/guard checks and execution recording.
+
+## Search Knowledge
+
+All four operations accept `knowledge: true`, `false` or `{ "query": "short search query" }`. Omitted/false performs no search.
+
+```json
+{
+  "operation": "extract",
+  "data": "Within how many days can unused goods be returned?",
+  "schema": { "days": "number" },
+  "knowledge": true,
+  "conversation": "order:42"
+}
+```
+
+The agent searches its own and explicitly connected Space documents. `conversation` still selects saved Context/notes; it does not narrow Knowledge. Success includes `result.knowledge` with selected evidence and separate `result.knowledgeUsage` for embedding tokens. A search failure returns `result.success: false` before generation. Query limits, preparation and evidence are in the [Knowledge guide](knowledge.md).
 
 ## Make and n8n
 
@@ -111,7 +129,7 @@ IDs are scoped to the Space, agent and SDK key. Rotating a key creates a new cal
 | `409 idempotency_mismatch` | The ID already belongs to another input; give the new task a new ID. |
 | `409 request_outcome_unknown` | Do not automatically create a new attempt. Check History for the task. |
 | `409 run_expired` | The stored response expired. Do not treat the old ID as a new task. |
-| `409 local_execution_required` | The agent uses your own provider; run it from your application with the SDK, or choose a NullProtocol model. |
+| `409 local_execution_required` | This legacy saved agent has an external provider. Choose a NullProtocol model for hosted use, or create a separate standalone SDK agent with your provider. |
 | Network failure or timeout | Retry with the same ID and body; the first attempt may have completed. |
 | `200` with `result.success: false` | Inspect `result.errorCode` and `result.error`. The operation failed or was refused. |
 

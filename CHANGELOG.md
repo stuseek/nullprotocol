@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.0 — 2026-11-06
+
+### Breaking
+
+- Removed the implicit `chat` action handler. Applications register every executable action themselves, including message delivery. `decide` still accepts any explicitly offered action name; executing an unregistered name returns `action_not_registered`. Register an explicit `chat` handler to preserve an application's old behavior. This is a major-version change. Existing 2.x installations keep their behavior until upgraded.
+
+### Documentation
+
+- Reconciled Reference texts, searchable Knowledge, SDK/HTTP execution and separate embedding usage with the implemented contracts. Added runnable explicit-action examples and a focused actions guide.
+
+- Added a `send_message` example with text prepared by `decide` and no second model call. The optional handler `reply` helper remains available for explicit generation.
+- Documented arbitrary data scopes (`conversation`) for orders, projects, jobs, users or sessions, including flat IDs, persistence and agent-wide notes.
+
 ## 2.3.0
 
 - Optional Knowledge retrieval across extract, summarize, validate and decide. Existing calls keep their behavior.

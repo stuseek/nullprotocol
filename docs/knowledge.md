@@ -4,6 +4,8 @@ Available with SDK 2.3 and a server that has Knowledge enabled. Existing calls d
 
 An agent's Knowledge consists of its own documents and documents explicitly connected from its Space's library. Adding a shared document does not give every agent access to it. Sources from another agent or another Space are not searched. Equal titles do not replace one another: connections refer to document IDs.
 
+Knowledge has Space and agent ownership, not per-`conversation` sources. A data scope ID does not change the agent's connected source set. Use scoped Context for entity-specific saved data.
+
 In the cabinet, use **Knowledge** in the left menu for the shared library, or the agent's **Knowledge** tab for its own documents and connections. Add text or select a UTF-8 TXT/Markdown file, up to 1 MiB. Preparation is asynchronous. A replacement keeps the preceding prepared revision in use until the complete replacement is ready. An unprepared new connected source refuses Knowledge calls until preparation succeeds; ordinary calls continue normally.
 
 ```js
@@ -40,7 +42,7 @@ An explicit `validate.reference` remains present when Knowledge is requested. Se
 
 ## Results and History
 
-When a selection succeeds, `result.knowledge` contains the actual query, embedding profile, source names and revisions, and the exact passages with `[start, end)` UTF-16 ranges into each original revision. This describes material supplied to the operation; it does not prove the model used or correctly interpreted every passage. Repair attempts and `execute`'s reply use that same selection.
+When a selection succeeds, `result.knowledge` contains the actual query, embedding profile, source names and revisions, and the exact passages with `[start, end)` UTF-16 ranges into each original revision. This describes material supplied to the operation; it does not prove the model used or correctly interpreted every passage. Repair attempts and an explicit handler `reply()` use that same selection. Returning an action's prepared parameters does not perform another search or generation.
 
 History keeps an immutable server-issued snapshot. Editing, disconnecting, deleting or reindexing a document does not rewrite the selected evidence of an existing operation. Authorized team members, including read-only Viewers, can read this content; editing sources requires an Owner or Editor. Operation retention still applies.
 
