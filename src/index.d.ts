@@ -90,6 +90,51 @@ export interface ContextStore {
   delete(key: string): Promise<unknown>;
 }
 
+export interface KnowledgeRevision {
+  id: string;
+  revision: number;
+  version: string;
+}
+
+export interface KnowledgeSource extends KnowledgeRevision {
+  name: string;
+  scope: 'space' | 'agent';
+  activeRevision: number | null;
+  characters: number;
+  hash: string;
+  state: 'preparing' | 'ready' | 'failed';
+  error: string | null;
+  retryScheduled: boolean;
+  updatedAt: string;
+  attached: boolean;
+}
+
+export interface KnowledgeDocuments {
+  /** Documents owned by this scope; connected Space sources are listed separately. */
+  list(): Promise<KnowledgeSource[]>;
+  get(id: string): Promise<KnowledgeSource & { text: string }>;
+  /** Returns before asynchronous preparation finishes. Inspect get(id).state. */
+  add(input: { name: string; text: string }): Promise<KnowledgeRevision>;
+  update(id: string, input: { name?: string; text?: string; ifVersion: string }): Promise<KnowledgeRevision>;
+  delete(id: string, options: { ifVersion: string }): Promise<{ deleted: boolean }>;
+  retry(id: string): Promise<{ retrying: boolean }>;
+}
+
+export interface AgentKnowledge extends KnowledgeDocuments {
+  connections(): Promise<KnowledgeSource[]>;
+  connect(spaceSourceId: string): Promise<{ attached: boolean }>;
+  disconnect(spaceSourceId: string): Promise<{ attached: boolean }>;
+}
+
+export interface KnowledgeLibrary extends KnowledgeDocuments {
+  /** Space embedding usage for the last 30 days; token sums are decimal strings or unknown. */
+  usage(): Promise<{ preparation: string | null; search: string | null; uncounted: number; requests: number }>;
+}
+
+export interface SpaceContextStore extends ContextStore {
+  knowledge: KnowledgeLibrary;
+}
+
 export interface Note {
   id: string;
   text: string;
@@ -235,7 +280,9 @@ export interface Agent {
   /** The Agent's context, or the selected data scope's context when `conversation` is set. */
   context: ContextStore;
   /** Context shared by every Agent of the Space. An Agent's entry replaces one under the same key. */
-  space: ContextStore;
+  space: SpaceContextStore;
+  /** Agent-owned documents and explicit connections to Space sources. */
+  knowledge: AgentKnowledge;
   /** Explicit saved facts: agent-wide without `conversation`, otherwise scoped to that ID. */
   memory: {
     list(): Promise<Note[]>;

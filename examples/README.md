@@ -37,3 +37,5 @@ node examples/actions.mjs 'Find a blue mug under 20 EUR.'
 [actions.mjs](actions.mjs) defaults to local Ollama, with the same model/URL environment variables as above. With both `NULLPROTOCOL_KEY` and `NULLPROTOCOL_AGENT_ID`, it loads a saved agent instead; optional `NULLPROTOCOL_SCOPE_ID` selects any saved data scope using the SDK's `conversation` field.
 
 The application registers `send_message` and `search_catalog`. A greeting returns the text prepared during `decide`; a product request searches the small catalogue in the file. `execute` does not make another model call. The example writes results to stdout, not to a real messaging service. [Actions guide](../docs/actions.md).
+
+- `node examples/knowledge.mjs` stages a temporary shared Knowledge source, checks preparation, connects it and searches it; requires a saved support agent and a Space key. It removes its own source afterward.
