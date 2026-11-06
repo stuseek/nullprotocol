@@ -9,7 +9,12 @@ const agent = await NullProtocol.load({
 const result = await agent.extract(
   'Identify the landmark in the photo.',
   { landmark: 'string' },
-  { images: [process.env.PHOTO_URL || 'https://docs.mistral.ai/img/eiffel-tower-paris.jpg'] }
+  {
+    images: [
+      process.env.PHOTO_URL ||
+        'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&q=80'
+    ]
+  }
 );
 if (!result.success) {
   console.error(result.errorCode, result.error);

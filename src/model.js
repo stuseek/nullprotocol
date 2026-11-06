@@ -92,6 +92,7 @@ async function post({ url, headers, body, platform }, signal, fetchImpl) {
           'This team has no available model credit. Contact the team owner or use your own model.',
         inference_unavailable:
           'NullProtocol-hosted models are temporarily unavailable. Try again later.',
+        image_too_large: 'A photo exceeds this model’s file size limit. Resize it and try again.',
         model_images_not_supported:
           'This model accepts text only. Choose a model with photo support.',
         model_not_allowed: 'This model is not enabled for your team. Choose an available model.',
