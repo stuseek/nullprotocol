@@ -4,6 +4,7 @@ const { createModel } = require('./model');
 const operations = require('./operations');
 const { validateExtraction } = require('./schema');
 const { AgentError } = require('./platform');
+const { imageUrls } = require('./images');
 
 // The arguments of each operation, as history names them. Options come after.
 const ARGUMENTS = {
@@ -276,11 +277,13 @@ class Agent {
     // What validate compares the subject with is input too, and is kept with it.
     const reference = structuredClone(options.reference);
     let requestedKnowledge;
+    let images;
     const started = Date.now();
     const id = randomUUID();
     let turn;
     let result;
     try {
+      images = imageUrls(options.images);
       try {
         requestedKnowledge = structuredClone(options.knowledge);
       } catch {
@@ -290,6 +293,7 @@ class Agent {
         );
       }
       turn = await this.turn(options.contextKeys, knowledgeQuery(name, input, requestedKnowledge));
+      turn.images = images;
       if (turn.refusal) throw turn.refusal;
       // A decision is offered only the actions the Agent's settings allow.
       if (name === 'decide') input[1] = this.offered(input[1], turn.settings);
@@ -335,7 +339,8 @@ class Agent {
           ...Object.fromEntries(names.map((argument, index) => [argument, input[index]])),
           ...summaryOptions,
           reference,
-          ...(requestedKnowledge !== undefined && { knowledge: requestedKnowledge })
+          ...(requestedKnowledge !== undefined && { knowledge: requestedKnowledge }),
+          ...(images.length ? { images } : {})
         },
         result,
         success: result.success,

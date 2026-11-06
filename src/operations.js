@@ -4,6 +4,7 @@
 
 const { parseJSON } = require('./json');
 const { validateExtraction, validatorFor } = require('./schema');
+const { imageContent } = require('./images');
 
 const JSON_ONLY = 'Return only valid JSON with double-quoted property names and no Markdown.';
 
@@ -21,7 +22,7 @@ function object(reply) {
 // parses the reply; `check` returns the problem in words the model can act
 // on, or nothing.
 async function answer(turn, task, request, check, read = object) {
-  const turns = [{ role: 'user', content: request }];
+  const turns = [{ role: 'user', content: imageContent(request, turn.images) }];
   for (let attempts = 1; ; attempts++) {
     const reply = await turn.ask(system(turn, task), turns);
     let value = null;
@@ -162,7 +163,7 @@ async function decide(turn, context, actions, { guard } = {}) {
 // A plain-text answer: what the built-in chat action runs.
 function reply(turn, message) {
   return turn.ask(system(turn, 'Answer the user in plain text.'), [
-    { role: 'user', content: message }
+    { role: 'user', content: imageContent(message, turn.images) }
   ]);
 }
 

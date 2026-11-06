@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.0
+
+- Add optional `images` (up to four reachable HTTPS photo URLs) to extract, summarize, validate and decide. Existing text calls are unchanged.
+- Send native image parts to compatible/hosted and Anthropic models, retain photos through repair attempts and keep their URLs in History.
+- Refuse invalid image options and unsupported native Ollama URL input explicitly. Knowledge queries remain text-only.
+
 ## 3.1.0 — 2026-11-06
 
 - Manage Knowledge sources from JavaScript/TypeScript: agent and Space document CRUD, preparation state/retry, explicit connections and shared embedding usage.

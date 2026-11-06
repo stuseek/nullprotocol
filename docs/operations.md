@@ -177,3 +177,9 @@ To the model's provider: the instructions, included context and notes, reference
 ## Knowledge
 
 All four operations accept optional `knowledge: true | false | { query: string }`. Omitted or false means no retrieval. An agent searches only its own sources and explicitly connected Space documents. [Knowledge](knowledge.md) describes preparation, source snapshots, query limits and failures. It requires SDK 2.3 and an enabled server; existing Context behavior is unchanged. Knowledge sends document sections and search queries to Mistral for embeddings, separately from the selected generation provider.
+
+## Photo input
+
+All four operations accept `images: ['https://…']` in their options. Supply up to four reachable HTTPS URLs, each at most 2048 characters, without embedded credentials. Text arguments can be empty for a photo-only task. The selected model must support Vision; native Ollama URL input is not supported. Text requests are unchanged when images is absent or empty.
+
+Image parts stay attached through repair attempts. Knowledge uses the task text or an explicit query, never photo URLs. History keeps the supplied URLs; it does not copy remote image bytes. The hosted gateway holds a conservative reserve based on the model context ceiling, then charges reported generation usage and releases the unused reserve. `invalid_images`, `model_images_not_supported` and `provider_images_not_supported` identify unsupported input before provider generation. [Example](../examples/photos.mjs).

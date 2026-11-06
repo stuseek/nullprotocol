@@ -199,6 +199,8 @@ export type Execution =
     };
 
 export interface OperationOptions {
+  /** Up to four reachable HTTPS photo URLs. Requires a Vision-capable model. */
+  images?: string[];
   /** Search only this agent's own and explicitly connected Space sources. Omitted means no search. */
   knowledge?: boolean | { query: string };
   /** Context entries with inclusion `selected` to send with this operation. */

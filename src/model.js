@@ -92,6 +92,8 @@ async function post({ url, headers, body, platform }, signal, fetchImpl) {
           'This team has no available model credit. Contact the team owner or use your own model.',
         inference_unavailable:
           'NullProtocol-hosted models are temporarily unavailable. Try again later.',
+        model_images_not_supported:
+          'This model accepts text only. Choose a model with photo support.',
         model_not_allowed: 'This model is not enabled for your team. Choose an available model.',
         plan_required:
           'Hosted models are not enabled for this team. Use your own model or contact the team owner.',
@@ -175,7 +177,17 @@ const anthropic = {
       body: {
         model: settings.model,
         system,
-        messages: turns,
+        messages: turns.map(turn => ({
+          ...turn,
+          content: Array.isArray(turn.content)
+            ? turn.content.map(part => {
+                if (part.type === 'image_url') {
+                  return { type: 'image', source: { type: 'url', url: part.image_url.url } };
+                }
+                return part;
+              })
+            : turn.content
+        })),
         max_tokens: options.maxTokens ?? 1000,
         ...(SAMPLING_MODELS.test(settings.model) ? { temperature: options.temperature ?? 0.3 } : {})
       }
@@ -210,6 +222,12 @@ const anthropic = {
 // answered, which is why Ollama has its own provider.
 const ollama = {
   request(settings, options, system, turns) {
+    if (turns.some(turn => Array.isArray(turn.content))) {
+      throw failed(
+        'provider_images_not_supported',
+        'Ollama’s native API does not accept photo URLs. Choose a Vision model through a compatible or hosted provider.'
+      );
+    }
     return {
       url: `${settings.baseURL}/api/chat`,
       headers: settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {},

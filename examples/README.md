@@ -39,3 +39,5 @@ node examples/actions.mjs 'Find a blue mug under 20 EUR.'
 The application registers `send_message` and `search_catalog`. A greeting returns the text prepared during `decide`; a product request searches the small catalogue in the file. `execute` does not make another model call. The example writes results to stdout, not to a real messaging service. [Actions guide](../docs/actions.md).
 
 - `node examples/knowledge.mjs` stages a temporary shared Knowledge source, checks preparation, connects it and searches it; requires a saved support agent and a Space key. It removes its own source afterward.
+
+`photos.mjs` reads a reachable photo URL through a saved Vision agent. Set `NULLPROTOCOL_KEY`, optionally `AGENT_ID` and `PHOTO_URL`; create the agent in the dashboard first. See [photo input](../docs/operations.md#photo-input).
