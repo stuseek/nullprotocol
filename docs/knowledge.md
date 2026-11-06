@@ -44,7 +44,7 @@ An explicit `validate.reference` remains present when Knowledge is requested. Se
 
 When a selection succeeds, `result.knowledge` contains the actual query, embedding profile, source names and revisions, and the exact passages with `[start, end)` UTF-16 ranges into each original revision. This describes material supplied to the operation; it does not prove the model used or correctly interpreted every passage. Repair attempts and an explicit handler `reply()` use that same selection. Returning an action's prepared parameters does not perform another search or generation.
 
-History keeps an immutable server-issued snapshot. Editing, disconnecting, deleting or reindexing a document does not rewrite the selected evidence of an existing operation. The content follows the existing owner/admin access rules and operation retention period.
+History keeps an immutable server-issued snapshot. Editing, disconnecting, deleting or reindexing a document does not rewrite the selected evidence of an existing operation. Authorized team members, including read-only Viewers, can read this content; editing sources requires an Owner or Editor. Operation retention still applies.
 
 | Error code | Meaning |
 | --- | --- |
