@@ -113,7 +113,9 @@ export interface KnowledgeDocuments {
   /** Documents owned by this scope; connected Space sources are listed separately. */
   list(): Promise<KnowledgeSource[]>;
   get(id: string): Promise<KnowledgeSource & { text: string }>;
-  /** Returns before asynchronous preparation finishes. Inspect get(id).state. */
+  /** Waits for this exact version using metadata reads. Timeout is milliseconds. */
+  waitUntilReady(source: KnowledgeRevision, options?: { timeout?: number; signal?: AbortSignal }): Promise<KnowledgeSource>;
+  /** Returns before asynchronous preparation finishes. Use waitUntilReady to await it. */
   add(input: { name: string; text: string }): Promise<KnowledgeRevision>;
   update(id: string, input: { name?: string; text?: string; ifVersion: string }): Promise<KnowledgeRevision>;
   delete(id: string, options: { ifVersion: string }): Promise<{ deleted: boolean }>;
@@ -219,7 +221,7 @@ export interface KnowledgeEvidence {
   }[];
 }
 
-export type ActionChoice = string | { action: string; description?: string };
+export type ActionChoice = string | { action: string; description?: string; parameters?: object };
 
 /** A successful decision. */
 export type Chosen = Extract<Decision, { success: true }>;

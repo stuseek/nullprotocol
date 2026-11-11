@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.0
+
+- Validate action parameters in decide, including repair attempts; execute still rechecks before running a handler. HTTP action choices can supply parameter schemas.
+- Add Knowledge waitUntilReady for a pinned revision, with metadata polling, timeout and cancellation.
+- Explain invalid saved Context keys before HTTP, report unserializable values clearly, and support JSON null with the updated API.
+
 ## 3.2.0
 
 - Add optional `images` (up to four reachable HTTPS photo URLs) to extract, summarize, validate and decide. Existing text calls are unchanged.

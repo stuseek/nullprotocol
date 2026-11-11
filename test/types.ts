@@ -29,6 +29,9 @@ async function useAgent(agent: Agent) {
   agent.registerAction('review', async (_parameters, context) => context.input);
   const decision = await agent.decide('Review this ticket.', ['review']);
   if (decision.success) await agent.execute(decision);
+  await agent.decide('Review this ticket.', [
+    { action: 'review', parameters: { ticketId: 'string' } }
+  ]);
   return NullProtocol.load({ key: 'space-key', agentId: agent.agentId });
 }
 
@@ -41,6 +44,11 @@ void NullProtocol.load({ agentId: 'support' });
 
 async function manageKnowledge(agent: Agent) {
   const revision = await agent.knowledge.add({ name: 'Policy', text: '30 days.' });
+  await agent.knowledge.waitUntilReady(revision, {
+    timeout: 30000,
+    signal: new AbortController().signal
+  });
+  await agent.space.knowledge.waitUntilReady(revision);
   const source = await agent.knowledge.get(revision.id);
   const state: 'ready' | 'preparing' | 'failed' = source.state;
   await agent.knowledge.update(source.id, { text: '14 days.', ifVersion: source.version });

@@ -182,12 +182,12 @@ class Agent {
     const offered = actions
       .map(action => (typeof action === 'string' ? { action } : action))
       .filter(({ action }) => !disabledActions.includes(action))
-      .map(({ action, description }) => {
+      .map(({ action, description, parameters }) => {
         const registered = this.actions.get(action);
         return {
           action,
           description: description ?? registered?.description,
-          parameters: registered?.input
+          parameters: structuredClone(registered?.input ?? parameters)
         };
       });
     if (!offered.length) {

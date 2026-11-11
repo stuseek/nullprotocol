@@ -150,3 +150,7 @@ const result = await agent.extract('Identify the landmark.', { landmark: 'string
 All four operations accept `images`, with up to four HTTPS URLs of at most 2048 characters each. The provider must be able to open them. Use an empty text input for a photo-only task; validate still needs criteria and decide needs its allowed actions. Existing text calls are unchanged. Inline base64, local files and native Ollama photo URLs are not supported.
 
 Photos stay in your storage. History saves their URLs, not immutable image bytes. Give photo-only Knowledge calls an explicit text query. Provider-reported generation usage includes image input; the hosted gateway temporarily reserves conservatively against the model's context ceiling, then releases the unused reserve after actual usage is settled. No model is switched automatically. [Photo guide](https://nullprotocol.ai/docs/images).
+
+Saved Context keys use 1–64 lowercase letters, digits, dots, underscores or hyphens, starting with a letter (`order_id`, for example). Invalid saved keys are rejected locally with `invalid_context_key`. JSON `null` is a stored value; remove an entry with `delete`. Unserializable values report `invalid_context_value`.
+
+Use `await agent.knowledge.waitUntilReady(source)` after adding or updating a Knowledge source. It waits for that exact version; [timeout, cancellation and errors](docs/knowledge.md#wait-for-a-specific-revision).

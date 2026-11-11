@@ -49,12 +49,11 @@ const shared = await agent.space.knowledge.add({
   name: 'Returns policy',
   text: '# Returns\nUnused goods may be returned within 30 days.'
 });
-const source = await agent.space.knowledge.get(shared.id);
-// Preparation runs in the background. Connect when source.state === 'ready'.
-if (source.state === 'ready') await agent.knowledge.connect(shared.id);
+await agent.space.knowledge.waitUntilReady(shared);
+await agent.knowledge.connect(shared.id);
 ```
 
-Both document stores provide `add`, `list`, `get`, `update`, `delete` and `retry`. `add` and `update` return `{ id, revision, version }` before preparation completes. `get` returns the current text and metadata, including `state`, `activeRevision`, `error` and `retryScheduled`. States are `preparing`, `ready` and `failed`; readiness means the current revision is prepared.
+Both document stores provide `add`, `list`, `get`, `waitUntilReady`, `update`, `delete` and `retry`. `add` and `update` return `{ id, revision, version }` before preparation completes. `get` returns the current text and metadata, including `state`, `activeRevision`, `error` and `retryScheduled`. States are `preparing`, `ready` and `failed`; readiness means the current revision is prepared.
 
 `agent.knowledge.list()` lists documents **owned by this agent**. `agent.space.knowledge.list()` lists the Space library. `agent.knowledge.connections()` lists the shared sources connected to this agent. Use the owning store for `get`, `update` and `delete`; connecting a Space document does not copy or transfer it to the agent.
 
@@ -104,3 +103,9 @@ NullProtocol sends document sections and search queries to Mistral's embedding A
 Embedding input tokens are counted separately from `result.usage`, which remains generation usage. `result.knowledgeUsage` includes reported search embedding usage or an uncounted request, including a failed search; the Space library shows preparation and search totals for the last 30 days. Unknown embedding usage remains unknown. This release does not introduce customer embedding charges or change credit billing.
 
 Preparation reuses an identical text only within the same Space and embedding profile. Limits are 20 live documents per library/agent and 64 across a Space. Preparation resumes after a process restart, retries transient failures up to five attempts, and supports an explicit retry. Exact cosine search is used over permitted sources; no corpus-wide approximate index or complete-coverage guarantee is implied.
+
+## Wait for a specific revision
+
+`await agent.knowledge.waitUntilReady(source, { timeout: 120000, signal })` accepts the revision returned by `add`, `update` or `get`. `signal` is an optional AbortSignal and timeout is milliseconds (default: 120000). It polls metadata, returns when that exact version is active and ready, and waits through server-scheduled preparation retries. It never starts a retry itself.
+
+A competing edit throws `version_conflict`, deletion throws `knowledge_not_found`, final preparation failure throws `knowledge_prepare_failed`, and expiry throws `knowledge_wait_timeout`. Aborting cancels the in-flight read and waiting; server preparation continues. The returned source is metadata, without its full text.

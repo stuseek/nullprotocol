@@ -1,4 +1,6 @@
 // Knowledge source management. Preparation and retrieval stay on the server.
+const { setTimeout: pause } = require('timers/promises');
+
 function documents(request, path, scope, AgentError) {
   const invalid = message => {
     throw new AgentError('invalid_options', message);
@@ -61,12 +63,85 @@ function documents(request, path, scope, AgentError) {
     }
     return result;
   };
-  const all = async () => (await request('GET', path)).sources;
+  const all = async options =>
+    (await (options ? request('GET', path, undefined, options) : request('GET', path))).sources;
+  const waitUntilReady = async (source, options = {}) => {
+    object(options, ['timeout', 'signal']);
+    if (
+      !source ||
+      typeof source !== 'object' ||
+      !Number.isInteger(source.revision) ||
+      source.revision < 1
+    ) {
+      invalid('Pass the Knowledge revision returned by add, update or get.');
+    }
+    const id = uuid(source.id),
+      version = uuid(source.version),
+      revision = source.revision;
+    const { timeout = 120000, signal } = options;
+    if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2147483647) {
+      invalid('Knowledge timeout must be a positive number of milliseconds, at most 2147483647.');
+    }
+    if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function')) {
+      invalid('Use an AbortSignal to cancel Knowledge preparation waiting.');
+    }
+    signal?.throwIfAborted();
+    const controller = new AbortController();
+    const cancel = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new AgentError(
+            'knowledge_wait_timeout',
+            'Knowledge preparation did not finish within the timeout.',
+            { documentId: id, version, timeout }
+          )
+        ),
+      timeout
+    );
+    try {
+      for (;;) {
+        const current = (await all({ signal: controller.signal })).find(item => item.id === id);
+        controller.signal.throwIfAborted();
+        if (!current) {
+          throw new AgentError(
+            'knowledge_not_found',
+            'This Knowledge document was deleted or is not accessible.',
+            { documentId: id }
+          );
+        }
+        if (current.version !== version) {
+          throw new AgentError(
+            'version_conflict',
+            'The Knowledge document changed while waiting. Read its current revision before continuing.',
+            { documentId: id, version: current.version }
+          );
+        }
+        if (current.state === 'ready' && current.activeRevision === revision) return current;
+        if (current.state === 'failed' && !current.retryScheduled) {
+          throw new AgentError(
+            'knowledge_prepare_failed',
+            'Knowledge preparation failed. Inspect the document and explicitly retry it.',
+            { documentId: id, reason: current.error }
+          );
+        }
+        await pause(500, undefined, { signal: controller.signal });
+      }
+    } catch (error) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    }
+  };
   return {
     all,
     api: {
       list: async () => (await all()).filter(source => source.scope === scope),
       get: async id => (await request('GET', `${path}/${uuid(id)}`)).source,
+      waitUntilReady,
       add: async input => request('POST', path, body(input)),
       update: async (id, input) => request('PUT', `${path}/${uuid(id)}`, body(input, true)),
       delete: async (id, options) => {

@@ -1,7 +1,6 @@
 // Set NULLPROTOCOL_KEY and create a saved support agent first. Uses hosted tokens.
 // Stages one temporary source, connects it only after preparation, then cleans it up.
 import { NullProtocol } from 'nullprotocol';
-import { setTimeout as pause } from 'node:timers/promises';
 
 const agent = await NullProtocol.load({
   key: process.env.NULLPROTOCOL_KEY,
@@ -13,16 +12,7 @@ const source = await agent.space.knowledge.add({
 });
 let connected = false;
 try {
-  const deadline = Date.now() + 30000;
-  for (;;) {
-    const status = await agent.space.knowledge.get(source.id);
-    if (status.version !== source.version)
-      throw new Error('The source was edited by another client.');
-    if (status.state === 'ready') break;
-    if (status.state === 'failed') throw new Error(`Preparation failed: ${status.error}`);
-    if (Date.now() >= deadline) throw new Error('Knowledge is still preparing. Try again later.');
-    await pause(250);
-  }
+  await agent.space.knowledge.waitUntilReady(source, { timeout: 30000 });
   await agent.knowledge.connect(source.id);
   connected = true;
   const result = await agent.extract(

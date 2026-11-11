@@ -252,8 +252,13 @@ test('execute runs the handler of a decision once, after the schema and the guar
   const agent = await create();
   const refund = jest.fn(async ({ orderId }) => ({ refunded: orderId }));
   const guarded = [];
+  const inputSchema = {
+    type: 'object',
+    properties: { orderId: { type: 'number' } },
+    required: ['orderId']
+  };
   agent.registerAction('refund', refund, {
-    input: { type: 'object', properties: { orderId: { type: 'number' } }, required: ['orderId'] },
+    input: inputSchema,
     guard: ({ orderId }, decision) => {
       guarded.push(decision.action);
       if (orderId === 99) throw new Error('lookup failed');
@@ -277,10 +282,13 @@ test('execute runs the handler of a decision once, after the schema and the guar
     outcome: 'refused',
     errorCode: 'guard_error'
   });
-  expect(await agent.execute(await decide({ orderId: 'x' }))).toMatchObject({
+  const changedSchema = await decide({ orderId: 1 });
+  inputSchema.properties.orderId.type = 'string';
+  expect(await agent.execute(changedSchema)).toMatchObject({
     outcome: 'refused',
     errorCode: 'invalid_parameters'
   });
+  inputSchema.properties.orderId.type = 'number';
   expect(
     await agent.execute({ success: true, action: 'refund', parameters: { orderId: 1 } })
   ).toMatchObject({
@@ -562,4 +570,52 @@ test('Ollama is asked through its own API, which refuses a request larger than t
       "The request takes 9016 tokens and the model's window is 2048. Nothing was left out and the model did not answer. Send less context, or give the model a larger window.",
     errorCode: 'model_context_too_large'
   });
+});
+
+test('decide repairs registered parameter schemas before success, without running a handler', async () => {
+  const agent = await create();
+  const handler = jest.fn();
+  const guard = jest.fn(() => true);
+  agent.registerAction('message', handler, { input: { reply: 'string' } });
+  replies.push(
+    { action: 'message', parameters: { reply: 42 } },
+    { action: 'message', parameters: { reply: 'Hello' } }
+  );
+  const result = await agent.decide('A greeting', ['message'], { guard });
+  expect(result).toMatchObject({
+    success: true,
+    repaired: true,
+    attempts: 2,
+    parameters: { reply: 'Hello' }
+  });
+  expect(requests[1].messages.at(-1).content).toMatch(/\/reply must be string/);
+  expect(guard).toHaveBeenCalledTimes(1);
+  expect(handler).not.toHaveBeenCalled();
+});
+
+test('exhausted parameter repairs fail and preserve usage; inline API contracts are checked too', async () => {
+  const agent = await create();
+  replies.push(
+    { action: 'message', parameters: {} },
+    { action: 'message', parameters: { reply: 9 } }
+  );
+  const result = await agent.decide('A greeting', [
+    { action: 'message', parameters: { reply: 'string' } }
+  ]);
+  expect(result).toMatchObject({ success: false, errorCode: 'invalid_reply', attempts: 2 });
+  expect(result.usage.inputTokens).toBeGreaterThan(0);
+  expect(result.error).toMatch(/\/reply/);
+  expect(await agent.execute(result)).toMatchObject({ errorCode: 'not_a_decision' });
+});
+
+test('invalid action schemas fail before generation', async () => {
+  const agent = await create();
+  agent.registerAction('message', () => {}, {
+    input: { reply: { type: 'string', format: 'not-a-format' } }
+  });
+  expect(await agent.decide('A greeting', ['message'])).toMatchObject({
+    success: false,
+    errorCode: 'invalid_action_schema'
+  });
+  expect(requests).toHaveLength(0);
 });

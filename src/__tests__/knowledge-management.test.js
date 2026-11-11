@@ -186,3 +186,77 @@ test('a lost create response is not retried; standalone management fails without
   });
   expect(global.fetch).toHaveBeenCalledTimes(before);
 });
+
+test('waitUntilReady pins a revision and uses only metadata while a scheduled retry completes', async () => {
+  const agent = await load();
+  const revision = { id, revision: 1, version: source.version };
+  source.state = 'failed';
+  source.retryScheduled = true;
+  const ready = agent.knowledge.waitUntilReady(revision, { timeout: 2000 });
+  setTimeout(
+    () => Object.assign(source, { state: 'ready', activeRevision: 1, retryScheduled: false }),
+    20
+  );
+  expect(await ready).toMatchObject({ id, state: 'ready', activeRevision: 1 });
+  expect(reads).toBe(2);
+  expect(seen.slice(1).every(r => r.url.endsWith('/knowledge') && r.method === 'GET')).toBe(true);
+  library.activeRevision = 1;
+  expect(await agent.space.knowledge.waitUntilReady(library)).toMatchObject({
+    id: shared,
+    scope: 'space'
+  });
+});
+
+test('waiting refuses a competing version, deletion or final failure instead of substituting it', async () => {
+  const agent = await load();
+  const revision = { id, revision: 1, version: source.version };
+  source.version = randomUUID();
+  await expect(agent.knowledge.waitUntilReady(revision)).rejects.toMatchObject({
+    code: 'version_conflict',
+    version: source.version
+  });
+  source.version = revision.version;
+  source.state = 'failed';
+  source.error = 'embedding_failed';
+  source.retryScheduled = false;
+  await expect(agent.knowledge.waitUntilReady(revision)).rejects.toMatchObject({
+    code: 'knowledge_prepare_failed',
+    reason: 'embedding_failed'
+  });
+  await expect(
+    agent.knowledge.waitUntilReady({ ...revision, id: randomUUID() })
+  ).rejects.toMatchObject({ code: 'knowledge_not_found' });
+});
+
+test('waiting can be cancelled before a read and while polling; timeout aborts an in-flight read', async () => {
+  const agent = await load();
+  const revision = { id, revision: 1, version: source.version };
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await expect(
+    agent.knowledge.waitUntilReady(revision, { signal: cancelled.signal })
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(seen).toHaveLength(1);
+  const during = new AbortController();
+  const polling = agent.knowledge.waitUntilReady(revision, { signal: during.signal });
+  setTimeout(() => during.abort(), 10);
+  await expect(polling).rejects.toMatchObject({ name: 'AbortError' });
+  let aborted = false;
+  global.fetch.mockImplementation(
+    (_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(signal.reason);
+          },
+          { once: true }
+        );
+      })
+  );
+  await expect(agent.knowledge.waitUntilReady(revision, { timeout: 15 })).rejects.toMatchObject({
+    code: 'knowledge_wait_timeout'
+  });
+  expect(aborted).toBe(true);
+});

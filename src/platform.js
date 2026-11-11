@@ -1,6 +1,7 @@
 // A saved Agent over HTTP: the same store an Agent in the process has, kept in its Space.
 
 const { URLSearchParams } = require('url');
+const { setTimeout: pause } = require('timers/promises');
 const { knowledgeLibrary, agentKnowledge } = require('./knowledge');
 
 class AgentError extends Error {
@@ -25,6 +26,10 @@ const MESSAGES = {
   context_limit_reached: 'The Agent has the maximum number of context entries.',
   memory_limit_reached: 'The Agent has the maximum number of memory notes.',
   context_key_not_found: 'No context entry with this key.',
+  invalid_context_key:
+    'A saved Context key must start with a lowercase letter and contain 1–64 lowercase letters, digits, dots, underscores or hyphens; for example order_id.',
+  invalid_context_value:
+    'Context value must be JSON-serializable. JSON null is allowed; use delete to remove an entry.',
   note_not_found: 'No memory note with this ID.',
   knowledge_not_found: 'No Knowledge document with this ID in the requested scope.',
   knowledge_document_too_large: 'A Knowledge document holds up to 1 MiB of UTF-8 text.'
@@ -39,7 +44,8 @@ function savedStore({ key, endpoint, agentId, conversation }) {
 
   // `busy` is the Space's own answer before it took the request up, so nothing
   // was done and the request is sent again. No other failure is retried.
-  async function request(method, path, body, attempt = 1) {
+  async function request(method, path, body, options = {}, attempt = 1) {
+    options.signal?.throwIfAborted();
     let response;
     try {
       response = await fetch(base + path, {
@@ -49,18 +55,22 @@ function savedStore({ key, endpoint, agentId, conversation }) {
           ...(body ? { 'Content-Type': 'application/json' } : {})
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(15000)
+        signal: options.signal ?? AbortSignal.timeout(15000)
       });
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
       throw new AgentError(
         'platform_unavailable',
         `NullProtocol could not be reached: ${error.message}`
       );
     }
-    const result = await response.json().catch(() => ({}));
+    const result = await response.json().catch(() => {
+      if (options.signal?.aborted) throw options.signal.reason;
+      return {};
+    });
     if (response.status === 503 && result.error === 'busy' && attempt < 4) {
-      await new Promise(resolve => setTimeout(resolve, 250 * attempt));
-      return request(method, path, body, attempt + 1);
+      await pause(250 * attempt, undefined, { signal: options.signal });
+      return request(method, path, body, options, attempt + 1);
     }
     if (response.ok) return result;
     if (response.status === 401 || response.status === 403) {
@@ -78,13 +88,35 @@ function savedStore({ key, endpoint, agentId, conversation }) {
   }
 
   const agent = `/agents/${agentId}`;
+  const contextKey = name => {
+    if (typeof name !== 'string' || !/^[a-z][a-z0-9._-]{0,63}$/.test(name)) {
+      throw new AgentError('invalid_context_key', MESSAGES.invalid_context_key, { field: 'key' });
+    }
+    return name;
+  };
+  const contextValue = value => {
+    try {
+      const json = JSON.stringify(value);
+      if (json !== undefined) return JSON.parse(json);
+    } catch {
+      // A serialization mistake belongs to the value, not the network.
+    }
+    throw new AgentError('invalid_context_value', MESSAGES.invalid_context_value, {
+      field: 'value'
+    });
+  };
   // One scope of context entries: the Agent's (or its conversation's), or the Space's.
   const contextAt = (path, query) => ({
     list: async () => (await request('GET', path + query)).entries,
-    get: async name => (await request('GET', `${path}/${name}${query}`)).entry,
+    get: async name => (await request('GET', `${path}/${contextKey(name)}${query}`)).entry,
     set: async (name, value, options = {}) =>
-      (await request('PUT', `${path}/${name}${query}`, { value, ...options })).entry,
-    delete: name => request('DELETE', `${path}/${name}${query}`)
+      (
+        await request('PUT', `${path}/${contextKey(name)}${query}`, {
+          value: contextValue(value),
+          ...options
+        })
+      ).entry,
+    delete: async name => request('DELETE', `${path}/${contextKey(name)}${query}`)
   });
   return {
     request,

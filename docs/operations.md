@@ -107,7 +107,7 @@ const result = await agent.decide(context, actions, { guard, contextKeys });
 // { success: true, action, parameters, reasoning }
 ```
 
-`actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. A registered action is shown to the model with its description and its parameters schema, so neither needs repeating here. `guard(decision)` is your own check of the choice and must return `true`.
+`actions` are names or `{ action, description }`. The model can only choose one of them; an action disabled in the Agent's settings is not offered. A registered action is shown to the model with its description and its parameters schema, so neither needs repeating here. The selected action’s parameter schema is checked before success; invalid parameters use the normal repair attempts. `guard(decision)` runs after this check and must return `true`.
 
 A decision can be used just as a payload. Registering and executing a handler is optional. Parameter schemas are shown during `decide`, but enforced before a registered handler runs in `execute`. If your application consumes `parameters` directly, validate them in your code. [Actions guide](actions.md) shows message delivery, catalogue lookup and execution errors.
 
@@ -183,3 +183,5 @@ All four operations accept optional `knowledge: true | false | { query: string }
 All four operations accept `images: ['https://…']` in their options. Supply up to four reachable HTTPS URLs, each at most 2048 characters, without embedded credentials. Text arguments can be empty for a photo-only task. The selected model must support Vision; native Ollama URL input is not supported. Text requests are unchanged when images is absent or empty.
 
 Provider file-size and format limits still apply; `image_too_large` means a photo must be resized. Image parts stay attached through repair attempts. Knowledge uses the task text or an explicit query, never photo URLs. History keeps the supplied URLs; it does not copy remote image bytes. The hosted gateway holds a conservative reserve based on the model context ceiling, then charges reported generation usage and releases the unused reserve. `invalid_images`, `model_images_not_supported` and `provider_images_not_supported` identify unsupported input before provider generation. [Example](../examples/photos.mjs).
+
+Saved Context keys use 1–64 lowercase letters, digits, dots, underscores or hyphens, starting with a letter (`order_id`, for example). Invalid saved keys are rejected locally with `invalid_context_key`. JSON `null` is a stored value; remove an entry with `delete`. Unserializable values report `invalid_context_value`.

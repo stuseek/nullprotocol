@@ -100,3 +100,5 @@ agent.registerAction('chat', ({ message }, { input, reply }) =>
 ```
 
 This handler deliberately performs another model request. To deliver a message already prepared by `decide`, register a handler such as `send_message` instead.
+
+`decide` validates the selected action’s parameters against its supplied schema before returning success, including repair attempts for invalid parameters. An inline choice can supply `parameters: schema`; a registered handler’s `input` schema takes precedence. Invalid schemas fail before generation with `invalid_action_schema`. `execute` rechecks the current schema and guards before invoking the handler.
