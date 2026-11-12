@@ -29,4 +29,4 @@ Every operation records the documents it ran with, by the name and revision they
 
 ## Where your documents go
 
-Reference texts are stored in NullProtocol. Saved agents use NullProtocol models. With the SDK, the effective reference texts are read into your application and included in its model request through the NullProtocol gateway. With the HTTP API or Try agent, the operation runs on the server. The gateway sends the assembled input to the configured upstream model provider; a route through LLMAPI also transits LLMAPI. Model provider credentials stay on the server.
+Reference texts are stored in NullProtocol. Saved agents use NullProtocol models. With the SDK, the effective reference texts are read into your application and included in its model request through the NullProtocol gateway. With the HTTP API or Try agent, the operation runs on the server. The gateway sends the assembled input to the model's provider; some models are reached through an infrastructure provider that routes the request. Model provider credentials stay on the server.
