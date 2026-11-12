@@ -619,3 +619,39 @@ test('invalid action schemas fail before generation', async () => {
   });
   expect(requests).toHaveLength(0);
 });
+
+test('a saved task runs by name, and changing it changes the next run', async () => {
+  const agent = await create();
+  await agent.tasks.set('read-request', { operation: 'extract', schema: { orderId: 'number' } });
+  replies.push(
+    { orderId: 1042 },
+    { orderId: 1042, priority: 'high' },
+    {
+      score: 1,
+      recommendation: 'pass',
+      reasoning: 'Agrees.'
+    }
+  );
+  const first = await agent.run('read-request', 'Order 1042 arrived broken.');
+  expect(first).toMatchObject({ data: { orderId: 1042 }, task: { revision: 1 } });
+
+  await agent.tasks.set('read-request', {
+    operation: 'extract',
+    schema: { orderId: 'number', priority: 'string' },
+    ifRevision: 1
+  });
+  const second = await agent.run('read-request', 'Order 1042 arrived broken.');
+  expect(second).toMatchObject({ data: { priority: 'high' }, task: { revision: 2 } });
+  expect(JSON.stringify(requests[0])).not.toContain('priority');
+
+  await agent.tasks.set('check-reply', { operation: 'validate', criteria: 'Promises no refund.' });
+  const checked = await agent.run('check-reply', 'We will replace it.', { reference: 'Policy' });
+  expect(checked.recommendation).toBe('pass');
+  expect(JSON.stringify(requests[2])).toContain('Promises no refund.');
+
+  expect(await agent.run('missing', 'x')).toMatchObject({ errorCode: 'task_not_found' });
+  await expect(
+    agent.tasks.set('read-request', { operation: 'summarize', ifRevision: 1 })
+  ).rejects.toMatchObject({ code: 'task_revision_conflict' });
+  expect(requests).toHaveLength(3);
+});

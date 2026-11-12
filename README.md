@@ -57,6 +57,21 @@ Every operation returns `success: true` or `success: false` with `errorCode` and
 
 `decide` chooses an action and prepares its parameters. Register your application's handlers, such as `send_message` or `search_catalog`, then pass the decision to `agent.execute(decision)`. Sending prepared text does not need another model call. [Decisions and application actions](docs/actions.md) covers delivery, catalogue lookup and execution checks.
 
+## Save a task
+
+Keep a task's schema, criteria or actions with the agent, and send only the input from your code. A teammate can then change the task in the cabinet without a deployment.
+
+```js
+await agent.tasks.set('read-request', {
+  operation: 'extract',
+  schema: { orderId: 'number', problem: 'string' }
+});
+
+const result = await agent.run('read-request', 'Order 1042 arrived with a broken mug.');
+```
+
+History shows the task and revision of each run. [Saved tasks](docs/tasks.md) covers the four operations, HTTP and what a change means for callers.
+
 ## Give it the right context
 
 ```js

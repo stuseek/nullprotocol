@@ -87,6 +87,20 @@ Any operation may include `contextKeys: ["key"]` for selected named values, or `
 
 `decide` over HTTP does not load handlers from an SDK process or enforce their parameter schemas. The endpoint accepts action names/descriptions; your backend validates and executes the returned payload. An HTTP decision is not an SDK decision object and cannot be passed to `agent.execute()` in another process. Use the [SDK action flow](actions.md) when you want its schema/guard checks and execution recording.
 
+## Run a saved task
+
+A saved task keeps the operation and its schema, criteria or actions on the agent, so the request carries only the input:
+
+```sh
+curl --fail-with-body --request POST 'https://api.nullprotocol.ai/v1/agents/support/tasks/read-request/run' \
+  --header "Authorization: Bearer $NULLPROTOCOL_KEY" \
+  --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: ticket-8841' \
+  --data-raw '{ "input": "Order 1042 arrived with a broken mug." }'
+```
+
+The response adds `task: { name, revision, operation }`. Editing the task in the cabinet changes the next run without changing this request. [Saved tasks](tasks.md) lists the body fields and the task management routes.
+
 ## Search Knowledge
 
 All four operations accept `knowledge: true`, `false` or `{ "query": "short search query" }`. Omitted/false performs no search.

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add saved tasks: `agent.tasks` keeps an operation with its schema, criteria or actions on the agent, and `agent.run(name, input)` runs it. Results and History name the task and its revision. Existing operation calls are unchanged. Requires the API with task routes.
+
 ## 3.3.0
 
 - Validate action parameters in decide, including repair attempts; execute still rechecks before running a handler. HTTP action choices can supply parameter schemas.

@@ -38,6 +38,27 @@ function localContext(entries = new Map()) {
   };
 }
 
+// The saved tasks of an Agent that lives in the process.
+function localTasks(tasks = new Map()) {
+  return {
+    list: async () => [...tasks.values()],
+    get: async name => {
+      missing('task_not_found', tasks.has(name));
+      return tasks.get(name);
+    },
+    set: async (name, { ifRevision, ...settings }) => {
+      const revision = tasks.get(name)?.revision ?? null;
+      if (ifRevision !== undefined && ifRevision !== revision) {
+        throw new AgentError('task_revision_conflict', MESSAGES.task_revision_conflict);
+      }
+      const task = { name, ...settings, revision: (revision ?? 0) + 1 };
+      tasks.set(name, task);
+      return task;
+    },
+    delete: async name => missing('task_not_found', tasks.delete(name))
+  };
+}
+
 // Settings, context and memory of an Agent that lives in the process.
 function localStore(settings) {
   const unavailable = async () => {
@@ -53,6 +74,7 @@ function localStore(settings) {
     space,
     context,
     knowledge: agentKnowledge(unavailable, '', AgentError),
+    tasks: localTasks(),
     settings: async () => ({ ...settings }),
     update: async changes => Object.assign(settings, changes),
     turn: async contextKeys => {

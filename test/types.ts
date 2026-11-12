@@ -4,6 +4,7 @@ import {
   type Agent,
   type Extraction,
   type Usage,
+  type Validation,
   type Result
 } from 'nullprotocol';
 
@@ -61,3 +62,17 @@ async function manageKnowledge(agent: Agent) {
   return { state, tokens };
 }
 void manageKnowledge;
+
+async function savedTask(agent: Agent) {
+  const task = await agent.tasks.set('read-request', {
+    operation: 'extract',
+    schema: { orderId: 'number' },
+    ifRevision: null
+  });
+  const read = await agent.run<Extraction<{ orderId: number }>>('read-request', 'Order 42.');
+  const check = await agent.run<Validation>('check-reply', 'We refund.', { reference: 'Policy' });
+  // @ts-expect-error A validate task needs its criteria.
+  await agent.tasks.set('check-reply', { operation: 'validate' });
+  return [task.revision, read.success && read.data.orderId, check.task?.revision];
+}
+void savedTask;

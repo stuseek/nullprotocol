@@ -150,8 +150,37 @@ export interface Usage {
   uncountedRequests?: number;
 }
 
+/** What a saved task holds besides its operation's own settings. */
+interface TaskOptions {
+  /** Context entries with inclusion `selected` to send with every run. */
+  contextKeys?: string[];
+  /** Search the Agent's Knowledge with the input of every run. */
+  knowledge?: boolean;
+}
+
+/** One operation with the settings its caller would otherwise send each time. */
+export type TaskSettings = TaskOptions &
+  (
+    | { operation: 'extract'; schema: object }
+    | { operation: 'summarize'; maxLength?: number; focus?: string }
+    | { operation: 'validate'; criteria: string }
+    | { operation: 'decide'; actions: Exclude<ActionChoice, string>[] }
+  );
+
+export type Task = TaskSettings & { name: string; revision: number; updatedAt?: string };
+
+export interface TaskStore {
+  list(): Promise<Task[]>;
+  get(name: string): Promise<Task>;
+  /** `ifRevision: null` only creates; a number replaces that revision; left out, it overwrites. */
+  set(name: string, task: TaskSettings & { ifRevision?: number | null }): Promise<Task>;
+  delete(name: string): Promise<unknown>;
+}
+
 /** What every result carries, whether the operation succeeded or not. */
 interface Ran {
+  /** The saved task the operation ran as, its revision then and its operation. */
+  task?: { name: string; revision: number; operation: 'extract' | 'summarize' | 'validate' | 'decide' };
   /** The selected Knowledge evidence and actual search query, when requested. */
   knowledge?: KnowledgeEvidence;
   /** Search embedding usage, separately from generation, including failed searches. */
@@ -260,6 +289,19 @@ export interface Agent {
     actions: ActionChoice[],
     options?: OperationOptions & { guard?: (decision: Chosen) => boolean | Promise<boolean> }
   ): Promise<Decision>;
+
+  /**
+   * Runs a saved task on `input`. The operation and its schema, criteria or
+   * actions come from the task, so changing the task changes the next run.
+   * Name the result the task's operation returns: `run<Extraction<Order>>(…)`.
+   */
+  run<R extends Extraction | Summary | Validation | Decision = Extraction>(
+    task: string,
+    input: unknown,
+    options?: OperationOptions & { reference?: unknown }
+  ): Promise<R>;
+  /** Operations saved with their settings, run by name with `run`. */
+  tasks: TaskStore;
 
   /** Registers an application action, its parameter schema and optional execution guard. */
   registerAction(

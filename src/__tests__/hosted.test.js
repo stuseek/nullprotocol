@@ -30,6 +30,11 @@ test('a saved hosted agent uses the same Space key for settings, model and histo
     if (url.endsWith('/turn')) {
       return response({ agent: settings, entries: [], notes: [], missing: [], documents: [] });
     }
+    if (url.endsWith('/tasks/read-days')) {
+      return response({
+        task: { name: 'read-days', operation: 'extract', schema: { days: 'number' }, revision: 3 }
+      });
+    }
     if (url.endsWith('/chat/completions')) return response(completion);
     if (url.endsWith('/operations')) return response({ recorded: true });
     throw new Error('Unexpected route');
@@ -49,6 +54,14 @@ test('a saved hosted agent uses the same Space key for settings, model and histo
     expect(model.url).toBe('https://platform.example/v1/chat/completions');
     expect(model.options.headers['X-NullProtocol-Request-Id']).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.parse(seen.at(-1).options.body).provider).toBe('nullprotocol');
+    // A saved task is read from the Space, and History names it with its revision.
+    const ran = await agent.run('read-days', 'Returns within 30 days.');
+    expect(ran).toMatchObject({
+      data: { days: 30 },
+      task: { name: 'read-days', revision: 3, operation: 'extract' }
+    });
+    expect(JSON.parse(seen.at(-1).options.body).task).toEqual({ name: 'read-days', revision: 3 });
+    expect(JSON.parse(seen.at(-1).options.body).result.task).toBeUndefined();
   } finally {
     global.fetch = original;
   }

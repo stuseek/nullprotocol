@@ -106,6 +106,8 @@ class Agent {
     // Context shared by every Agent of the Space.
     this.space = store.space;
     this.memory = store.memory;
+    // Operations saved with their schema, criteria or actions, run by name.
+    this.tasks = store.tasks;
     this.store = store;
     this.credentials = credentials;
     this.modelFactory = modelFactory;
@@ -259,7 +261,35 @@ class Agent {
     return turn;
   }
 
-  async operate(name, args) {
+  /**
+   * Runs a saved task on `input`. The task holds the operation and its
+   * schema, criteria or actions, so a change to the task applies to the next
+   * run without a change here. `options` are this run's own, such as
+   * `reference` for a validate task.
+   */
+  async run(name, input, options = {}) {
+    let task;
+    try {
+      task = await this.tasks.get(name);
+    } catch (error) {
+      return { success: false, error: error.message, errorCode: error.code ?? 'failed' };
+    }
+    const { operation, schema, criteria, actions, maxLength, focus, contextKeys, knowledge } = task;
+    const given = {
+      ...(contextKeys && { contextKeys }),
+      ...(knowledge !== undefined && { knowledge }),
+      ...options
+    };
+    const args = {
+      extract: [input, schema, given],
+      summarize: [input, { maxLength, focus, ...given }],
+      validate: [criteria, input, given],
+      decide: [input, actions, given]
+    };
+    return this.operate(operation, args[operation], { name, revision: task.revision });
+  }
+
+  async operate(name, args, task) {
     const names = ARGUMENTS[name];
     // The input as it is now: what the model is sent and history keeps do not
     // follow later changes by the caller.
@@ -321,6 +351,7 @@ class Agent {
       .record({
         id,
         operation: name,
+        task,
         instanceId: this.instanceId,
         label: this.label,
         conversation: this.conversation,
@@ -351,6 +382,7 @@ class Agent {
       .catch(error => {
         result.historyError = error.message;
       });
+    if (task) result.task = { ...task, operation: name };
     return result;
   }
 
