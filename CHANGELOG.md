@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 3.4.0
 
-- Add saved tasks: `agent.tasks` keeps an operation with its schema, criteria or actions on the agent, and `agent.run(name, input)` runs it. Results and History name the task and its revision. Existing operation calls are unchanged. Requires the API with task routes.
+- Add saved tasks: `agent.tasks` keeps an operation with its schema, criteria or actions on the agent, and `agent.run(name, input)` runs it. Results and History name the task and its revision. Existing operation calls are unchanged. Requires API 0.25.0.
 
 ## 3.3.0
 

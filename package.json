@@ -1,6 +1,6 @@
 {
   "name": "nullprotocol",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Agents with a model, instructions, context and memory, and four operations whose replies are checked in code",
   "main": "src/index.js",
   "scripts": {
